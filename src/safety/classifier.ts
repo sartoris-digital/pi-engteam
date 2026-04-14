@@ -188,8 +188,8 @@ function classifySegment(segment: string): ClassifierResult {
   const hasRedirect = rawParsed.some(t => typeof t === "object" && t !== null && "op" in (t as object));
   if (hasRedirect) {
     const redirectTargets = rawParsed
-      .filter((t): t is Record<string, string> => typeof t === "object" && t !== null)
-      .map((t) => (t as Record<string, string>).file ?? "");
+      .filter((t) => typeof t === "object" && t !== null)
+      .map((t) => ((t as Record<string, string>).file ?? ""));
     const toFile = redirectTargets.some(f => f && !f.match(/^[012]$/));
     if (toFile) return { classification: "destructive", reason: "redirect to file" };
   }
