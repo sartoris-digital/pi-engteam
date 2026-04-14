@@ -1,0 +1,207 @@
+import type { RunState, VerdictPayload, BudgetStatus } from "../types.js";
+import type { Workflow, StepContext, StepResult } from "../workflows/types.js";
+import type { TeamRuntime } from "../team/TeamRuntime.js";
+import type { Observer } from "../observer/Observer.js";
+import {
+  createRunState,
+  saveRunState,
+  loadRunState,
+  updateStep,
+} from "./RunState.js";
+import { checkBudget, tickBudget } from "./BudgetGuard.js";
+
+type ADWConfig = {
+  runsDir: string;
+  workflows: Map<string, Workflow>;
+  team: TeamRuntime;
+  observer: Observer;
+};
+
+type StartRunParams = {
+  workflow: string;
+  goal: string;
+  budget: Parameters<typeof createRunState>[0]["budget"];
+};
+
+export class ADWEngine {
+  private verdictListeners = new Map<string, (v: VerdictPayload) => void>();
+
+  constructor(private config: ADWConfig) {}
+
+  registerVerdictListener(step: string, listener: (v: VerdictPayload) => void): void {
+    this.verdictListeners.set(step, listener);
+  }
+
+  notifyVerdict(v: VerdictPayload): void {
+    const listener = this.verdictListeners.get(v.step);
+    if (listener) {
+      this.verdictListeners.delete(v.step);
+      listener(v);
+    }
+  }
+
+  async startRun(params: StartRunParams): Promise<RunState> {
+    const runId = crypto.randomUUID();
+    const state = await createRunState({
+      runId,
+      workflow: params.workflow,
+      goal: params.goal,
+      budget: params.budget,
+    });
+    await saveRunState(this.config.runsDir, state);
+
+    const { writeFile } = await import("fs/promises");
+    const { join } = await import("path");
+    await writeFile(
+      join(this.config.runsDir, "active-run.txt"),
+      runId,
+    );
+
+    this.config.observer.emit({
+      runId,
+      category: "lifecycle",
+      type: "run.start",
+      payload: { workflow: params.workflow, goal: params.goal },
+      summary: `Run ${runId} started: ${params.goal}`,
+    });
+
+    return state;
+  }
+
+  async executeRun(runId: string): Promise<RunState> {
+    let state = await loadRunState(this.config.runsDir, runId);
+    if (!state) throw new Error(`Run ${runId} not found`);
+
+    state = { ...state, status: "running" };
+    await saveRunState(this.config.runsDir, state);
+
+    const workflow = this.config.workflows.get(state.workflow);
+    if (!workflow) throw new Error(`Workflow '${state.workflow}' not found`);
+
+    while (state.status === "running") {
+      const { maxIterations } = state.budget;
+      // maxIterations === 0 means "zero iterations allowed" (exhausted immediately)
+      const zeroIterBudget = maxIterations === 0;
+      const budgetStatus = zeroIterBudget
+        ? { ok: false, warnings: [] as BudgetStatus["warnings"], exhausted: ["iterations" as const] as BudgetStatus["exhausted"] }
+        : checkBudget(state);
+      if (!budgetStatus.ok) {
+        state = { ...state, status: "failed" };
+        this.config.observer.emit({
+          runId,
+          category: "budget",
+          type: "exhausted",
+          payload: { exhausted: budgetStatus.exhausted },
+          summary: `Budget exhausted: ${budgetStatus.exhausted.join(", ")}`,
+        });
+        break;
+      }
+
+      const stepDef = workflow.steps.find(s => s.name === state!.currentStep);
+      if (!stepDef) {
+        state = { ...state, status: "failed" };
+        break;
+      }
+
+      this.config.observer.emit({
+        runId,
+        step: state.currentStep,
+        iteration: state.iteration,
+        category: "lifecycle",
+        type: "step.start",
+        payload: { step: state.currentStep },
+      });
+
+      const startedAt = new Date().toISOString();
+      state = updateStep(state, state.currentStep, { startedAt });
+
+      const stepStart = Date.now();
+      let result: StepResult;
+
+      try {
+        const ctx: StepContext = {
+          run: state,
+          team: this.config.team,
+          observer: this.config.observer,
+          engine: this,
+        };
+        result = await stepDef.run(ctx);
+      } catch (err) {
+        result = {
+          success: false,
+          verdict: "FAIL",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+
+      const elapsed = (Date.now() - stepStart) / 1000;
+      state = tickBudget(state, elapsed);
+      state = updateStep(state, state.currentStep, {
+        verdict: result.verdict,
+        issues: result.issues,
+        handoffHint: result.handoffHint,
+        artifacts: result.artifacts ? Object.values(result.artifacts) : undefined,
+        endedAt: new Date().toISOString(),
+        error: result.error,
+      });
+
+      this.config.observer.emit({
+        runId,
+        step: state.currentStep,
+        iteration: state.iteration,
+        category: "lifecycle",
+        type: "step.end",
+        payload: { verdict: result.verdict, issues: result.issues },
+      });
+
+      const transition = workflow.transitions.find(
+        t => t.from === state!.currentStep && t.when(result),
+      );
+
+      if (!transition || transition.to === "halt") {
+        state = { ...state, status: result.success ? "succeeded" : "failed" };
+        break;
+      }
+
+      state = {
+        ...state,
+        currentStep: transition.to,
+        iteration: state.iteration + 1,
+      };
+
+      await saveRunState(this.config.runsDir, state);
+    }
+
+    await saveRunState(this.config.runsDir, state);
+
+    this.config.observer.emit({
+      runId,
+      category: "lifecycle",
+      type: "run.end",
+      payload: { status: state.status, iteration: state.iteration },
+      summary: `Run ${runId} ended: ${state.status}`,
+    });
+
+    return state;
+  }
+
+  async resumeRun(runId: string): Promise<RunState> {
+    const state = await loadRunState(this.config.runsDir, runId);
+    if (!state) throw new Error(`Run ${runId} not found`);
+    return this.executeRun(runId);
+  }
+
+  async abortRun(runId: string): Promise<void> {
+    const state = await loadRunState(this.config.runsDir, runId);
+    if (!state) return;
+    const aborted = { ...state, status: "aborted" as const };
+    await saveRunState(this.config.runsDir, aborted);
+    this.config.observer.emit({
+      runId,
+      category: "lifecycle",
+      type: "run.end",
+      payload: { status: "aborted" },
+      summary: `Run ${runId} aborted`,
+    });
+  }
+}
