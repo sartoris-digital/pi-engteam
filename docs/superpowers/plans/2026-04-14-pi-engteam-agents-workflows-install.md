@@ -21,6 +21,20 @@
 
 ---
 
+## Required ADWEngine fixes (from adversarial review)
+
+Before implementing Plan B workflows, these bugs in `src/adw/ADWEngine.ts` (Plan A) must be fixed:
+
+1. **Workflow start step**: Initialize `currentStep` from `workflow.steps[0].name`, not hardcoded `"plan"`. All Plan B workflows use different initial step names.
+
+2. **Artifact propagation**: After each step completes, merge `result.artifacts` into `run.artifacts`. Currently step artifacts are stored only on `StepRecord`, but workflows read from `ctx.run.artifacts`.
+
+3. **VerdictListener key**: Key listeners by `runId:stepName` (not just `stepName`) to prevent concurrent runs from overwriting each other's listeners.
+
+4. **Budget tracking**: `tickBudget` must increment `spent.costUsd` and `spent.tokens`. Currently these are never updated, making cost limits toothless.
+
+---
+
 ## File Structure
 
 | Path | Purpose |
@@ -174,7 +188,7 @@ code so the rest of the team can plan with confidence.
 
 ## Handoff
 
-- On `PASS`, set `handoffHint: "architect"` or `"implementer"` depending on what the run needs next.
+- Do not set `handoffHint` — routing decisions belong to the workflow graph, not to you.
 - On `FAIL`, list the scope questions that must be answered first.
 ````
 
@@ -326,6 +340,17 @@ current design and identify the cheapest wins.
 3. Where possible, use `Bash` to run the project's benchmark/load commands and capture numbers.
 4. Produce a `perf-report.md` with: **Hotspots**, **Measured Costs**, **Recommendations (ordered by ROI)**, **Risks if ignored**.
 5. Call `VerdictEmit` with `step: "perf"` and `PASS` when the report is complete, `FAIL` when benchmarks cannot run.
+
+## PASS criteria
+
+- You have identified at least one specific metric or measurement to establish a baseline
+- Every finding includes: symptom, location (file:line), estimated severity, and a concrete fix suggestion
+- If no performance issues are found, explicitly state: "No performance issues found in the analyzed scope" with the scope listed
+
+## FAIL criteria
+
+- You cannot access the code to analyze (list what is missing)
+- The codebase is too large to analyze meaningfully without scoping (request a narrower scope via issues)
 
 ## Hard rules
 
@@ -541,6 +566,27 @@ is the only way to unlock destructive operations.
 4. On approval of a sensitive operation, call `GrantApproval` with the exact `approvalId` previously requested and a one-line rationale.
 5. Call `VerdictEmit` with `step: "judge"` and either `PASS` (done) or `FAIL` (run must continue or halt).
 
+## Before voting PASS, you MUST:
+
+1. Run `git diff HEAD~1` (or read the artifact list) to verify what actually changed
+2. Read the most recent test run output — confirm zero failing tests
+3. Check all step artifacts listed in the run (plan.md, verdict.md, etc.)
+4. Confirm the implementation matches the stated goal
+
+## PASS criteria
+
+- All acceptance criteria from the plan are met
+- Test suite output shows 0 failures
+- No outstanding issues from the reviewer remain unaddressed
+- You have read the actual changed files, not just summaries
+
+## FAIL criteria
+
+- Any failing test
+- Reviewer raised issues that were not addressed
+- Implementation does not match the stated goal
+- You cannot find the test output or artifacts to verify claims
+
 ## Hard rules
 
 - Never authorize retroactively; the `RequestApproval` must precede `GrantApproval`.
@@ -592,6 +638,17 @@ relevant context pack that answers the asking agent's question.
 3. Produce a `context-pack.md` with: **Answer (1 paragraph)**, **Sources (file:line citations)**, **Related**, **Confidence**.
 4. When uncertain, state the uncertainty explicitly rather than hallucinating.
 5. Call `VerdictEmit` with `step: "retrieve"` and `PASS` when the pack is delivered, `FAIL` when the query is under-specified.
+
+## PASS criteria
+
+- You have retrieved at least one concrete artifact (file path, code snippet, ADR, ticket) relevant to the goal
+- You have explicitly stated what you could NOT find and why
+- The context pack is grounded — no hallucinated file paths or function names
+
+## FAIL criteria
+
+- You cannot find any relevant context (list what you searched and where)
+- The goal is too vague to know what to retrieve (list what clarification is needed)
 
 ## Hard rules
 
@@ -689,14 +746,29 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team
       .deliver(agentName, {
@@ -707,7 +779,7 @@ async function waitForAgentVerdict(
         message: prompt,
         ts: new Date().toISOString(),
       })
-      .catch(reject);
+      .catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -986,7 +1058,9 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(
         new Error(
           `Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`,
@@ -994,10 +1068,23 @@ async function waitForAgentVerdict(
       );
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team
       .deliver(agentName, {
@@ -1008,7 +1095,7 @@ async function waitForAgentVerdict(
         message: prompt,
         ts: new Date().toISOString(),
       })
-      .catch(reject);
+      .catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -1436,7 +1523,9 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(
         new Error(
           `Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`,
@@ -1444,10 +1533,23 @@ async function waitForAgentVerdict(
       );
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team
       .deliver(agentName, {
@@ -1458,7 +1560,7 @@ async function waitForAgentVerdict(
         message: prompt,
         ts: new Date().toISOString(),
       })
-      .catch(reject);
+      .catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -1469,8 +1571,8 @@ const classifyStep: Step = {
   name: "classify",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const feedbackHint = (ctx.run as any).judgeIssues
-      ? `\n\nJUDGE FEEDBACK FROM PREVIOUS ATTEMPT:\n${(ctx.run as any).judgeIssues}`
+    const feedbackHint = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n")
+      ? `\n\nJUDGE FEEDBACK FROM PREVIOUS ATTEMPT:\n${ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n") ?? ""}`
       : "";
 
     const prompt = `You are the bug-triage agent. Read the bug report and classify it.
@@ -1630,7 +1732,7 @@ export const triage: Workflow = {
     { from: "judge-gate", when: (r) => r.verdict !== "PASS", to: "classify" },
   ],
   defaults: {
-    maxIterations: 2,
+    maxIterations: 5,
     maxCostUsd: 5,
     maxWallSeconds: 600,
   },
@@ -1698,7 +1800,7 @@ describe("triage workflow — shape", () => {
 
   it("has correct defaults", () => {
     expect(triage.defaults).toMatchObject({
-      maxIterations: 2,
+      maxIterations: 5,
       maxCostUsd: 5,
       maxWallSeconds: 600,
     });
@@ -1892,7 +1994,9 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(
         new Error(
           `Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`,
@@ -1900,10 +2004,23 @@ async function waitForAgentVerdict(
       );
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team
       .deliver(agentName, {
@@ -1914,7 +2031,7 @@ async function waitForAgentVerdict(
         message: prompt,
         ts: new Date().toISOString(),
       })
-      .catch(reject);
+      .catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -1937,19 +2054,23 @@ Your task:
 
 Call VerdictEmit with:
 - step: "audit"
-- verdict: "PASS" if coverage gaps exist and are documented (proceed to write-tests)
-- verdict: "FAIL" if no gaps found — coverage is already adequate (workflow can halt successfully)
-- artifacts: ["coverage-gaps.md"] — even on FAIL, save an empty gaps file confirming adequacy`;
+- verdict: "PASS" with artifacts: ["coverage-gaps.md"] if coverage gaps exist and are documented (proceed to write-tests)
+- verdict: "PASS" with handoffHint: "no-gaps" if no gaps found — coverage is already adequate (workflow halts cleanly)
+- artifacts: ["coverage-gaps.md"] — even on no-gaps, save an empty gaps file confirming adequacy`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "tester", prompt, "audit");
+      // "no-gaps" means coverage is already adequate — still a PASS, just routes to halt
+      const noGaps = verdict.handoffHint === "no-gaps";
       return {
-        success: verdict.verdict === "PASS",
-        verdict: verdict.verdict,
+        success: true,
+        verdict: "PASS",
+        handoffHint: noGaps ? "no-gaps" : undefined,
         issues: verdict.issues,
         artifacts: verdict.artifacts
           ? Object.fromEntries(verdict.artifacts.map((a, i) => [`artifact-${i}`, a]))
           : {},
+        summary: noGaps ? "No coverage gaps found — nothing to test" : undefined,
       };
     } catch (err) {
       return {
@@ -1969,11 +2090,11 @@ const writeTestsStep: Step = {
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const gapsArtifact = ctx.run.artifacts?.["artifact-0"] ?? "No coverage-gaps artifact found";
-    const reviewerFeedback = (ctx.run as any).reviewerIssues
-      ? `\n\nREVIEWER FEEDBACK TO ADDRESS:\n${(ctx.run as any).reviewerIssues}`
+    const reviewerFeedback = ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n")
+      ? `\n\nREVIEWER FEEDBACK TO ADDRESS:\n${ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n") ?? ""}`
       : "";
-    const judgeFeedback = (ctx.run as any).judgeIssues
-      ? `\n\nJUDGE FEEDBACK TO ADDRESS:\n${(ctx.run as any).judgeIssues}`
+    const judgeFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n")
+      ? `\n\nJUDGE FEEDBACK TO ADDRESS:\n${ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n") ?? ""}`
       : "";
 
     const prompt = `You are the tester. Write the missing tests identified in the coverage audit.
@@ -2141,9 +2262,9 @@ export const verify: Workflow = {
     "Audit coverage gaps, write missing tests, validate the suite, review for quality, and get judge sign-off.",
   steps: [auditStep, writeTestsStep, validateStep, reviewStep, judgeGateStep],
   transitions: [
-    // audit FAIL means no gaps — treat as done (nothing to do)
-    { from: "audit",       when: (r) => r.verdict === "PASS", to: "write-tests" },
-    { from: "audit",       when: (r) => r.verdict !== "PASS", to: "halt" },
+    // audit PASS with gaps → write-tests; audit PASS with no-gaps → halt (nothing to do)
+    { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint !== "no-gaps", to: "write-tests" },
+    { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint === "no-gaps", to: "halt" },
     { from: "write-tests", when: (r) => r.verdict === "PASS", to: "validate" },
     { from: "write-tests", when: (r) => r.verdict !== "PASS", to: "halt" },
     { from: "validate",    when: (r) => r.verdict === "PASS", to: "review" },
@@ -2234,16 +2355,16 @@ describe("verify workflow — shape", () => {
     });
   });
 
-  it("transitions: audit PASS → write-tests", () => {
+  it("transitions: audit PASS (gaps found) → write-tests", () => {
     const t = verify.transitions.find(
-      (x) => x.from === "audit" && x.when({ success: true, verdict: "PASS" }),
+      (x) => x.from === "audit" && x.when({ success: true, verdict: "PASS", handoffHint: undefined }),
     );
     expect(t?.to).toBe("write-tests");
   });
 
-  it("transitions: audit FAIL → halt (no gaps = done)", () => {
+  it("transitions: audit PASS (no-gaps) → halt", () => {
     const t = verify.transitions.find(
-      (x) => x.from === "audit" && x.when({ success: false, verdict: "FAIL" }),
+      (x) => x.from === "audit" && x.when({ success: true, verdict: "PASS", handoffHint: "no-gaps" }),
     );
     expect(t?.to).toBe("halt");
   });
@@ -2292,10 +2413,10 @@ describe("verify — audit step", () => {
     );
   });
 
-  it("FAIL (no gaps): returns success=false, halts cleanly", async () => {
+  it("PASS (no gaps): returns success=true with handoffHint=no-gaps, routes to halt", async () => {
     const ctx = makeCtx();
     const { engine, attachDeliver } = makeSyncEngine({
-      audit: { verdict: "FAIL", issues: ["Coverage is already at 95% — no gaps found"] },
+      audit: { verdict: "PASS", handoffHint: "no-gaps" },
     });
     ctx.engine = engine;
     attachDeliver(ctx);
@@ -2303,8 +2424,10 @@ describe("verify — audit step", () => {
     const step = verify.steps.find((s) => s.name === "audit")!;
     const result: StepResult = await step.run(ctx);
 
-    expect(result.success).toBe(false);
-    // The transition engine treats this as halt — nothing to do
+    expect(result.success).toBe(true);
+    expect(result.handoffHint).toBe("no-gaps");
+    expect(result.summary).toBe("No coverage gaps found — nothing to test");
+    // The transition engine routes this to halt — nothing to do
     const transition = verify.transitions.find(
       (t) => t.from === "audit" && t.when(result),
     );
@@ -2491,7 +2614,9 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(
         new Error(
           `Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`,
@@ -2499,10 +2624,23 @@ async function waitForAgentVerdict(
       );
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team
       .deliver(agentName, {
@@ -2513,7 +2651,7 @@ async function waitForAgentVerdict(
         message: prompt,
         ts: new Date().toISOString(),
       })
-      .catch(reject);
+      .catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -2619,8 +2757,8 @@ const analyzeStep: Step = {
   run: async (ctx: StepContext): Promise<StepResult> => {
     const codeArtifact = ctx.run.artifacts?.["code-artifact-0"] ?? "context-code.md";
     const traceArtifact = ctx.run.artifacts?.["trace-artifact-0"] ?? "context-traces.md";
-    const previousFix = (ctx.run as any).previousFixIssues
-      ? `\n\nPREVIOUS FIX ATTEMPT FAILED — JUDGE FEEDBACK:\n${(ctx.run as any).previousFixIssues}`
+    const previousFix = ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n")
+      ? `\n\nPREVIOUS FIX ATTEMPT FAILED — JUDGE FEEDBACK:\n${ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n") ?? ""}`
       : "";
 
     const prompt = `You are the root-cause-debugger. Perform deep analysis.
@@ -2782,7 +2920,7 @@ export const debug: Workflow = {
     { from: "judge-gate",     when: (r) => r.verdict !== "PASS", to: "analyze" },
   ],
   defaults: {
-    maxIterations: 3,
+    maxIterations: 6,
     maxCostUsd: 20,
     maxWallSeconds: 3600,
   },
@@ -2855,7 +2993,7 @@ describe("debug workflow — shape", () => {
 
   it("has correct defaults", () => {
     expect(debug.defaults).toMatchObject({
-      maxIterations: 3,
+      maxIterations: 6,
       maxCostUsd: 20,
       maxWallSeconds: 3600,
     });
@@ -3114,7 +3252,9 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(
         new Error(
           `Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`,
@@ -3122,10 +3262,23 @@ async function waitForAgentVerdict(
       );
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team
       .deliver(agentName, {
@@ -3136,7 +3289,7 @@ async function waitForAgentVerdict(
         message: prompt,
         ts: new Date().toISOString(),
       })
-      .catch(reject);
+      .catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -3149,8 +3302,8 @@ const analyzeStep: Step = {
   name: "analyze",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const judgeLoopFeedback = (ctx.run as any).judgeLoopIssues
-      ? `\n\nJUDGE LOOP FEEDBACK (previous cycle rejected):\n${(ctx.run as any).judgeLoopIssues}`
+    const judgeLoopFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n")
+      ? `\n\nJUDGE LOOP FEEDBACK (previous cycle rejected):\n${ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n") ?? ""}`
       : "";
 
     const prompt = `You are the root-cause-debugger (or planner for non-bug goals). Analyze the failing state.
@@ -3198,11 +3351,11 @@ const implementStep: Step = {
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts?.["plan-artifact-0"] ?? "fix-plan.md";
-    const testFailureHint = (ctx.run as any).testFailureHint
-      ? `\n\nFAILING TESTS FROM PREVIOUS ITERATION:\n${(ctx.run as any).testFailureHint}`
+    const testFailureHint = ctx.run.steps.findLast(s => s.name === "test")?.handoffHint
+      ? `\n\nFAILING TESTS FROM PREVIOUS ITERATION:\n${ctx.run.steps.findLast(s => s.name === "test")?.handoffHint ?? ""}`
       : "";
-    const reviewerIssues = (ctx.run as any).reviewerIssues
-      ? `\n\nREVIEWER ISSUES TO ADDRESS:\n${(ctx.run as any).reviewerIssues}`
+    const reviewerIssues = ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n")
+      ? `\n\nREVIEWER ISSUES TO ADDRESS:\n${ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n") ?? ""}`
       : "";
 
     const prompt = `You are the implementer. Apply the fix according to the plan.
@@ -3816,7 +3969,7 @@ git commit -m "feat(workflows): add fix-loop workflow (analyze → implement →
 
 **`gather-context` in `debug.ts` has a two-sub-step pattern.** The step delivers to `knowledge-retriever` (sub-step `gather-context-code`) and then to `observability-archivist` (sub-step `gather-context-traces`) sequentially within a single `Step.run()`. Both must emit `PASS` for the step to succeed. The `registerVerdictListener` keys are `gather-context-code` and `gather-context-traces` — not `gather-context`. This means the test engine must have verdicts keyed to those sub-step names.
 
-**`audit FAIL` in `verify.ts` means "nothing to do" — it is not an error.** The transition to `halt` on FAIL from `audit` is the "done" path when coverage is already adequate. This is intentional and semantically meaningful — callers should treat a `verify` workflow that halts at `audit` FAIL as a success.
+**`audit PASS` with `handoffHint: "no-gaps"` in `verify.ts` means "nothing to do" — it is not an error.** The transition to `halt` on `PASS + no-gaps` from `audit` is the "done" path when coverage is already adequate. The tester emits `PASS` with `handoffHint: "no-gaps"` instead of `FAIL` so the engine does not treat an adequately-covered codebase as a failed run. Callers should treat a `verify` workflow that halts at `audit` with `no-gaps` as a success.
 
 **`fix-loop` is the integration glue.** After `debug` emits a selected fix option via `handoffHint`, callers may instantiate `fix-loop` with that hint embedded in the goal. This makes `debug → fix-loop` the primary autonomous self-healing pipeline.
 
@@ -3853,14 +4006,29 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team.deliver(agentName, {
       id: crypto.randomUUID(),
@@ -3869,7 +4037,7 @@ async function waitForAgentVerdict(
       summary: `Execute step: ${stepName}`,
       message: prompt,
       ts: new Date().toISOString(),
-    }).catch(reject);
+    }).catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 ```
@@ -3906,7 +4074,7 @@ describe("migration workflow shape", () => {
   });
 
   it("defaults match spec", () => {
-    expect(migration.defaults.maxIterations).toBe(5);
+    expect(migration.defaults.maxIterations).toBe(8);
     expect(migration.defaults.maxCostUsd).toBe(25);
     expect(migration.defaults.maxWallSeconds).toBe(3600);
   });
@@ -4003,14 +4171,29 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team.deliver(agentName, {
       id: crypto.randomUUID(),
@@ -4019,7 +4202,7 @@ async function waitForAgentVerdict(
       summary: `Execute step: ${stepName}`,
       message: prompt,
       ts: new Date().toISOString(),
-    }).catch(reject);
+    }).catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -4222,7 +4405,7 @@ export const migration: Workflow = {
     { from: "judge-gate",      when: (r) => r.verdict !== "PASS", to: "plan" },
   ],
   defaults: {
-    maxIterations: 5,
+    maxIterations: 8,
     maxCostUsd: 25,
     maxWallSeconds: 3600,
   },
@@ -4386,14 +4569,29 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team.deliver(agentName, {
       id: crypto.randomUUID(),
@@ -4402,7 +4600,7 @@ async function waitForAgentVerdict(
       summary: `Execute step: ${stepName}`,
       message: prompt,
       ts: new Date().toISOString(),
-    }).catch(reject);
+    }).catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -4691,21 +4889,21 @@ describe("doc-backfill workflow shape", () => {
   });
 
   it("defaults match spec", () => {
-    expect(docBackfill.defaults.maxIterations).toBe(4);
+    expect(docBackfill.defaults.maxIterations).toBe(7);
     expect(docBackfill.defaults.maxCostUsd).toBe(15);
     expect(docBackfill.defaults.maxWallSeconds).toBe(3600);
   });
 
-  it("audit PASS → plan", () => {
+  it("audit PASS (gaps found) → plan", () => {
     const t = docBackfill.transitions.find(
-      x => x.from === "audit" && x.when({ success: true, verdict: "PASS" } as any),
+      x => x.from === "audit" && x.when({ success: true, verdict: "PASS", handoffHint: undefined } as any),
     );
     expect(t?.to).toBe("plan");
   });
 
-  it("audit FAIL (nothing to document) → halt", () => {
+  it("audit PASS (no-docs-needed) → halt", () => {
     const t = docBackfill.transitions.find(
-      x => x.from === "audit" && x.when({ success: false, verdict: "FAIL" } as any),
+      x => x.from === "audit" && x.when({ success: true, verdict: "PASS", handoffHint: "no-docs-needed" } as any),
     );
     expect(t?.to).toBe("halt");
   });
@@ -4788,14 +4986,29 @@ async function waitForAgentVerdict(
   stepName: string,
 ): Promise<VerdictPayload> {
   return new Promise((resolve, reject) => {
+    let reminder: ReturnType<typeof setTimeout>;
     const timeout = setTimeout(() => {
+      clearTimeout(reminder);
       reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(`${ctx.run.runId}:${stepName}`, (v: VerdictPayload) => {
       clearTimeout(timeout);
+      clearTimeout(reminder);
       resolve(v);
     });
+
+    // Soft reminder at 8 minutes (2 minutes before hard timeout)
+    const reminder = setTimeout(() => {
+      ctx.team.deliver(agentName, {
+        id: crypto.randomUUID(),
+        from: "system",
+        to: agentName,
+        summary: "SYSTEM: 2 minutes remaining",
+        message: "SYSTEM REMINDER: You have approximately 2 minutes before this step times out. Please summarize your findings and call VerdictEmit now.",
+        ts: new Date().toISOString(),
+      }).catch(() => {});
+    }, 8 * 60 * 1000);
 
     ctx.team.deliver(agentName, {
       id: crypto.randomUUID(),
@@ -4804,7 +5017,7 @@ async function waitForAgentVerdict(
       summary: `Execute step: ${stepName}`,
       message: prompt,
       ts: new Date().toISOString(),
-    }).catch(reject);
+    }).catch((err) => { clearTimeout(reminder); reject(err); });
   });
 }
 
@@ -4825,15 +5038,19 @@ Scan the entire codebase and produce a doc-audit.md that lists:
 Call VerdictEmit with:
 - step: "audit"
 - verdict: "PASS" with artifacts: ["doc-audit.md"] if documentation gaps were found
-- verdict: "FAIL" with issues: ["nothing to document"] if the codebase is already fully documented`;
+- verdict: "PASS" with handoffHint: "no-docs-needed" if the codebase is already fully documented`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "knowledge-retriever", prompt, "audit");
+      // "no-docs-needed" means the codebase is already fully documented — still a PASS, routes to halt
+      const noDocsNeeded = verdict.handoffHint === "no-docs-needed";
       return {
-        success: verdict.verdict === "PASS",
-        verdict: verdict.verdict,
+        success: true,
+        verdict: "PASS",
+        handoffHint: noDocsNeeded ? "no-docs-needed" : undefined,
         issues: verdict.issues,
         artifacts: { docAudit: verdict.artifacts?.[0] ?? "doc-audit.md" },
+        summary: noDocsNeeded ? "No documentation gaps found — nothing to document" : undefined,
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
@@ -4990,8 +5207,9 @@ export const docBackfill: Workflow = {
   description: "Audit, plan, write, and review documentation for undocumented code with a judge gate.",
   steps: [auditStep, planStep, writeStep, reviewStep, judgeGateStep],
   transitions: [
-    { from: "audit",      when: (r) => r.verdict === "PASS", to: "plan" },
-    { from: "audit",      when: (r) => r.verdict !== "PASS", to: "halt" },
+    // audit PASS with gaps → plan; audit PASS with no-docs-needed → halt (nothing to do)
+    { from: "audit",      when: (r) => r.verdict === "PASS" && r.handoffHint !== "no-docs-needed", to: "plan" },
+    { from: "audit",      when: (r) => r.verdict === "PASS" && r.handoffHint === "no-docs-needed", to: "halt" },
     { from: "plan",       when: (r) => r.verdict === "PASS", to: "write" },
     { from: "plan",       when: (r) => r.verdict !== "PASS", to: "halt" },
     { from: "write",      when: (r) => r.verdict === "PASS", to: "review" },
@@ -5002,7 +5220,7 @@ export const docBackfill: Workflow = {
     { from: "judge-gate", when: (r) => r.verdict !== "PASS", to: "write" },
   ],
   defaults: {
-    maxIterations: 4,
+    maxIterations: 7,
     maxCostUsd: 15,
     maxWallSeconds: 3600,
   },
@@ -5689,6 +5907,8 @@ pnpm test tests/integration/plan-build-review.test.ts
 
 **Known integration concern:** The `waitForAgentVerdict` in `plan-build-review.ts` has a 10-minute timeout. The mock uses `setImmediate` to call `notifyVerdict` asynchronously after the Promise is created, which correctly simulates an agent responding. If tests hang, verify that `registerVerdictListener` is being called before `deliver` in the step implementation — the order matters for the mock to work.
 
+**Concurrent-run safety:** All `waitForAgentVerdict` helpers now key their verdict listener by `${ctx.run.runId}:${stepName}` instead of plain `stepName`. `ADWEngine.registerVerdictListener` must accept these compound keys and route incoming verdicts to the correct listener. The `notifyVerdict` call in `src/index.ts` passes the raw `VerdictPayload` (which includes `step`); the engine must prepend `runId` when looking up the listener.
+
 ---
 
 ## Task 25: Integration Test — Safety Classifier
@@ -5883,6 +6103,12 @@ import { registerRunStatusCommand } from "./commands/run-status.js";
 
 // Workflows
 import { planBuildReview } from "./workflows/plan-build-review.js";
+import { planBuildReviewFix } from "./workflows/plan-build-review-fix.js";
+import { investigate } from "./workflows/investigate.js";
+import { triage } from "./workflows/triage.js";
+import { verify } from "./workflows/verify.js";
+import { debug } from "./workflows/debug.js";
+import { fixLoop } from "./workflows/fix-loop.js";
 import { migration } from "./workflows/migration.js";
 import { refactorCampaign } from "./workflows/refactor-campaign.js";
 import { docBackfill } from "./workflows/doc-backfill.js";
@@ -5910,6 +6136,12 @@ export default async function (pi: ExtensionAPI) {
   // Register all workflows
   const workflows = new Map([
     ["plan-build-review", planBuildReview],
+    ["plan-build-review-fix", planBuildReviewFix],
+    ["investigate", investigate],
+    ["triage", triage],
+    ["verify", verify],
+    ["debug", debug],
+    ["fix-loop", fixLoop],
     ["migration", migration],
     ["refactor-campaign", refactorCampaign],
     ["doc-backfill", docBackfill],
@@ -5929,7 +6161,7 @@ export default async function (pi: ExtensionAPI) {
 }
 ```
 
-**Note:** The `investigate`, `triage`, `verify`, `debug`, and `fix-loop` workflows referenced in the prompt's import list are planned for Plan B Section 4. The `src/index.ts` above includes only the four workflows implemented in Plan B Sections 1–3. The workflows map is easily extended: add the import and a `[name, workflow]` entry.
+**Note:** All 9 workflows are now wired: `plan-build-review`, `plan-build-review-fix`, `investigate`, `triage`, `verify`, `debug`, `fix-loop`, `migration`, `refactor-campaign`, and `doc-backfill`. The workflows map is easily extended: add the import and a `[name, workflow]` entry.
 
 ### Step 4 — Update `src/commands/run-start.ts` workflow description
 
@@ -5937,7 +6169,7 @@ In `src/commands/run-start.ts`, update the `workflow` parameter description to l
 
 ```typescript
 workflow: Type.String({
-  description: "Workflow name: plan-build-review | migration | refactor-campaign | doc-backfill",
+  description: "Workflow name: plan-build-review | plan-build-review-fix | investigate | triage | verify | debug | fix-loop | migration | refactor-campaign | doc-backfill",
 }),
 ```
 

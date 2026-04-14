@@ -200,7 +200,8 @@ CREATE TABLE IF NOT EXISTS events (
   agent_name  TEXT,
   summary     TEXT,
   payload     TEXT NOT NULL,
-  FOREIGN KEY (run_id) REFERENCES runs(run_id)
+  FOREIGN KEY (run_id) REFERENCES runs(run_id),
+  UNIQUE(run_id, ts, type, category)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_run_id  ON events(run_id);
@@ -214,6 +215,7 @@ export function openDb(dbPath: string): Db {
   db.exec(SCHEMA);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
+  db.pragma("foreign_keys = ON");
   return db;
 }
 
@@ -264,7 +266,7 @@ export function insertEvent(
   }
 ): void {
   db.prepare(`
-    INSERT INTO events (run_id, ts, category, type, step, agent_name, summary, payload)
+    INSERT OR IGNORE INTO events (run_id, ts, category, type, step, agent_name, summary, payload)
     VALUES (@runId, @ts, @category, @type, @step, @agentName, @summary, @payload)
   `).run({
     runId: event.runId,
@@ -1191,7 +1193,6 @@ C2 adds three capabilities:
 import { watch, createReadStream, statSync } from "fs";
 import { readdir } from "fs/promises";
 import { join } from "path";
-import { createInterface } from "readline";
 import type { Db } from "./storage.js";
 import { insertEvent, upsertRun } from "./storage.js";
 import type { EngteamEvent } from "../src/types.js";
@@ -1259,20 +1260,31 @@ export class EventWatcher {
 
     if (fileSize <= state.offset) return;
 
-    const lines: string[] = [];
+    // Read new bytes since last offset
+    let newContent = "";
     await new Promise<void>((resolve, reject) => {
       const stream = createReadStream(filePath, {
         start: state.offset,
         encoding: "utf8",
       });
-      const rl = createInterface({ input: stream, crlfDelay: Infinity });
-      rl.on("line", (line) => { if (line.trim()) lines.push(line); });
-      rl.on("close", resolve);
-      rl.on("error", reject);
+      stream.on("data", (chunk) => { newContent += chunk; });
+      stream.on("end", resolve);
+      stream.on("error", reject);
     });
 
-    state.offset = fileSize;
+    // Split on newlines — the last segment may be a partial line
+    const parts = newContent.split("\n");
+    const completeLines = parts.slice(0, -1); // all but last (which may be partial)
+    const partial = parts[parts.length - 1];  // "" if content ended with \n, or a fragment
+
+    // Advance offset only by the bytes of complete content consumed
+    // (everything up to and including the last newline)
+    const consumed = completeLines.join("\n") + (completeLines.length > 0 ? "\n" : "");
+    state.offset += Buffer.byteLength(consumed, "utf8");
+    // If partial is non-empty, next read starts from current offset (before the fragment)
     this.fileStates.set(filePath, state);
+
+    const lines = completeLines.filter(line => line.trim());
 
     for (const line of lines) {
       try {
@@ -1742,7 +1754,6 @@ feat: minimal HTML dashboard at GET /
 
 ```typescript
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -1791,19 +1802,11 @@ export async function startServer(port: number): Promise<void> {
 }
 
 export function registerObserveCommand(pi: ExtensionAPI): void {
-  pi.registerCommand({
-    name: "observe",
-    description:
-      "Start the pi-engteam observability server and open the dashboard URL",
-    argsSchema: Type.Object({
-      stop: Type.Optional(
-        Type.Boolean({
-          description: "Stop the server instead of starting it",
-        }),
-      ),
-    }),
-    handler: async (args, _ctx) => {
-      if (args.stop) {
+  pi.registerCommand("observe", {
+    description: "Start or stop the pi-engteam observability server. Usage: /observe [stop]",
+    handler: async (args: string, _ctx) => {
+      const stop = args.trim().toLowerCase() === "stop";
+      if (stop) {
         if (serverProcess) {
           serverProcess.kill();
           serverProcess = null;
@@ -1922,15 +1925,15 @@ describe("/observe command handler", () => {
 
     let capturedHandler: Function | null = null;
     const fakePi = {
-      registerCommand: vi.fn((def: any) => {
-        capturedHandler = def.handler;
+      registerCommand: vi.fn((_name: string, opts: any) => {
+        capturedHandler = opts.handler;
       }),
     };
 
     registerObserveCommand(fakePi as any);
     expect(fakePi.registerCommand).toHaveBeenCalledOnce();
 
-    const result = await capturedHandler!({}, {});
+    const result = await capturedHandler!("", {});
     expect(result.message).toMatch(/already running/i);
     expect(result.message).toContain("4747");
   });
@@ -1947,13 +1950,13 @@ describe("/observe command handler", () => {
 
     let capturedHandler: Function | null = null;
     const fakePi = {
-      registerCommand: vi.fn((def: any) => {
-        capturedHandler = def.handler;
+      registerCommand: vi.fn((_name: string, opts: any) => {
+        capturedHandler = opts.handler;
       }),
     };
 
     registerObserveCommand(fakePi as any);
-    const result = await capturedHandler!({ stop: true }, {});
+    const result = await capturedHandler!("stop", {});
     expect(result.message).toBe("Observability server stopped.");
     expect(fakeProc.kill).toHaveBeenCalledOnce();
   });
@@ -1967,18 +1970,18 @@ describe("/observe command handler", () => {
 
     let capturedHandler: Function | null = null;
     const fakePi = {
-      registerCommand: vi.fn((def: any) => {
-        capturedHandler = def.handler;
+      registerCommand: vi.fn((_name: string, opts: any) => {
+        capturedHandler = opts.handler;
       }),
     };
 
     registerObserveCommand(fakePi as any);
     // serverProcess starts as null (fresh module)
-    const result = await capturedHandler!({ stop: true }, {});
+    const result = await capturedHandler!("stop", {});
     expect(result.message).toBe("No observability server is running.");
   });
 
-  it("registerCommand is called with name='observe'", async () => {
+  it("registerCommand is called with 'observe' as the first argument", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
 
     const { registerObserveCommand } = await import(
@@ -1988,9 +1991,7 @@ describe("/observe command handler", () => {
     const fakePi = { registerCommand: vi.fn() };
     registerObserveCommand(fakePi as any);
 
-    expect(fakePi.registerCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "observe" }),
-    );
+    expect(fakePi.registerCommand.mock.calls[0][0]).toBe("observe");
   });
 });
 ```
