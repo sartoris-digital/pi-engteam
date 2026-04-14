@@ -5,6 +5,9 @@ export default defineConfig([
     entry: ["src/index.ts"],
     format: ["esm"],
     splitting: false,
+    // Pi loads extensions in an isolated context with no node_modules,
+    // so bundle every runtime dep except the SDK Pi itself provides.
+    noExternal: ["shell-quote", "@sinclair/typebox"],
     dts: true,
     sourcemap: true,
     clean: true,
