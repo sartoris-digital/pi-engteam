@@ -21,6 +21,7 @@ import { refactorCampaign } from "./workflows/refactor-campaign.js";
 import { docBackfill } from "./workflows/doc-backfill.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
+import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
 import { loadSafetyConfig } from "./config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
 import { createVerdictEmitTool } from "./team/tools/VerdictEmit.js";
@@ -141,6 +142,7 @@ export default async function (pi: ExtensionAPI) {
 
   registerDoctorCommand(pi);
   registerObserveCommand(pi);
+  registerWorkflowShortcuts(pi, engine);
   registerTeamStartCommand(pi, team, AGENT_DEFS);
   registerTeamStopCommand(pi, team);
   registerRunStartCommand(pi, engine);
