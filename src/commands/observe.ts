@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { spawn } from "child_process";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
+import { homedir } from "os";
 
 export const SERVER_PORT = parseInt(
   process.env.PI_ENGTEAM_SERVER_PORT ?? "4747",
@@ -28,8 +28,8 @@ export async function isServerRunning(port: number): Promise<boolean> {
 }
 
 export async function startServer(port: number): Promise<void> {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const serverBin = join(__dirname, "..", "..", "dist", "server.js");
+  // server.js is installed to ~/.pi/engteam/server.js by scripts/install.sh
+  const serverBin = join(homedir(), ".pi", "engteam", "server.js");
 
   serverProcess = spawn("node", [serverBin], {
     detached: false,
