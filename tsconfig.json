@@ -1,9 +1,10 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2023",
+    "lib": ["ES2023"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist",
     "declaration": true,
     "declarationMap": true,
@@ -13,6 +14,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "server/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
 }
