@@ -53,11 +53,21 @@ export function upsertRun(db: Db, run: {
     INSERT INTO runs (run_id, workflow, goal, status, current_step, iteration, created_at, updated_at)
     VALUES (@runId, @workflow, @goal, @status, @currentStep, @iteration, @createdAt, @updatedAt)
     ON CONFLICT(run_id) DO UPDATE SET
+      workflow=excluded.workflow, goal=excluded.goal,
       status=excluded.status, current_step=excluded.current_step,
       iteration=excluded.iteration, updated_at=excluded.updated_at
   `).run({ runId: run.runId, workflow: run.workflow, goal: run.goal, status: run.status,
            currentStep: run.currentStep ?? null, iteration: run.iteration ?? 0,
            createdAt: run.createdAt, updatedAt: run.updatedAt });
+}
+
+/** Insert a minimal run stub only if the run_id doesn't already exist.
+ *  Used by EventWatcher to satisfy the FK constraint before inserting events. */
+export function ensureRunExists(db: Db, runId: string, ts: string): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO runs (run_id, workflow, goal, status, created_at, updated_at)
+    VALUES (?, 'unknown', '', 'running', ?, ?)
+  `).run(runId, ts, ts);
 }
 
 export function insertEvent(db: Db, event: {

@@ -1,44 +1,40 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 import type { ADWEngine } from "../adw/ADWEngine.js";
 
 export function registerRunStartCommand(pi: ExtensionAPI, engine: ADWEngine): void {
-  pi.registerCommand({
-    name: "run-start",
-    description: "Start a workflow run. Usage: /run-start plan-build-review \"Add login feature\"",
-    argsSchema: Type.Object({
-      workflow: Type.String({
-        description: "Workflow name: plan-build-review, investigate, triage, verify, debug",
-      }),
-      goal: Type.String({
-        description: "Goal description — what the team should accomplish",
-      }),
-      maxIterations: Type.Optional(
-        Type.Number({ description: "Max fix iterations (default 8)" }),
-      ),
-      maxCostUsd: Type.Optional(
-        Type.Number({ description: "Max cost in USD (default 20)" }),
-      ),
-    }),
-    handler: async (args, _ctx) => {
+  pi.registerCommand("run-start", {
+    description:
+      "Start a workflow run. Usage: /run-start <workflow> \"<goal>\" [maxIterations] [maxCostUsd]",
+    handler: async (args, ctx) => {
+      // Parse: workflow "quoted goal" [maxIter] [maxCost]
+      const match = args.match(/^(\S+)\s+"([^"]+)"(?:\s+(\d+))?(?:\s+([\d.]+))?$/);
+      if (!match) {
+        ctx.ui.notify(
+          'Usage: /run-start <workflow> "<goal>" [maxIterations] [maxCostUsd]\n' +
+            'Example: /run-start plan-build-review "Add login feature"',
+          "error",
+        );
+        return;
+      }
+      const [, workflow, goal, maxIterStr, maxCostStr] = match;
       const run = await engine.startRun({
-        workflow: args.workflow,
-        goal: args.goal,
+        workflow,
+        goal,
         budget: {
-          maxIterations: args.maxIterations,
-          maxCostUsd: args.maxCostUsd,
+          maxIterations: maxIterStr ? parseInt(maxIterStr, 10) : undefined,
+          maxCostUsd: maxCostStr ? parseFloat(maxCostStr) : undefined,
         },
       });
       void engine.executeRun(run.runId);
-      return {
-        message: [
+      ctx.ui.notify(
+        [
           `Run ${run.runId} started.`,
-          `Workflow: ${args.workflow}`,
-          `Goal: ${args.goal}`,
+          `Workflow: ${workflow}`,
+          `Goal: ${goal}`,
           `Monitor: ~/.pi/engteam/runs/${run.runId}/events.jsonl`,
         ].join("\n"),
-        runId: run.runId,
-      };
+        "info",
+      );
     },
   });
 }
