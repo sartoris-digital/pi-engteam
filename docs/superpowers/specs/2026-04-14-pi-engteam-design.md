@@ -97,10 +97,12 @@ Each ships as a markdown file with frontmatter (`name`, `description`, `tools`, 
 ### 4.1 Lifecycle
 
 1. Extension init → `TeamRuntime` instance created, agents discovered from `~/.pi/agent/agents/engteam-*.md`
-2. `/team-start` or first workflow invocation → `TeamRuntime.ensureTeammates(names[])` spawns missing sessions in parallel using `createAgentSession()` from `@mariozechner/pi-coding-agent`
-3. Each teammate receives an injected system-prompt suffix that registers its `name`, the `SendMessage` tool, and team-comms conventions
-4. Teammates idle after every assistant turn; `TeamRuntime.deliver(msg)` calls `session.continue(prompt)` with a task-notification XML-wrapped message
-5. On `/run-abort` or Pi shutdown: revoke approval tokens, flush observer, call `session.shutdown()` on all teammates
+2. `/team-start` or first workflow invocation → `TeamRuntime.ensureTeammates(names[])` spawns missing sessions in parallel using `createAgentSession()` from `@mariozechner/pi-coding-agent`. **Important:** when spawning teammates with a project-specific `cwd`, tools must be created via `createCodingTools(cwd)` factory functions — the pre-built `codingTools` instances use `process.cwd()` and will resolve paths incorrectly.
+3. Each teammate receives an injected system-prompt suffix (via `DefaultResourceLoader.systemPromptOverride`) that registers its `name`, the `SendMessage` tool, and team-comms conventions
+4. Teammates idle after every assistant turn; `TeamRuntime.deliver(msg)` calls `session.prompt(prompt)` with a task-notification XML-wrapped message. Messages queued during an active turn use `session.steer(text)`.
+5. On `/run-abort` or Pi shutdown: revoke approval tokens, flush observer, call `session.dispose()` on all teammates
+6. **Session events:** Use `session_start` with `event.reason` (`"startup" | "reload" | "new" | "resume" | "fork"`) — the former `session_switch` and `session_fork` events were removed in Pi v0.65.0.
+7. **Run resume:** `/run-resume` cannot call session-replacement methods on `AgentSession` directly. Teammate sessions for resumed runs are created via `createAgentSessionRuntime()` with a `CreateAgentSessionRuntimeFactory` that rebuilds cwd-bound services. After replacement, `runtime.session` holds the live session and subscriptions must be rebound.
 
 ### 4.2 Message bus
 
@@ -132,6 +134,8 @@ Routing rules:
 - Max queue depth per teammate: 100 (drop-oldest + log when exceeded)
 
 ### 4.3 Custom tools registered on every teammate
+
+All custom tools are defined using Pi's `defineTool()` helper (added in v0.65.0), which provides full TypeScript parameter type inference via TypeBox schemas. Tools are passed via `customTools: [...]` in `createAgentSession()`.
 
 - `SendMessage({to, summary, message, requestId?})`: enqueue a `TeamMessage`
 - `TaskList()`, `TaskUpdate({taskId, status, notes?, owner?})`: shared task ledger at `.pi/engteam/runs/{runId}/tasks.json`
