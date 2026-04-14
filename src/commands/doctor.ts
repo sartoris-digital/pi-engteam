@@ -17,7 +17,7 @@ async function checkExists(path: string, label: string): Promise<CheckResult> {
 export function registerDoctorCommand(pi: ExtensionAPI): void {
   pi.registerCommand("engteam-doctor", {
     description: "Check pi-engteam installation health",
-    handler: async (_args: string, _ctx) => {
+    handler: async (_args: string, ctx) => {
       const home = homedir();
       const checks: CheckResult[] = [];
 
@@ -76,7 +76,7 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
       const passed = checks.filter(c => c.ok).length;
       const failed = checks.filter(c => !c.ok).length;
 
-      const lines = [
+      const output = [
         `pi-engteam doctor — ${passed} passed, ${failed} issues`,
         "",
         ...checks.map(c => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.message}`),
@@ -84,9 +84,9 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
         failed > 0
           ? "Run 'pnpm install:extension' to fix missing files."
           : "All checks passed.",
-      ];
+      ].join("\n");
 
-      return { message: lines.join("\n") };
+      ctx.ui.notify(output, "info");
     },
   });
 }

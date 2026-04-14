@@ -54,32 +54,37 @@ export async function startServer(port: number): Promise<void> {
 export function registerObserveCommand(pi: ExtensionAPI): void {
   pi.registerCommand("observe", {
     description: "Start or stop the pi-engteam observability server. Usage: /observe [stop]",
-    handler: async (args: string, _ctx) => {
+    handler: async (args: string, ctx) => {
       const stop = args.trim().toLowerCase() === "stop";
       if (stop) {
         if (serverProcess) {
           serverProcess.kill();
           serverProcess = null;
-          return { message: "Observability server stopped." };
+          ctx.ui.notify("Observability server stopped.", "info");
+          return;
         }
-        return { message: "No observability server is running." };
+        ctx.ui.notify("No observability server is running.", "info");
+        return;
       }
 
       const already = await isServerRunning(SERVER_PORT);
       if (already) {
-        return {
-          message: `Observability server already running at http://127.0.0.1:${SERVER_PORT}`,
-        };
+        ctx.ui.notify(
+          `Observability server already running at http://127.0.0.1:${SERVER_PORT}`,
+          "info",
+        );
+        return;
       }
 
       await startServer(SERVER_PORT);
-      return {
-        message: [
+      ctx.ui.notify(
+        [
           `Observability server started on port ${SERVER_PORT}.`,
           `Dashboard: http://127.0.0.1:${SERVER_PORT}`,
           `API:       http://127.0.0.1:${SERVER_PORT}/runs`,
         ].join("\n"),
-      };
+        "info",
+      );
     },
   });
 }

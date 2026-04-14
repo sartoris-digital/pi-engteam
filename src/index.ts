@@ -10,6 +10,17 @@ import { MessageBus } from "./team/MessageBus.js";
 import { TeamRuntime } from "./team/TeamRuntime.js";
 import { ADWEngine } from "./adw/ADWEngine.js";
 import { planBuildReview } from "./workflows/plan-build-review.js";
+import { planBuildReviewFix } from "./workflows/plan-build-review-fix.js";
+import { investigate } from "./workflows/investigate.js";
+import { triage } from "./workflows/triage.js";
+import { verify } from "./workflows/verify.js";
+import { debug } from "./workflows/debug.js";
+import { fixLoop } from "./workflows/fix-loop.js";
+import { migration } from "./workflows/migration.js";
+import { refactorCampaign } from "./workflows/refactor-campaign.js";
+import { docBackfill } from "./workflows/doc-backfill.js";
+import { registerDoctorCommand } from "./commands/doctor.js";
+import { registerObserveCommand } from "./commands/observe.js";
 import { loadSafetyConfig } from "./config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
 import { createVerdictEmitTool } from "./team/tools/VerdictEmit.js";
@@ -105,7 +116,18 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  const workflows = new Map([["plan-build-review", planBuildReview]]);
+  const workflows = new Map([
+    ["plan-build-review", planBuildReview],
+    ["plan-build-review-fix", planBuildReviewFix],
+    ["investigate", investigate],
+    ["triage", triage],
+    ["verify", verify],
+    ["debug", debug],
+    ["fix-loop", fixLoop],
+    ["migration", migration],
+    ["refactor-campaign", refactorCampaign],
+    ["doc-backfill", docBackfill],
+  ]);
   const engine = new ADWEngine({ runsDir: RUNS_DIR, workflows, team, observer });
 
   const originalStartRun = engine.startRun.bind(engine);
@@ -117,6 +139,8 @@ export default async function (pi: ExtensionAPI) {
 
   observer.subscribeToBus(bus, activeRunId);
 
+  registerDoctorCommand(pi);
+  registerObserveCommand(pi);
   registerTeamStartCommand(pi, team, AGENT_DEFS);
   registerTeamStopCommand(pi, team);
   registerRunStartCommand(pi, engine);

@@ -27,6 +27,14 @@ function buildMockPi(): { registerCommand: ReturnType<typeof vi.fn>; lastHandler
   };
 }
 
+function buildMockCtx() {
+  const notify = vi.fn();
+  return {
+    ui: { notify },
+    get lastMessage(): string { return (notify.mock.calls[0]?.[0] as string) ?? ""; },
+  };
+}
+
 describe("registerDoctorCommand", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -48,9 +56,11 @@ describe("registerDoctorCommand", () => {
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
 
-    const result = await mock.lastHandler({}, {});
-    expect(result.message).toContain("All checks passed.");
-    expect(result.message).not.toContain("✗");
+    const ctx = buildMockCtx();
+    await mock.lastHandler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledOnce();
+    expect(ctx.lastMessage).toContain("All checks passed.");
+    expect(ctx.lastMessage).not.toContain("✗");
   });
 
   it("reports failures when extension file is missing", async () => {
@@ -61,10 +71,11 @@ describe("registerDoctorCommand", () => {
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
 
-    const result = await mock.lastHandler({}, {});
-    expect(result.message).toContain("✗");
-    expect(result.message).toContain("issues");
-    expect(result.message).toContain("pnpm install:extension");
+    const ctx = buildMockCtx();
+    await mock.lastHandler("", ctx);
+    expect(ctx.lastMessage).toContain("✗");
+    expect(ctx.lastMessage).toContain("issues");
+    expect(ctx.lastMessage).toContain("pnpm install:extension");
   });
 
   it("includes all 14 agent checks", async () => {
@@ -75,28 +86,29 @@ describe("registerDoctorCommand", () => {
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
 
-    const result = await mock.lastHandler({}, {});
+    const ctx = buildMockCtx();
+    await mock.lastHandler("", ctx);
     const agentNames = [
       "planner", "implementer", "reviewer", "architect", "codebase-cartographer",
       "tester", "security-auditor", "performance-analyst", "bug-triage", "incident-investigator",
       "root-cause-debugger", "judge", "knowledge-retriever", "observability-archivist",
     ];
     for (const name of agentNames) {
-      expect(result.message).toContain(`Agent: ${name}`);
+      expect(ctx.lastMessage).toContain(`Agent: ${name}`);
     }
   });
 
   it("reports safety.json issue but does not fail hard when safety.json is absent", async () => {
     const registerDoctorCommand = await loadDoctor();
-    // stat succeeds for everything except safety.json is handled by readFile
     vi.mocked(stat).mockResolvedValue({} as any);
     vi.mocked(readFile).mockRejectedValue(new Error("ENOENT"));
 
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
 
-    const result = await mock.lastHandler({}, {});
-    expect(result.message).toContain("safety.json");
-    expect(result.message).toContain("Missing or invalid");
+    const ctx = buildMockCtx();
+    await mock.lastHandler("", ctx);
+    expect(ctx.lastMessage).toContain("safety.json");
+    expect(ctx.lastMessage).toContain("Missing or invalid");
   });
 });
