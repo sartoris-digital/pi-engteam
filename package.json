@@ -8,7 +8,10 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "install:extension": "bash scripts/install.sh",
+    "uninstall:extension": "bash scripts/uninstall.sh",
+    "engteam:install": "pnpm build && bash scripts/install.sh"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0",
