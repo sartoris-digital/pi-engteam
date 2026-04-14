@@ -147,22 +147,49 @@ bash scripts/uninstall.sh
 
 ### Workflow shortcuts
 
-Shortcuts let you invoke workflows with a natural-language goal instead of remembering workflow IDs:
+Shortcuts let you invoke workflows with a natural-language goal. Each command takes the goal as a free-text argument — no workflow IDs to remember.
 
-| Command | Workflow | Example |
-|---------|----------|---------|
-| `/plan` | `plan-build-review` | `/plan add OAuth login to the user service` |
-| `/plan-fix` | `plan-build-review-fix` | `/plan-fix the login redirect is broken` |
-| `/investigate` | `investigate` | `/investigate why does the payments service occasionally time out` |
-| `/triage` | `triage` | `/triage users are reporting 500s after the last deploy` |
-| `/verify` | `verify` | `/verify the new auth middleware is correct` |
-| `/debug` | `debug` | `/debug NullPointerException in CartService.checkout()` |
-| `/fix` | `fix-loop` | `/fix the failing tests in UserServiceTest` |
-| `/migrate` | `migration` | `/migrate add created_by column to orders table` |
-| `/refactor` | `refactor-campaign` | `/refactor extract payment logic from OrderService` |
-| `/docs` | `doc-backfill` | `/docs the public API in src/api/` |
+| Command | Workflow | Description |
+|---------|----------|-------------|
+| `/plan <goal>` | `plan-build-review` | Plan and implement a feature, then review for correctness. |
+| `/plan-fix <goal>` | `plan-build-review-fix` | Plan and implement a feature with a self-healing review+fix loop. |
+| `/investigate <incident>` | `investigate` | Gather incident context, build a hypothesis tree, and gate on judge review. |
+| `/triage <bug>` | `triage` | Classify a bug report, assign severity, and route to the right owner. |
+| `/verify <module>` | `verify` | Audit code coverage, write missing tests, validate correctness. |
+| `/debug <problem>` | `debug` | Gather context, perform root cause analysis, and propose fix options. |
+| `/fix <issue>` | `fix-loop` | Analyze a failing test or bug, implement a fix, and iterate until tests pass. |
+| `/migrate <goal>` | `migration` | Plan, security-review, implement, and test a database migration. |
+| `/refactor <goal>` | `refactor-campaign` | Map, design, implement, verify, and review a large refactor campaign. |
+| `/docs <module>` | `doc-backfill` | Audit, plan, write, and review documentation for undocumented code. |
 
-Run `/workflows` to see the full list with descriptions.
+**Examples:**
+
+```
+/plan "Add email/password login with JWT tokens"
+/plan-fix "Refactor auth middleware to support OAuth"
+/investigate "Production API returning 503s since 14:00 UTC"
+/triage "Users on iOS 17 cannot complete checkout — cart empties on payment step"
+/verify "The payment processing module in src/payments/"
+/debug "Memory usage grows 50 MB/hour in the event processor worker"
+/fix "tests/unit/payments.test.ts is failing after the refactor"
+/migrate "Add a non-nullable email_verified column to the users table"
+/refactor "Break the 900-line UserService into focused domain classes"
+/docs "All exported functions in src/api/"
+```
+
+Run `/workflows` to print the full list with examples in your Pi session.
+
+Once a shortcut starts a run it prints the run ID and three ways to follow progress:
+
+```
+▶ plan-build-review started (run a1b2c3d4)
+Goal: Add email/password login with JWT tokens
+
+Watch progress:
+  /run-status a1b2c3d4-...
+  /observe  (dashboard at http://127.0.0.1:4747)
+  tail -f ~/.pi/engteam/runs/<runId>/events.jsonl
+```
 
 ### Utilities
 
