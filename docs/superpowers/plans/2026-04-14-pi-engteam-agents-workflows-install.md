@@ -5173,8 +5173,8 @@ async function loadDoctor() {
 
 function buildMockPi(): { registerCommand: ReturnType<typeof vi.fn>; lastHandler: any } {
   let lastHandler: any;
-  const registerCommand = vi.fn((def: any) => {
-    lastHandler = def.handler;
+  const registerCommand = vi.fn((_name: string, opts: any) => {
+    lastHandler = opts.handler;
   });
   return {
     registerCommand,
@@ -5192,7 +5192,7 @@ describe("registerDoctorCommand", () => {
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
     expect(mock.registerCommand).toHaveBeenCalledOnce();
-    expect(mock.registerCommand.mock.calls[0][0].name).toBe("engteam-doctor");
+    expect(mock.registerCommand.mock.calls[0][0]).toBe("engteam-doctor");
   });
 
   it("reports all checks passed when all files exist and safety.json is valid JSON", async () => {
@@ -5268,7 +5268,6 @@ pnpm test tests/unit/commands/doctor.test.ts
 
 ```typescript
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 import { stat, readFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
@@ -5285,11 +5284,9 @@ async function checkExists(path: string, label: string): Promise<CheckResult> {
 }
 
 export function registerDoctorCommand(pi: ExtensionAPI): void {
-  pi.registerCommand({
-    name: "engteam-doctor",
+  pi.registerCommand("engteam-doctor", {
     description: "Check pi-engteam installation health",
-    argsSchema: Type.Object({}),
-    handler: async (_args, _ctx) => {
+    handler: async (_args: string, _ctx) => {
       const home = homedir();
       const checks: CheckResult[] = [];
 
