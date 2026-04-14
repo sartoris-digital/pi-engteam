@@ -82,6 +82,7 @@ export type ClassifierResult = {
 };
 
 export type VerdictPayload = {
+  runId?: string;
   step: string;
   verdict: Verdict;
   issues?: string[];

@@ -12,7 +12,7 @@ async function waitForAgentVerdict(
       reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
     }, 10 * 60 * 1000);
 
-    (ctx.engine as any).registerVerdictListener(stepName, (v: VerdictPayload) => {
+    (ctx.engine as any).registerVerdictListener(ctx.run.runId, stepName, (v: VerdictPayload) => {
       clearTimeout(timeout);
       resolve(v);
     });

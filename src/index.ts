@@ -86,7 +86,7 @@ export default async function (pi: ExtensionAPI) {
         createTaskListTool(RUNS_DIR, activeRunId),
         createTaskUpdateTool(RUNS_DIR, activeRunId),
         createVerdictEmitTool((v) => {
-          engine.notifyVerdict(v);
+          engine.notifyVerdict(activeRunId, v);
           observer.emit({
             runId: activeRunId,
             agentName,

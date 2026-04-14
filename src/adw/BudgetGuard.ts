@@ -32,14 +32,19 @@ export function checkBudget(state: RunState): BudgetStatus {
   };
 }
 
-export function tickBudget(state: RunState, elapsedSeconds: number): RunState {
+export function tickBudget(
+  state: RunState,
+  elapsedSeconds: number,
+  usage?: { costUsd?: number; tokens?: number },
+): RunState {
   return {
     ...state,
     budget: {
       ...state.budget,
       spent: {
-        ...state.budget.spent,
+        costUsd: state.budget.spent.costUsd + (usage?.costUsd ?? 0),
         wallSeconds: state.budget.spent.wallSeconds + elapsedSeconds,
+        tokens: state.budget.spent.tokens + (usage?.tokens ?? 0),
       },
     },
   };

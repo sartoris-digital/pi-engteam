@@ -28,26 +28,30 @@ export class ADWEngine {
 
   constructor(private config: ADWConfig) {}
 
-  registerVerdictListener(step: string, listener: (v: VerdictPayload) => void): void {
-    this.verdictListeners.set(step, listener);
+  registerVerdictListener(runId: string, step: string, listener: (v: VerdictPayload) => void): void {
+    this.verdictListeners.set(`${runId}:${step}`, listener);
   }
 
-  notifyVerdict(v: VerdictPayload): void {
-    const listener = this.verdictListeners.get(v.step);
+  notifyVerdict(runId: string, v: VerdictPayload): void {
+    const key = `${runId}:${v.step}`;
+    const listener = this.verdictListeners.get(key);
     if (listener) {
-      this.verdictListeners.delete(v.step);
+      this.verdictListeners.delete(key);
       listener(v);
     }
   }
 
   async startRun(params: StartRunParams): Promise<RunState> {
     const runId = crypto.randomUUID();
-    const state = await createRunState({
+    const workflow = this.config.workflows.get(params.workflow);
+    if (!workflow) throw new Error(`Workflow '${params.workflow}' not found`);
+    let state = await createRunState({
       runId,
       workflow: params.workflow,
       goal: params.goal,
       budget: params.budget,
     });
+    state = { ...state, currentStep: workflow.steps[0].name };
     await saveRunState(this.config.runsDir, state);
 
     const { writeFile } = await import("fs/promises");
@@ -135,7 +139,14 @@ export class ADWEngine {
       }
 
       const elapsed = (Date.now() - stepStart) / 1000;
-      state = tickBudget(state, elapsed);
+      state = tickBudget(state, elapsed, {
+        costUsd: (result as any).costUsd,
+        tokens: (result as any).tokens,
+      });
+      // Fix 2: merge step artifacts into run-level artifacts map
+      if (result.artifacts) {
+        Object.assign(state.artifacts, result.artifacts);
+      }
       state = updateStep(state, state.currentStep, {
         verdict: result.verdict,
         issues: result.issues,
