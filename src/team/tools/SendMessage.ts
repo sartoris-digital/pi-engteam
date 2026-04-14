@@ -1,4 +1,5 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import type { MessageBus } from "../MessageBus.js";
 
@@ -27,6 +28,21 @@ export function createSendMessageTool(bus: MessageBus, senderName: string) {
         content: [{ type: "text" as const, text: `Message sent to ${params.to}` }],
         details: {},
       };
+    },
+    renderCall(args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const dest = args.to === "*" ? theme.fg("muted", "broadcast") : theme.fg("accent", args.to);
+      text.setText(`${dest}  ${args.summary}`);
+      return text;
+    },
+    renderResult(result, _options, _theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const output = result.content
+        .filter((c): c is { type: "text"; text: string } => c.type === "text")
+        .map(c => c.text)
+        .join("");
+      text.setText(output);
+      return text;
     },
   });
 }

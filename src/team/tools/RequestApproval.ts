@@ -1,4 +1,5 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
@@ -36,6 +37,25 @@ export function createRequestApprovalTool(runsDir: string, runId: string) {
         }],
         details: {},
       };
+    },
+    renderCall(args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      text.setText(`${theme.fg("warning", "⚠ request")}  ${args.op}  ${args.command}`);
+      return text;
+    },
+    renderResult(result, _options, _theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const raw = result.content
+        .filter((c): c is { type: "text"; text: string } => c.type === "text")
+        .map(c => c.text)
+        .join("");
+      try {
+        const parsed = JSON.parse(raw) as { requestId?: string };
+        text.setText(`pending  requestId=${parsed.requestId ?? "?"}`);
+      } catch {
+        text.setText(raw);
+      }
+      return text;
     },
   });
 }

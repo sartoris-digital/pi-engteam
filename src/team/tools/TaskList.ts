@@ -1,4 +1,5 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
@@ -38,6 +39,25 @@ export function createTaskListTool(runsDir: string, runId: string) {
         content: [{ type: "text" as const, text: JSON.stringify(tasks, null, 2) }],
         details: {},
       };
+    },
+    renderCall(_args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      text.setText(theme.fg("muted", "list tasks"));
+      return text;
+    },
+    renderResult(result, _options, _theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const raw = result.content
+        .filter((c): c is { type: "text"; text: string } => c.type === "text")
+        .map(c => c.text)
+        .join("");
+      try {
+        const tasks = JSON.parse(raw) as Task[];
+        text.setText(tasks.length === 0 ? "(no tasks)" : tasks.map(t => `${t.taskId}  ${t.status}`).join("\n"));
+      } catch {
+        text.setText(raw);
+      }
+      return text;
     },
   });
 }
@@ -80,6 +100,22 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
         content: [{ type: "text" as const, text: `Task ${params.taskId} updated: ${params.status}` }],
         details: {},
       };
+    },
+    renderCall(args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const color = args.status === "completed" ? "success" : args.status === "blocked" ? "error" : "accent";
+      text.setText(`${theme.fg("muted", args.taskId)}  ${theme.fg(color, args.status)}`);
+      return text;
+    },
+    renderResult(result, _options, _theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      text.setText(
+        result.content
+          .filter((c): c is { type: "text"; text: string } => c.type === "text")
+          .map(c => c.text)
+          .join(""),
+      );
+      return text;
     },
   });
 }

@@ -1,4 +1,5 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import type { VerdictPayload } from "../../types.js";
 
@@ -30,6 +31,23 @@ export function createVerdictEmitTool(onVerdict: (v: VerdictPayload) => void) {
         content: [{ type: "text" as const, text: `Verdict recorded: ${params.verdict}` }],
         details: {},
       };
+    },
+    renderCall(args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const color = args.verdict === "PASS" ? "success" : args.verdict === "FAIL" ? "error" : "warning";
+      const issues = args.issues?.length ? `  (${args.issues.length} issue${args.issues.length === 1 ? "" : "s"})` : "";
+      text.setText(`${theme.fg(color, args.verdict)}  [${args.step}]${issues}`);
+      return text;
+    },
+    renderResult(result, _options, _theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      text.setText(
+        result.content
+          .filter((c): c is { type: "text"; text: string } => c.type === "text")
+          .map(c => c.text)
+          .join(""),
+      );
+      return text;
     },
   });
 }

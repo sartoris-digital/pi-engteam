@@ -35,9 +35,11 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_category ON events(category);
 `;
 
-export function openDb(dbPath: string): Db {
+export function openDb(dbPath: string, opts: { nativeBinding?: string } = {}): Db {
   mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new Database(dbPath);
+  const db = opts.nativeBinding
+    ? new Database(dbPath, { nativeBinding: opts.nativeBinding })
+    : new Database(dbPath);
   db.exec(SCHEMA);
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");

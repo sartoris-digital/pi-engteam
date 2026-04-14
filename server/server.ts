@@ -6,7 +6,7 @@ import type { ServerOptions } from "./types.js";
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
   const app = Fastify({ logger: false });
-  const db = openDb(opts.dbPath);
+  const db = openDb(opts.dbPath, { nativeBinding: opts.nativeBinding });
   const watcher = new EventWatcher(opts.runsDir, db);
 
   registerRoutes(app, db, { ...opts, port: opts.port ?? 4747 });

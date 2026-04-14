@@ -28,12 +28,15 @@ export async function isServerRunning(port: number): Promise<boolean> {
 }
 
 export async function startServer(port: number): Promise<void> {
-  // server.js is installed to ~/.pi/engteam/server.js by scripts/install.sh
-  const serverBin = join(homedir(), ".pi", "engteam", "server.js");
+  // server.cjs is installed to ~/.pi/engteam/server.cjs by scripts/install.sh
+  const serverBin = join(homedir(), ".pi", "engteam", "server.cjs");
 
+  // cwd is ~/.pi/engteam so Node can resolve better-sqlite3 from node_modules there
+  const engteamDir = join(homedir(), ".pi", "engteam");
   serverProcess = spawn("node", [serverBin], {
     detached: false,
     stdio: "pipe",
+    cwd: engteamDir,
     env: { ...process.env, PI_ENGTEAM_SERVER_PORT: String(port) },
   });
 

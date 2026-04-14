@@ -1,4 +1,5 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
@@ -62,6 +63,29 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
         }],
         details: {},
       };
+    },
+    renderCall(args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const scope = args.scope ?? "once";
+      const ttl = args.ttlSeconds ?? 300;
+      text.setText(`${theme.fg("success", "✓ grant")}  ${args.requestId}  [${scope} / ${ttl}s]`);
+      return text;
+    },
+    renderResult(result, _options, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      const raw = result.content
+        .filter((c): c is { type: "text"; text: string } => c.type === "text")
+        .map(c => c.text)
+        .join("");
+      try {
+        const parsed = JSON.parse(raw) as { tokenId?: string; expiresAt?: string; scope?: string };
+        text.setText(
+          `${theme.fg("success", "granted")}  token=${parsed.tokenId ?? "?"}  expires=${parsed.expiresAt ?? "?"}  scope=${parsed.scope ?? "?"}`,
+        );
+      } catch {
+        text.setText(raw);
+      }
+      return text;
     },
   });
 }

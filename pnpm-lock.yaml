@@ -27,6 +27,9 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.67.0
         version: 0.67.1(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-tui':
+        specifier: ^0.67.0
+        version: 0.67.1
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13

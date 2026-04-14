@@ -11,17 +11,19 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     clean: true,
-    external: ["@mariozechner/pi-coding-agent"],
+    external: ["@mariozechner/pi-coding-agent", "@mariozechner/pi-tui"],
   },
   {
     entry: { server: "server/index.ts" },
-    format: ["esm"],
+    // CJS avoids ESM/shebang issues when Node spawns the server as a child process.
+    // fastify is bundled; better-sqlite3 is a native addon copied by install.sh.
+    format: ["cjs"],
     target: "node20",
     bundle: true,
     splitting: false,
     dts: false,
+    noExternal: ["fastify"],
     external: ["better-sqlite3"],
     outDir: "dist",
-    banner: { js: "#!/usr/bin/env node" },
   },
 ]);
