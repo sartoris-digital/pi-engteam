@@ -32,7 +32,7 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 - Three-layer safety guard: hard blockers, plan-mode gate, and approval-token gate
 - SQLite-backed observability server with a web dashboard
 - Memory Core: automatic session summarisation into daily logs, with optional Obsidian vault sync
-- Single-file ESM bundle — no node_modules required in the Pi extensions folder
+- Loads directly from TypeScript source via Pi's built-in transpiler (`pi install`) or as a pre-built ESM bundle (`pnpm engteam:install`)
 
 ---
 
@@ -40,7 +40,7 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 
 ```
 Pi coding agent
-└── pi-engteam extension (dist/index.js — ESM, loaded by Pi)
+└── pi-engteam extension (src/index.ts via jiti on pi install; dist/index.js on build install)
     ├── ADWEngine          workflow orchestration / run state machine
     ├── TeamRuntime        agent session lifecycle + tool injection
     ├── MessageBus         typed pub/sub (agent → agent or broadcast)
@@ -61,7 +61,7 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
 ~/.pi/
 ├── agent/
 │   ├── extensions/
-│   │   └── pi-engteam.js        ← ESM extension bundle
+│   │   └── pi-engteam.js        ← ESM bundle (build workflow only; pi install uses source directly)
 │   └── agents/
 │       └── engteam-*.md         ← agent definition files
 └── engteam/
@@ -125,7 +125,7 @@ Pi loads the extension directly from `src/index.ts` via its built-in TypeScript 
 ### Install from source (pnpm)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/sartoris-digital/pi-engteam
 cd pi-engteam
 pnpm install   # also runs postinstall automatically
 ```
