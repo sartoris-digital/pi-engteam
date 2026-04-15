@@ -149,6 +149,35 @@ function classifySegment(segment: string): ClassifierResult {
     return { classification: "destructive" };
   }
 
+  if (verb === "gh") {
+    if (!subcommand) return { classification: "safe" };
+    const safeGhObjects = new Set(["issue", "pr", "repo"]);
+    if (safeGhObjects.has(subcommand)) {
+      const action = tokens[2]?.toLowerCase();
+      if (action === "view" || action === "list" || action === "show") return { classification: "safe" };
+    }
+    return { classification: "destructive", reason: `gh ${subcommand} ${tokens[2] ?? ""} is not in safe subcommand list` };
+  }
+
+  if (verb === "az") {
+    if (!subcommand) return { classification: "safe" };
+    const readOnlyAzObjects = new Set(["boards", "repos"]);
+    if (readOnlyAzObjects.has(subcommand)) {
+      const hasWrite = tokens.some(t => ["create", "update", "delete", "set", "add", "remove"].includes(t.toLowerCase()));
+      if (!hasWrite) return { classification: "safe" };
+    }
+    return { classification: "destructive", reason: `az ${subcommand} is not in safe subcommand list or contains write operation` };
+  }
+
+  if (verb === "jira") {
+    if (!subcommand) return { classification: "safe" };
+    if (subcommand === "issue") {
+      const action = tokens[2]?.toLowerCase();
+      if (action === "view" || action === "list") return { classification: "safe" };
+    }
+    return { classification: "destructive", reason: `jira ${subcommand} ${tokens[2] ?? ""} is not in safe subcommand list` };
+  }
+
   if (verb === "find") {
     if (
       tokens.includes("-delete") ||

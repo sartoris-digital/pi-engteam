@@ -25,6 +25,13 @@ export const SAFE_COMMANDS = [
   "pnpm test",
   "vitest run",
   "tsc --noEmit",
+  "gh issue view 42 --json title,body,labels,state,assignees",
+  "gh issue list --state open",
+  "gh pr view 10",
+  "az boards work-item show --id 99 --output json",
+  "az boards work-item list --project MyProject",
+  "jira issue view PROJ-123 --plain",
+  "jira issue list",
 ];
 
 export const DESTRUCTIVE_COMMANDS = [
@@ -36,6 +43,10 @@ export const DESTRUCTIVE_COMMANDS = [
   "git push origin main",
   "chmod +x script.sh",
   "kill -9 12345",
+  "gh issue create --title 'new bug'",
+  "gh issue close 42",
+  "az boards work-item create --title 'task'",
+  "jira issue create",
 ];
 
 export const BLOCKED_COMMANDS = [
