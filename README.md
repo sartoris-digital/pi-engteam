@@ -25,8 +25,8 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 
 **Key capabilities:**
 
-- 10 built-in workflows (plan → build → review, debug, triage, migrate, refactor, and more)
-- 14 specialist agents, each with a focused system prompt and scoped tool access
+- 11 built-in workflows (plan → build → review, spec → design → plan → build → review, debug, triage, migrate, refactor, and more)
+- 15 specialist agents, each with a focused system prompt and scoped tool access
 - Inter-agent messaging via a typed pub/sub message bus
 - Three-layer safety guard: hard blockers, plan-mode gate, and approval-token gate
 - SQLite-backed observability server with a web dashboard
@@ -78,6 +78,11 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
             └── approvals/
                 ├── pending/     ← requests waiting for judge
                 └── *.json       ← granted approval tokens
+
+<project-cwd>/
+└── .pi/
+    └── engteam/
+        └── active-run.json  ← per-project pause state for /spec (runId, phase, stepName)
 ```
 
 ---
@@ -151,6 +156,7 @@ Shortcuts let you invoke workflows with a natural-language goal. Each command ta
 
 | Command | Workflow | Description |
 |---------|----------|-------------|
+| `/spec <goal>` | `spec-plan-build-review` | Discover requirements with an interactive wizard, write a spec and plan for human approval, then build and review. |
 | `/plan <goal>` | `plan-build-review` | Plan and implement a feature, then review for correctness. |
 | `/plan-fix <goal>` | `plan-build-review-fix` | Plan and implement a feature with a self-healing review+fix loop. |
 | `/investigate <incident>` | `investigate` | Gather incident context, build a hypothesis tree, and gate on judge review. |
@@ -165,6 +171,7 @@ Shortcuts let you invoke workflows with a natural-language goal. Each command ta
 **Examples:**
 
 ```
+/spec "Add dark mode toggle to settings"
 /plan "Add email/password login with JWT tokens"
 /plan-fix "Refactor auth middleware to support OAuth"
 /investigate "Production API returning 503s since 14:00 UTC"
@@ -209,6 +216,7 @@ Workflows are state machines where each step dispatches a goal to an agent, wait
 
 | ID | Steps | Description |
 |----|-------|-------------|
+| `spec-plan-build-review` | discover → design → plan → build → review | Interactive discovery wizard → spec (human-gated) → implementation plan (human-gated) → build → review. |
 | `plan-build-review` | plan → build → review | Decompose a goal, implement it, review for correctness and quality. |
 | `plan-build-review-fix` | plan → build → review → fix → review | Same as above with an automatic fix loop on review failures. |
 | `investigate` | gather-context → analyze → report | Open-ended investigation of a system or behaviour. |
@@ -219,6 +227,37 @@ Workflows are state machines where each step dispatches a goal to an agent, wait
 | `migration` | plan → implement → verify → judge-gate | Safe database or infrastructure migration with approval gate. |
 | `refactor-campaign` | analyze → plan → implement → review | Large-scale refactoring with architectural analysis up front. |
 | `doc-backfill` | analyze → draft → review | Generate missing documentation for existing code. |
+
+### `/spec` — gated discovery workflow
+
+`/spec` is distinct from all other shortcuts: it pauses execution at three points to collect human input before continuing.
+
+```
+/spec "Add dark mode toggle to settings"
+
+  1. discover   — Discoverer agent writes questions.md
+                  → TUI wizard appears (tabbed, no border)
+                  → User fills in answers, submits with Ctrl+Enter
+                  → answers.md written to run directory
+
+  2. design     — Architect agent reads answers.md, writes spec.md
+                  → Pi prints: spec written → <path>
+                  → User reviews spec in their editor
+                  → User types "approve" to continue
+
+  3. plan       — Planner agent reads spec.md, writes plan.md (with [fast/standard/reasoning] tier hints)
+                  → Pi prints: plan written → <path>
+                  → User reviews plan in their editor
+                  → User types "approve" to start build
+
+  4. build      — Implementer agent executes plan.md (unchanged from /plan)
+
+  5. review     — Reviewer agent inspects changes (unchanged from /plan)
+```
+
+**Approval gate:** After `design` and `plan` complete, the run pauses with `status: waiting_user`. Typing `approve`, `approved`, or `looks good` in the Pi prompt resumes execution. Any other input echoes a reminder.
+
+**State:** The active run is tracked in `<project-cwd>/.pi/engteam/active-run.json`. This is per-project so simultaneous `/spec` runs in different directories never collide.
 
 ### How a step works
 
@@ -259,6 +298,7 @@ The team is defined in `agents/*.md`. Each file becomes an agent definition inst
 
 | Agent | Role |
 |-------|------|
+| `discoverer` | Reads a goal and produces a structured set of 3–5 discovery questions (used by `/spec` discover step) |
 | `architect` | System design, ADR authoring, service boundary and API design |
 | `codebase-cartographer` | Builds mental model of existing code, maps modules and dependencies |
 | `bug-triage` | Classifies bugs P0–P3, deduplicates, assigns ownership area |
@@ -490,10 +530,15 @@ src/
 │   ├── run-abort.ts
 │   ├── run-status.ts
 │   ├── workflow-shortcuts.ts
+│   ├── spec.ts              ← /spec command + input hook
+│   ├── spec-utils.ts        ← parseQuestionsFile, formatAnswers
 │   ├── observe.ts
 │   └── doctor.ts
+├── ui/
+│   └── QuestionWizard.ts    ← tabbed TUI wizard component (used by /spec)
 ├── workflows/
 │   ├── types.ts             ← Workflow, Step, StepContext, StepResult
+│   ├── spec-plan-build-review.ts
 │   ├── plan-build-review.ts
 │   ├── plan-build-review-fix.ts
 │   ├── triage.ts
@@ -506,6 +551,7 @@ src/
 │   └── doc-backfill.ts
 ├── adw/
 │   ├── ADWEngine.ts         ← run lifecycle, step dispatch, verdict routing
+│   ├── ActiveRun.ts         ← active-run.json read/write/clear helpers
 │   ├── RunState.ts          ← atomic state persistence
 │   └── BudgetGuard.ts       ← iteration / cost / time / token limits
 ├── team/
