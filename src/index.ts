@@ -38,6 +38,8 @@ import { registerRunStartCommand } from "./commands/run-start.js";
 import { registerRunResumeCommand } from "./commands/run-resume.js";
 import { registerRunAbortCommand } from "./commands/run-abort.js";
 import { registerRunStatusCommand } from "./commands/run-status.js";
+import { loadMemoryConfig } from "./memory/config.js";
+import { MemoryCore } from "./memory/MemoryCore.js";
 import type { AgentDefinition } from "./types.js";
 
 const ENGTEAM_DIR = join(homedir(), ".pi", "engteam");
@@ -113,6 +115,8 @@ export default async function (pi: ExtensionAPI) {
   await mkdir(RUNS_DIR, { recursive: true });
 
   const safetyConfig = await loadSafetyConfig();
+  const memoryConfig = await loadMemoryConfig();
+  const memoryCore = new MemoryCore(memoryConfig, RUNS_DIR);
 
   registerSafetyGuard(pi, { ...safetyConfig, runsDir: RUNS_DIR });
 
@@ -136,9 +140,13 @@ export default async function (pi: ExtensionAPI) {
         createTaskListTool(RUNS_DIR, activeRunId),
         createTaskUpdateTool(RUNS_DIR, activeRunId),
         createVerdictEmitTool((v) => {
-          engine.notifyVerdict(activeRunId, v);
+          // CRITICAL-2: prefer the verdict's own runId when present — guards against
+          // activeRunId being stale if a second run starts before this verdict fires
+          const verdictRunId = v.runId ?? activeRunId;
+          engine.notifyVerdict(verdictRunId, v);
+          memoryCore.onVerdict(verdictRunId, v);
           observer.emit({
-            runId: activeRunId,
+            runId: verdictRunId,
             agentName,
             category: "verdict",
             type: "emit",
@@ -178,6 +186,13 @@ export default async function (pi: ExtensionAPI) {
     return state;
   };
 
+  // HIGH-3: notify memory core when a run is aborted so aborted runs appear in the daily log
+  const originalAbortRun = engine.abortRun.bind(engine);
+  engine.abortRun = async (runId: string) => {
+    await originalAbortRun(runId);
+    memoryCore.onRunAborted(runId);
+  };
+
   observer.subscribeToBus(bus, activeRunId);
 
   registerDoctorCommand(pi);
@@ -191,6 +206,7 @@ export default async function (pi: ExtensionAPI) {
   registerRunResumeCommand(pi, engine);
   registerRunAbortCommand(pi, engine);
   registerRunStatusCommand(pi, RUNS_DIR);
+  await memoryCore.register(pi);
 
   pi.on("session_start", async (event: any, _ctx: any) => {
     if (event.reason === "startup") {
