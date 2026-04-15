@@ -1,6 +1,6 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "crypto";
-import { mkdir, readFile } from "fs/promises";
+import { access, constants, mkdir, readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { loadRunState } from "../adw/RunState.js";
@@ -17,6 +17,12 @@ type MemoryCoreDeps = {
   spawnFlush: typeof spawnFlush;
   ensureScriptsInstalled: typeof ensureScriptsInstalled;
   loadRunState: typeof loadRunState;
+  generateNarrative: (
+    runs: CompletedRun[],
+    transcriptPath: string,
+    config: MemoryConfig,
+    modelRegistry: ModelRegistry | undefined,
+  ) => Promise<string>;
   setInterval: typeof setInterval;
   clearInterval: typeof clearInterval;
 };
@@ -40,6 +46,141 @@ function dedupeStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
 }
 
+// ---------------------------------------------------------------------------
+// In-process narrative generation — uses Pi's configured provider via pi-ai.
+// Runs inside the Pi process so the full model registry and credentials are
+// already initialised by Pi. No separate API key required.
+// ---------------------------------------------------------------------------
+
+function normalizeContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return (content as unknown[])
+    .filter((p): p is { type: "text"; text: string } =>
+      !!p && typeof p === "object" && (p as Record<string, unknown>).type === "text" &&
+      typeof (p as Record<string, unknown>).text === "string",
+    )
+    .map((p) => p.text)
+    .join(" ");
+}
+
+function extractTurn(value: unknown): { role: "user" | "assistant"; content: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  const tryRole = (r: unknown, c: unknown): { role: "user" | "assistant"; content: string } | null => {
+    if (r !== "user" && r !== "assistant") return null;
+    const text = normalizeContent(c).trim();
+    return text ? { role: r, content: text } : null;
+  };
+  const direct = tryRole(v.role, v.content);
+  if (direct) return direct;
+  if (v.type === "message" && v.message && typeof v.message === "object") {
+    const m = v.message as Record<string, unknown>;
+    return tryRole(m.role, m.content);
+  }
+  return null;
+}
+
+async function readTranscript(transcriptPath: string, maxTurns: number): Promise<string> {
+  if (!transcriptPath) return "(no transcript available)";
+  try {
+    await access(transcriptPath, constants.F_OK);
+    const raw = await readFile(transcriptPath, "utf8");
+    const turns: string[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const turn = extractTurn(JSON.parse(line));
+        if (turn) {
+          const truncated = turn.content.length > 500;
+          turns.push(`[${turn.role}]: ${turn.content.slice(0, 500)}${truncated ? " … [truncated]" : ""}`);
+        }
+      } catch { /* skip malformed lines */ }
+    }
+    return turns.slice(-maxTurns).join("\n\n") || "(no conversation turns found)";
+  } catch {
+    return "(no transcript available)";
+  }
+}
+
+async function readPiSettings(): Promise<{ defaultProvider?: string; defaultModel?: string }> {
+  try {
+    const raw = await readFile(join(homedir(), ".pi", "agent", "settings.json"), "utf8");
+    return JSON.parse(raw) as { defaultProvider?: string; defaultModel?: string };
+  } catch {
+    return {};
+  }
+}
+
+export async function generateNarrative(
+  runs: CompletedRun[],
+  transcriptPath: string,
+  config: MemoryConfig,
+  modelRegistry: ModelRegistry | undefined,
+): Promise<string> {
+  try {
+    if (!modelRegistry) {
+      return "(narrative unavailable: model registry not initialised)";
+    }
+
+    // Use Pi's ModelRegistry to look up the configured model and its credentials.
+    // This respects whatever provider and model the user has configured in Pi
+    // (Anthropic, GitHub Copilot, OpenAI, etc.) without requiring a separate API key.
+    const piSettings = await readPiSettings();
+    const provider = piSettings.defaultProvider ?? "anthropic";
+    const modelId = config.flushModel ?? piSettings.defaultModel ?? "claude-haiku-4-5-20251001";
+
+    const model = modelRegistry.find(provider, modelId);
+    if (!model) {
+      return `(narrative unavailable: model "${provider}/${modelId}" not found in Pi model registry)`;
+    }
+
+    const { apiKey, headers } = await modelRegistry.getApiKeyAndHeaders(model);
+    if (!apiKey) {
+      return "(narrative unavailable: no API key configured for model)";
+    }
+
+    const { completeSimple } = await import("@mariozechner/pi-ai");
+
+    const runsText =
+      runs.length === 0
+        ? "No runs completed."
+        : runs.map((r) => `- ${r.workflow}: "${r.goal}" → ${r.verdict}`).join("\n");
+
+    const conversationText = await readTranscript(transcriptPath, config.maxConversationTurns);
+
+    const prompt = [
+      "You are summarizing a Pi engineering session.",
+      "",
+      "Runs completed:",
+      runsText,
+      "",
+      `Recent conversation (last ${config.maxConversationTurns} turns):`,
+      conversationText,
+      "",
+      "Write a 2-3 paragraph summary of what was attempted, what succeeded,",
+      "what failed, and any key decisions made. Be concrete — name files,",
+      "workflows, and goals. Do not pad. Do not repeat the runs list.",
+    ].join("\n");
+
+    const result = await completeSimple(
+      model,
+      [{ role: "user", content: prompt }],
+      { maxTokens: 512, apiKey, headers },
+    );
+    if ((result as any).stopReason === "error") {
+      throw new Error((result as any).errorMessage ?? "API error");
+    }
+    return (
+      ((result as any).content as Array<{ type: string; text?: string }> | undefined)
+        ?.find((p) => p.type === "text")?.text ?? "(empty response)"
+    );
+  } catch (err) {
+    console.error("[pi-memory] narrative generation failed:", err instanceof Error ? err.message : String(err));
+    return "(narrative unavailable)";
+  }
+}
+
 export class MemoryCore {
   private readonly runCache = new Map<string, CompletedRun>();
   // MED-8: 12 hex chars (48-bit) — collisions at ~100 sessions/day are <0.01%
@@ -48,6 +189,9 @@ export class MemoryCore {
   private readonly logDir: string;
   private readonly lastFlushPath: string;
   private transcriptPath = "";
+  // Pi's model registry — set in register(), used to resolve model + credentials
+  // for in-process narrative generation without a hardcoded API key.
+  private modelRegistry?: ModelRegistry;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private flushInFlight?: Promise<void>;
 
@@ -64,6 +208,7 @@ export class MemoryCore {
       spawnFlush,
       ensureScriptsInstalled,
       loadRunState,
+      generateNarrative,
       setInterval,
       clearInterval,
       ...deps,
@@ -83,6 +228,9 @@ export class MemoryCore {
       );
       return;
     }
+
+    // Store Pi's model registry so doFlush can resolve provider credentials.
+    this.modelRegistry = (pi as any).modelRegistry as ModelRegistry | undefined;
 
     pi.on("session_start", async (_event, ctx) => {
       this.transcriptPath = ctx.sessionManager.getSessionFile() ?? "";
@@ -232,11 +380,16 @@ export class MemoryCore {
       (r) => r.workflow !== "unknown" || r.goal !== "",
     );
 
+    // Generate the narrative in-process using Pi's configured provider.
+    // modelRegistry comes from pi.modelRegistry (set in register()), so it uses
+    // whatever model/provider the user has configured in Pi — no separate key needed.
+    const narrative = await this.deps.generateNarrative(runs, this.transcriptPath, this.config, this.modelRegistry);
+
     const snapshotPath = await this.deps.writeSnapshot(
       this.sessionId,
       runs,
       this.config,
-      this.transcriptPath,
+      narrative,
       this.logDir,
       this.lastFlushPath,   // HIGH-6: pass explicit sentinel path
     );

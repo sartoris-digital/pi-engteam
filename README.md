@@ -515,10 +515,10 @@ Memory Core automatically summarises each Pi session into a daily markdown log s
 
 At the end of every session (and before each compaction), Memory Core fires a two-stage flush:
 
-1. **Snapshot** — TypeScript writes a JSON snapshot to a temp file. The snapshot contains all completed runs, the transcript path, log directory, and flush model.
-2. **Flush script** — `flush.mjs` is spawned detached (fire-and-forget). It reads the last N conversation turns, calls the Anthropic API to generate a summary, and appends a structured entry to today's daily log (`~/.pi/engteam/second-brain/logs/YYYY-MM-DD.md`).
+1. **Narrative generation** — `MemoryCore.doFlush()` runs inside the Pi process and calls `completeSimple` from `@mariozechner/pi-ai` using credentials resolved via `pi.modelRegistry` (the Pi Agent SDK's live model registry). This means the summary uses **whatever provider and model the user has configured in Pi** — Anthropic, GitHub Copilot, OpenAI, or any other — with no separate API key required.
+2. **Snapshot + flush script** — The pre-generated narrative is written into a JSON snapshot. `flush.mjs` is spawned detached (fire-and-forget) as a pure I/O script: it writes the narrative to today's daily log (`~/.pi/engteam/second-brain/logs/YYYY-MM-DD.md`) and optionally creates an Obsidian symlink. No LLM call is made inside `flush.mjs`.
 
-The flush script runs outside the Pi process so it never blocks the session.
+Separating the LLM call (in-process) from the file I/O (detached) means the summary always uses Pi's configured credentials, and the flush script remains a simple dependency-free Node.js script.
 
 ### Daily log format
 
@@ -574,12 +574,6 @@ Created automatically the first time the extension loads. Override any field:
 | `obsidianDailyNotesSubdir` | `"Daily"` | Subdirectory inside the vault for daily notes |
 | `obsidianVaultPath` | — | Absolute path to your Obsidian vault (optional) |
 
-### Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Required for the flush script to call the Anthropic API |
-
 ---
 
 ## Configuration
@@ -632,7 +626,6 @@ Override the model for any agent or set budget downshift rules:
 | `PI_ENGTEAM_SERVER_PORT` | `4747` | Observability server port |
 | `PI_ENGTEAM_DATA_DIR` | `~/.pi/engteam` | Root data directory |
 | `PI_ENGTEAM_EVENT_URL` | — | Remote HTTP sink for events (optional) |
-| `ANTHROPIC_API_KEY` | — | Required by the Memory Core flush script to call the Anthropic API |
 
 ---
 

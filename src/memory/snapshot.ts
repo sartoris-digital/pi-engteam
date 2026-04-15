@@ -7,11 +7,11 @@ export type FlushSnapshot = {
   sessionId: string;
   timestamp: string;
   runs: CompletedRun[];
-  transcriptPath: string;
-  maxTurns: number;
+  // Narrative is generated in-process by MemoryCore using Pi's configured provider.
+  // flush.mjs is a pure I/O script — it writes the log and handles Obsidian sync only.
+  narrative: string;
   logDir: string;
   sentinelPath: string;   // HIGH-6: explicit path so flush.mjs and MemoryCore always agree
-  flushModel: string;
   obsidianVaultPath?: string;
   obsidianDailyNotesSubdir: string;
 };
@@ -20,7 +20,7 @@ export async function writeSnapshot(
   sessionId: string,
   runs: CompletedRun[],
   config: MemoryConfig,
-  transcriptPath: string,
+  narrative: string,
   logDir: string,
   sentinelPath: string,
 ): Promise<string> {
@@ -28,11 +28,9 @@ export async function writeSnapshot(
     sessionId,
     timestamp: new Date().toISOString(),
     runs,
-    transcriptPath,
-    maxTurns: config.maxConversationTurns,
+    narrative,
     logDir,
     sentinelPath,
-    flushModel: config.flushModel,
     obsidianDailyNotesSubdir: config.obsidianDailyNotesSubdir,
     ...(config.obsidianVaultPath ? { obsidianVaultPath: config.obsidianVaultPath } : {}),
   };

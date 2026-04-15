@@ -25,7 +25,7 @@ describe("writeSnapshot", () => {
   it("writes JSON file to the temp directory and returns the path", async () => {
     const logDir = await mkdtemp(join(tmpdir(), "memory-log-"));
     const sentinel = join(logDir, ".last-flush");
-    const path = await writeSnapshot("sess-1", [RUN], CONFIG, "/tmp/session.jsonl", logDir, sentinel);
+    const path = await writeSnapshot("sess-1", [RUN], CONFIG, "test narrative", logDir, sentinel);
 
     expect(path).toContain("pi-flush-sess-1.json");
 
@@ -33,16 +33,15 @@ describe("writeSnapshot", () => {
     expect(snapshot.sessionId).toBe("sess-1");
     expect(snapshot.runs).toHaveLength(1);
     expect(snapshot.runs[0].runId).toBe("abc123");
-    expect(snapshot.maxTurns).toBe(20);
+    expect(snapshot.narrative).toBe("test narrative");
     expect(snapshot.logDir).toBe(logDir);
-    expect(snapshot.flushModel).toBe(CONFIG.flushModel);
     expect(snapshot.sentinelPath).toBe(sentinel);
   });
 
   it("handles an empty run cache", async () => {
     const logDir = await mkdtemp(join(tmpdir(), "memory-log-"));
     const sentinel = join(logDir, ".last-flush");
-    const path = await writeSnapshot("sess-empty", [], CONFIG, "/tmp/session.jsonl", logDir, sentinel);
+    const path = await writeSnapshot("sess-empty", [], CONFIG, "test narrative", logDir, sentinel);
 
     const snapshot = JSON.parse(await readFile(path, "utf8"));
     expect(snapshot.runs).toEqual([]);
@@ -54,7 +53,7 @@ describe("writeSnapshot", () => {
       "sess-vault",
       [],
       { ...CONFIG, obsidianVaultPath: "/vault" },
-      "/tmp/session.jsonl",
+      "test narrative",
       logDir,
       join(logDir, ".last-flush"),
     );
@@ -69,7 +68,7 @@ describe("writeSnapshot", () => {
       "sess-no-vault",
       [],
       CONFIG,
-      "/tmp/session.jsonl",
+      "test narrative",
       logDir,
       join(logDir, ".last-flush"),
     );

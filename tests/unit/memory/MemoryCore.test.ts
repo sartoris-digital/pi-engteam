@@ -13,6 +13,8 @@ vi.mock("../../../src/memory/snapshot.js", () => ({
   writeSnapshot: vi.fn().mockResolvedValue("/tmp/pi-flush-test.json"),
 }));
 
+const mockGenerateNarrative = vi.fn().mockResolvedValue("test narrative");
+
 const CONFIG = {
   obsidianDailyNotesSubdir: "Daily",
   maxConversationTurns: 20,
@@ -34,6 +36,7 @@ describe("MemoryCore", () => {
     const core = new MemoryCore(CONFIG, runsDir, {
       logDir: join(brainDir, "logs"),
       lastFlushPath: join(brainDir, ".last-flush"),
+      generateNarrative: mockGenerateNarrative,
     });
 
     const runId = "run-abc";
@@ -112,7 +115,11 @@ describe("MemoryCore", () => {
     const logDir = join(brainDir, "logs");
     const lastFlushPath = join(brainDir, ".last-flush");
 
-    const core = new MemoryCore(CONFIG, runsDir, { logDir, lastFlushPath });
+    const core = new MemoryCore(CONFIG, runsDir, {
+      logDir,
+      lastFlushPath,
+      generateNarrative: mockGenerateNarrative,
+    });
     const pi = new MockExtensionAPI();
 
     await core.register(pi.asPi());
@@ -128,7 +135,7 @@ describe("MemoryCore", () => {
       expect.any(String),
       [],
       CONFIG,
-      "/tmp/pi-session.jsonl",
+      "test narrative",  // narrative is now generated in-process, not transcriptPath
       logDir,
       lastFlushPath,  // HIGH-6: sentinelPath is now explicit 6th arg
     );

@@ -1,50 +1,6 @@
 import { lstat, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { appendOrReplaceSession, buildSessionEntry } from "./lib/logWriter.mjs";
-import { loadConfig } from "./lib/config.mjs";
-import { readLastNTurns } from "./lib/transcript.mjs";
-
-/**
- * Call the Anthropic API to generate a narrative summary.
- * Requires ANTHROPIC_API_KEY environment variable.
- * MED-2: 60-second timeout via AbortSignal.timeout (Node 20+).
- *
- * Replace this function body if/when Pi exposes a standalone SDK call.
- *
- * @param {string} prompt
- * @param {string} model
- * @returns {Promise<string>}
- */
-async function callAnthropicForNarrative(prompt, model) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return "(narrative unavailable: ANTHROPIC_API_KEY not set)";
-  }
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    // MED-2: abort after 60 s so stalled sockets don't leak a zombie process
-    signal: AbortSignal.timeout(60_000),
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 512,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${errorText}`);
-  }
-
-  const data = await response.json();
-  return data.content?.find((part) => part.type === "text")?.text ?? "(empty response)";
-}
 
 /**
  * HIGH-5: compare symlink target via realpath to handle macOS /tmp → /private/tmp aliasing.
@@ -91,40 +47,16 @@ async function main() {
   }
 
   const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
-  const config = await loadConfig();
-  const maxTurns = snapshot.maxTurns ?? config.maxConversationTurns;
-  const model = snapshot.flushModel ?? config.flushModel;
-  const transcriptPath = snapshot.transcriptPath ?? "";
 
   // HIGH-6: sentinelPath is explicit in the snapshot — no derivation from logDir
   const sentinelPath = snapshot.sentinelPath;
 
   let success = false;
   try {
-    const runsText =
-      snapshot.runs.length === 0
-        ? "No runs completed."
-        : snapshot.runs
-            .map((run) => `- ${run.workflow}: "${run.goal}" → ${run.verdict}`)
-            .join("\n");
+    // The narrative is pre-generated in-process by MemoryCore using Pi's configured
+    // provider. flush.mjs is a pure I/O script — no API call needed here.
+    const narrative = snapshot.narrative ?? "(narrative unavailable)";
 
-    const conversationText = await readLastNTurns(transcriptPath, maxTurns);
-
-    const prompt = [
-      "You are summarizing a Pi engineering session.",
-      "",
-      "Runs completed:",
-      runsText,
-      "",
-      `Recent conversation (last ${maxTurns} turns):`,
-      conversationText,
-      "",
-      "Write a 2-3 paragraph summary of what was attempted, what succeeded,",
-      "what failed, and any key decisions made. Be concrete — name files,",
-      "workflows, and goals. Do not pad. Do not repeat the runs list.",
-    ].join("\n");
-
-    const narrative = await callAnthropicForNarrative(prompt, model);
     const date = new Date(snapshot.timestamp).toISOString().slice(0, 10);
     const logPath = join(snapshot.logDir, `${date}.md`);
     const entry = buildSessionEntry(snapshot.sessionId, snapshot.timestamp, snapshot.runs, narrative);
