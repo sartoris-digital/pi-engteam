@@ -22,6 +22,8 @@ describe("plan-build-review workflow integration", () => {
 
     const mockTeam = {
       deliver: vi.fn(),
+      setStepContext: vi.fn(),
+      markStepComplete: vi.fn(),
     } as any;
 
     const workflows = new Map([["plan-build-review", planBuildReview]]);
@@ -63,7 +65,7 @@ describe("plan-build-review workflow integration", () => {
 
   it("halts with failed status when plan step returns FAIL", async () => {
     const mockObserver = { emit: vi.fn() } as any;
-    const mockTeam = { deliver: vi.fn() } as any;
+    const mockTeam = { deliver: vi.fn(), setStepContext: vi.fn(), markStepComplete: vi.fn() } as any;
     const workflows = new Map([["plan-build-review", planBuildReview]]);
 
     const engine = new ADWEngine({
@@ -99,7 +101,7 @@ describe("plan-build-review workflow integration", () => {
 
   it("persists final state to disk after completion", async () => {
     const mockObserver = { emit: vi.fn() } as any;
-    const mockTeam = { deliver: vi.fn() } as any;
+    const mockTeam = { deliver: vi.fn(), setStepContext: vi.fn(), markStepComplete: vi.fn() } as any;
     const workflows = new Map([["plan-build-review", planBuildReview]]);
 
     const engine = new ADWEngine({

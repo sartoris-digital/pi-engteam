@@ -22,11 +22,49 @@ type AgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 export class TeamRuntime {
   private sessions = new Map<string, AgentSession>();
+  private currentStepContext: { name: string } | null = null;
+  private completedSteps = new Set<string>();
+  private allSteps: string[] = [];
 
   constructor(private config: TeamRuntimeConfig) {}
 
   private teamSuffix(name: string): string {
     return `\n\n---\n## Team Context\nYour name in the team is: **${name}**\nUse SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\nAlways end your turn with VerdictEmit when you have completed your assigned step.`;
+  }
+
+  setStepContext(stepName: string, _stepIndex: number, _totalSteps: number, allStepNames: string[]): void {
+    this.currentStepContext = { name: stepName };
+    this.allSteps = allStepNames;
+    this.refreshAllLabels();
+  }
+
+  markStepComplete(stepName: string): void {
+    this.completedSteps.add(stepName);
+    this.currentStepContext = null;
+    this.refreshAllLabels();
+  }
+
+  clearStepContext(): void {
+    this.currentStepContext = null;
+    this.refreshAllLabels();
+  }
+
+  private buildSessionLabel(agentName: string): string {
+    if (this.allSteps.length === 0) return agentName;
+    const indicators = this.allSteps
+      .map(step => {
+        if (this.completedSteps.has(step)) return `✓ ${step}`;
+        if (step === this.currentStepContext?.name) return `● ${step}`;
+        return `○ ${step}`;
+      })
+      .join(" · ");
+    return `${agentName} [${indicators}]`;
+  }
+
+  private refreshAllLabels(): void {
+    for (const [name, session] of this.sessions) {
+      session.setSessionName(this.buildSessionLabel(name));
+    }
   }
 
   async ensureTeammate(name: string, def: AgentDefinition): Promise<void> {
@@ -35,13 +73,11 @@ export class TeamRuntime {
     const authStorage = AuthStorage.create();
     const modelRegistry = ModelRegistry.create(authStorage);
 
-    // Attempt to get the specified model; fall back to a safe default
     let model: any;
     try {
       const { getModel } = await import("@mariozechner/pi-ai");
       model = getModel("anthropic", def.model as any) ?? getModel("anthropic", "claude-sonnet-4-6");
     } catch {
-      // pi-ai may not export getModel in all versions
       model = { id: def.model };
     }
 
@@ -58,7 +94,6 @@ export class TeamRuntime {
       model,
       authStorage,
       modelRegistry,
-      // IMPORTANT: use factory when cwd may differ from process.cwd()
       tools: createCodingTools(this.config.cwd),
       customTools: this.config.customToolsFor(name),
       resourceLoader: loader,
@@ -66,6 +101,7 @@ export class TeamRuntime {
     });
 
     this.sessions.set(name, session);
+    session.setSessionName(this.buildSessionLabel(name));
 
     this.config.observer.subscribeToSession(
       session as any,
@@ -81,6 +117,7 @@ export class TeamRuntime {
   async deliver(to: string, message: TeamMessage): Promise<void> {
     const session = this.sessions.get(to);
     if (!session) throw new Error(`Teammate '${to}' is not running. Call ensureTeammate first.`);
+    session.setSessionName(this.buildSessionLabel(to));
     const prompt = `<task-notification from="${message.from}">\n${message.message}\n</task-notification>`;
     await (session as any).prompt(prompt);
   }

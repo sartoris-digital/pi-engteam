@@ -130,6 +130,13 @@ export class ADWEngine {
       state = updateStep(state, state.currentStep, { startedAt });
 
       const stepStart = Date.now();
+      const stepIndex = workflow.steps.findIndex(s => s.name === state!.currentStep);
+      this.config.team.setStepContext(
+        state.currentStep,
+        stepIndex,
+        workflow.steps.length,
+        workflow.steps.map(s => s.name),
+      );
       let result: StepResult;
 
       try {
@@ -146,6 +153,8 @@ export class ADWEngine {
           verdict: "FAIL",
           error: err instanceof Error ? err.message : String(err),
         };
+      } finally {
+        this.config.team.markStepComplete(state.currentStep);
       }
 
       const elapsed = (Date.now() - stepStart) / 1000;
