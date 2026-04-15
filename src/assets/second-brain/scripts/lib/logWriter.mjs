@@ -71,7 +71,7 @@ export function buildSessionEntry(sessionId, timestamp, runs, summary) {
     });
 
   const wisdomSection =
-    wisdomBlocks.length > 0 ? ["", "### Wisdom", ...wisdomBlocks, ""] : [];
+    wisdomBlocks.length > 0 ? ["", "### Wisdom", ...wisdomBlocks] : [];
 
   return [
     `## Session ${sessionId} — ${time}`,
