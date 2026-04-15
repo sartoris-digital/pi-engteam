@@ -133,3 +133,20 @@ export type ApprovalToken = {
   expiresAt: string;
   signature: string;
 };
+
+export type MemoryConfig = {
+  obsidianVaultPath?: string;
+  obsidianDailyNotesSubdir: string;
+  maxConversationTurns: number;
+  flushModel: string;
+};
+
+export type CompletedRun = {
+  runId: string;
+  workflow: string;
+  goal: string;
+  verdict: Exclude<Verdict, "NEEDS_MORE"> | "ABORTED";
+  artifacts: string[];
+  changedFiles: string[];
+  completedAt: string;
+};
