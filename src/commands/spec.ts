@@ -8,6 +8,68 @@ import { clearActiveRun } from "../adw/ActiveRun.js";
 import { QuestionWizard } from "../ui/QuestionWizard.js";
 import { parseQuestionsFile, formatAnswers } from "./spec-utils.js";
 
+type UiContext = {
+  ui: {
+    custom: <T>(
+      factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) => any,
+      options?: any,
+    ) => Promise<T>;
+    notify: (message: string, type: "info" | "error" | "warning" | "success") => void;
+  };
+};
+
+export async function executeSpecWorkflow(
+  engine: ADWEngine,
+  runsDir: string,
+  runId: string,
+  ctx: UiContext,
+): Promise<void> {
+  // Phase 1: run until discover step pauses awaiting wizard input
+  await engine.executeUntilPause(runId);
+
+  const questionsPath = join(runsDir, runId, "questions.md");
+  let questionsRaw: string;
+  try {
+    questionsRaw = await readFile(questionsPath, "utf8");
+  } catch {
+    ctx.ui.notify("Discoverer did not write questions.md. Run aborted.", "error");
+    await engine.abortRun(runId);
+    return;
+  }
+
+  const categories = parseQuestionsFile(questionsRaw);
+  if (categories.length === 0) {
+    ctx.ui.notify("No questions found in questions.md. Run aborted.", "error");
+    await engine.abortRun(runId);
+    return;
+  }
+
+  // Show TUI wizard — blocks until user submits
+  const answers = await ctx.ui.custom<Record<string, string[]>>(
+    (tui, theme, _keybindings, done) => new QuestionWizard(tui, theme, categories, done),
+    {
+      overlay: true,
+      overlayOptions: { width: "80%", maxHeight: "90%", anchor: "top-center", offsetY: 1 },
+    },
+  );
+
+  // Write answers.md
+  const runDir = join(runsDir, runId);
+  await mkdir(runDir, { recursive: true });
+  await writeFile(join(runDir, "answers.md"), formatAnswers(answers, categories));
+  await clearActiveRun();
+
+  // Phase 2: resume — runs until design step pauses awaiting approval
+  await engine.executeUntilPause(runId);
+
+  const specPath = join(runsDir, runId, "spec.md");
+  ctx.ui.notify(
+    `spec written → ${specPath}\n\nReview the spec, then type "approve" when ready to write the plan.`,
+    "info",
+  );
+  // Command returns. The input hook in index.ts takes over for subsequent approval phases.
+}
+
 export function registerSpecCommand(
   pi: ExtensionAPI,
   engine: ADWEngine,
@@ -28,7 +90,6 @@ export function registerSpecCommand(
         return;
       }
 
-      // Ensure all agents are started
       for (const def of agentDefs) {
         await team.ensureTeammate(def.name, def);
       }
@@ -44,53 +105,7 @@ export function registerSpecCommand(
         "info",
       );
 
-      // Phase 1: run until discover step pauses awaiting wizard input
-      await engine.executeUntilPause(run.runId);
-
-      // Read questions.md written by the discoverer
-      const questionsPath = join(runsDir, run.runId, "questions.md");
-      let questionsRaw: string;
-      try {
-        questionsRaw = await readFile(questionsPath, "utf8");
-      } catch {
-        ctx.ui.notify("Discoverer did not write questions.md. Run aborted.", "error");
-        await engine.abortRun(run.runId);
-        return;
-      }
-
-      const categories = parseQuestionsFile(questionsRaw);
-      if (categories.length === 0) {
-        ctx.ui.notify("No questions found in questions.md. Run aborted.", "error");
-        await engine.abortRun(run.runId);
-        return;
-      }
-
-      // Show TUI wizard — blocks until user submits
-      const answers = await ctx.ui.custom<Record<string, string[]>>(
-        (tui, theme, _keybindings, done) => new QuestionWizard(tui, theme, categories, done),
-        {
-          overlay: true,
-          overlayOptions: { width: "80%", maxHeight: "90%", anchor: "top-center", offsetY: 1 },
-        },
-      );
-
-      // Write answers.md
-      const runDir = join(runsDir, run.runId);
-      await mkdir(runDir, { recursive: true });
-      await writeFile(join(runDir, "answers.md"), formatAnswers(answers, categories));
-
-      // Clear the answering phase marker
-      await clearActiveRun();
-
-      // Phase 2: resume — runs until design step pauses awaiting approval
-      await engine.executeUntilPause(run.runId);
-
-      const specPath = join(runsDir, run.runId, "spec.md");
-      ctx.ui.notify(
-        `spec written → ${specPath}\n\nReview the spec, then type "approve" when ready to write the plan.`,
-        "info",
-      );
-      // Command returns. The input hook takes over for approval phases.
+      await executeSpecWorkflow(engine, runsDir, run.runId, ctx);
     },
   });
 }
