@@ -22,6 +22,7 @@ type StartRunParams = {
   workflow: string;
   goal: string;
   budget: Parameters<typeof createRunState>[0]["budget"];
+  initialArtifacts?: string[];
 };
 
 export class ADWEngine {
@@ -56,11 +57,19 @@ export class ADWEngine {
     await saveRunState(this.config.runsDir, state);
 
     const { writeFile } = await import("fs/promises");
-    const { join } = await import("path");
+    const { join, basename, extname } = await import("path");
     await writeFile(
       join(this.config.runsDir, "active-run.txt"),
       runId,
     );
+
+    if (params.initialArtifacts?.length) {
+      for (const filePath of params.initialArtifacts) {
+        const key = basename(filePath, extname(filePath));
+        state = { ...state, artifacts: { ...state.artifacts, [key]: filePath } };
+      }
+      await saveRunState(this.config.runsDir, state);
+    }
 
     this.config.observer.emit({
       runId,

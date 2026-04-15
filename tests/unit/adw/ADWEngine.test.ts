@@ -187,6 +187,25 @@ describe("ADWEngine", () => {
     cwdSpy.mockRestore();
   });
 
+  it("startRun with initialArtifacts stores them in run.artifacts keyed by filename", async () => {
+    const dir = await makeTmpDir();
+    const step = makePassStep("analyze");
+    const workflow = makeWorkflow([step]);
+    const engine = new ADWEngine({
+      runsDir: dir,
+      workflows: new Map([["test-workflow", workflow]]),
+      team: makeMockTeam(),
+      observer: makeMockObserver(),
+    });
+    const run = await engine.startRun({
+      workflow: "test-workflow",
+      goal: "test",
+      budget: {},
+      initialArtifacts: ["/path/to/issue-brief.md"],
+    });
+    expect(run.artifacts["issue-brief"]).toBe("/path/to/issue-brief.md");
+  });
+
   it("executeUntilPause resumes from waiting_user and runs to completion", async () => {
     const dir = await makeTmpDir();
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(dir);
