@@ -88,6 +88,10 @@ export type VerdictPayload = {
   issues?: string[];
   artifacts?: string[];
   handoffHint?: string;
+  learnings?: string[];
+  decisions?: string[];
+  issues_found?: string[];
+  gotchas?: string[];
 };
 
 export type SafetyConfig = {
@@ -149,4 +153,10 @@ export type CompletedRun = {
   artifacts: string[];
   changedFiles: string[];
   completedAt: string;
+  wisdom: {
+    learnings: string[];
+    decisions: string[];
+    issues_found: string[];
+    gotchas: string[];
+  };
 };

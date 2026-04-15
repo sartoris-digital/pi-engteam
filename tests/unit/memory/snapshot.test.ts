@@ -19,6 +19,7 @@ const RUN: CompletedRun = {
   artifacts: ["plan.md"],
   changedFiles: ["src/ui/Theme.tsx"],
   completedAt: "2026-04-15T14:32:00Z",
+  wisdom: { learnings: [], decisions: [], issues_found: [], gotchas: [] },
 };
 
 describe("writeSnapshot", () => {

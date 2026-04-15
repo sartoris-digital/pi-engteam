@@ -158,4 +158,78 @@ describe("MemoryCore", () => {
     // CRITICAL-1: register must not throw even if script install fails
     await expect(core.register(pi.asPi())).resolves.toBeUndefined();
   });
+
+  it("accumulates wisdom fields from multiple verdicts across steps for the same run", async () => {
+    const { MemoryCore } = await import("../../../src/memory/MemoryCore.js");
+    const core = new MemoryCore(CONFIG, runsDir, {
+      logDir: join(brainDir, "logs"),
+      lastFlushPath: join(brainDir, ".last-flush"),
+      generateNarrative: mockGenerateNarrative,
+    });
+
+    const runId = "run-wisdom";
+    await mkdir(join(runsDir, runId), { recursive: true });
+    await writeFile(
+      join(runsDir, runId, "state.json"),
+      JSON.stringify({
+        runId,
+        workflow: "plan-build-review",
+        goal: "Add rate limiting",
+        artifacts: {},
+      }),
+      "utf8",
+    );
+
+    core.onVerdict(runId, {
+      step: "build",
+      verdict: "PASS",
+      learnings: ["express-rate-limit uses in-memory store by default"],
+      gotchas: ["RateLimitInfo headers only set when standardHeaders: true"],
+    });
+    core.onVerdict(runId, {
+      step: "review",
+      verdict: "PASS",
+      decisions: ["Chose sliding window over fixed window"],
+      learnings: ["Use Redis store for multi-instance deployments"],
+    });
+
+    await vi.waitFor(() => {
+      const cache = core.getRunCache();
+      expect(cache[0]?.wisdom?.learnings).toHaveLength(2);
+    });
+
+    const run = core.getRunCache()[0];
+    expect(run.wisdom.learnings).toContain("express-rate-limit uses in-memory store by default");
+    expect(run.wisdom.learnings).toContain("Use Redis store for multi-instance deployments");
+    expect(run.wisdom.decisions).toContain("Chose sliding window over fixed window");
+    expect(run.wisdom.gotchas).toContain("RateLimitInfo headers only set when standardHeaders: true");
+    expect(run.wisdom.issues_found).toEqual([]);
+  });
+
+  it("initializes empty wisdom for aborted runs", async () => {
+    const { MemoryCore } = await import("../../../src/memory/MemoryCore.js");
+    const core = new MemoryCore(CONFIG, runsDir, {
+      logDir: join(brainDir, "logs"),
+      lastFlushPath: join(brainDir, ".last-flush"),
+      generateNarrative: mockGenerateNarrative,
+    });
+
+    const runId = "run-aborted-wisdom";
+    await mkdir(join(runsDir, runId), { recursive: true });
+    await writeFile(
+      join(runsDir, runId, "state.json"),
+      JSON.stringify({ runId, workflow: "investigate", goal: "Fix login bug", artifacts: {} }),
+      "utf8",
+    );
+
+    core.onRunAborted(runId);
+
+    await vi.waitFor(() => {
+      expect(core.getRunCache()).toHaveLength(1);
+    });
+
+    const run = core.getRunCache()[0];
+    expect(run.verdict).toBe("ABORTED");
+    expect(run.wisdom).toEqual({ learnings: [], decisions: [], issues_found: [], gotchas: [] });
+  });
 });
