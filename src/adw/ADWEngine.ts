@@ -130,11 +130,8 @@ export class ADWEngine {
       state = updateStep(state, state.currentStep, { startedAt });
 
       const stepStart = Date.now();
-      const stepIndex = workflow.steps.findIndex(s => s.name === state!.currentStep);
       this.config.team.setStepContext(
         state.currentStep,
-        stepIndex,
-        workflow.steps.length,
         workflow.steps.map(s => s.name),
       );
       let result: StepResult;

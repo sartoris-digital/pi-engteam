@@ -82,15 +82,18 @@ describe("ADWEngine", () => {
     const dir = await makeTmpDir();
     const step = makePassStep("plan");
     const workflow = makeWorkflow([step]);
+    const team = makeMockTeam();
     const engine = new ADWEngine({
       runsDir: dir,
       workflows: new Map([["test-workflow", workflow]]),
-      team: makeMockTeam(),
+      team,
       observer: makeMockObserver(),
     });
     const run = await engine.startRun({ workflow: "test-workflow", goal: "test goal", budget: {} });
     const final = await engine.executeRun(run.runId);
     expect(final.status).toBe("succeeded");
+    expect(team.setStepContext).toHaveBeenCalledWith("plan", ["plan"]);
+    expect(team.markStepComplete).toHaveBeenCalledWith("plan");
   });
 
   it("FAIL step → status failed", async () => {
@@ -246,5 +249,32 @@ describe("ADWEngine", () => {
     expect(final.status).toBe("succeeded");
 
     cwdSpy.mockRestore();
+  });
+
+  it("markStepComplete called in finally even when step throws", async () => {
+    const dir = await makeTmpDir();
+    const throwingStep: Step = {
+      name: "plan",
+      required: true,
+      run: async (): Promise<StepResult> => { throw new Error("boom"); },
+    };
+    const workflow: Workflow = {
+      name: "test-workflow",
+      description: "test",
+      steps: [throwingStep],
+      transitions: [{ from: "plan", when: (r) => r.verdict !== "PASS", to: "halt" }],
+      defaults: {},
+    };
+    const team = makeMockTeam();
+    const engine = new ADWEngine({
+      runsDir: dir,
+      workflows: new Map([["test-workflow", workflow]]),
+      team,
+      observer: makeMockObserver(),
+    });
+    const run = await engine.startRun({ workflow: "test-workflow", goal: "test", budget: {} });
+    const final = await engine.executeRun(run.runId);
+    expect(final.status).toBe("failed");
+    expect(team.markStepComplete).toHaveBeenCalledWith("plan");
   });
 });

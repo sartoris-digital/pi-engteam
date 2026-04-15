@@ -32,7 +32,7 @@ export class TeamRuntime {
     return `\n\n---\n## Team Context\nYour name in the team is: **${name}**\nUse SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\nAlways end your turn with VerdictEmit when you have completed your assigned step.`;
   }
 
-  setStepContext(stepName: string, _stepIndex: number, _totalSteps: number, allStepNames: string[]): void {
+  setStepContext(stepName: string, allStepNames: string[]): void {
     this.currentStepContext = { name: stepName };
     this.allSteps = allStepNames;
     this.refreshAllLabels();
@@ -44,6 +44,7 @@ export class TeamRuntime {
     this.refreshAllLabels();
   }
 
+  /** Fallback for abort/crash paths where the step did not complete normally. ADWEngine does not call this in normal flow. */
   clearStepContext(): void {
     this.currentStepContext = null;
     this.refreshAllLabels();
