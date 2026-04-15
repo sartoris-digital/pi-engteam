@@ -14,7 +14,7 @@ type UiContext = {
       factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) => any,
       options?: any,
     ) => Promise<T>;
-    notify: (message: string, type: "info" | "error" | "warning" | "success") => void;
+    notify: (message: string, type?: "info" | "error" | "warning") => void;
   };
 };
 
