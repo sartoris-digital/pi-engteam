@@ -9,6 +9,7 @@ import {
   updateStep,
 } from "./RunState.js";
 import { checkBudget, tickBudget } from "./BudgetGuard.js";
+import { writeActiveRun } from "./ActiveRun.js";
 
 type ADWConfig = {
   runsDir: string;
@@ -181,6 +182,19 @@ export class ADWEngine {
       };
 
       await saveRunState(this.config.runsDir, state);
+
+      // Pause if the completed step requested it
+      if (stepDef.pauseAfter && result.verdict === "PASS") {
+        state = { ...state, status: "waiting_user" };
+        await writeActiveRun({
+          runId,
+          phase: stepDef.pauseAfter,
+          stepName: stepDef.name,
+          runsDir: this.config.runsDir,
+        });
+        await saveRunState(this.config.runsDir, state);
+        break;
+      }
     }
 
     await saveRunState(this.config.runsDir, state);
@@ -199,6 +213,15 @@ export class ADWEngine {
   async resumeRun(runId: string): Promise<RunState> {
     const state = await loadRunState(this.config.runsDir, runId);
     if (!state) throw new Error(`Run ${runId} not found`);
+    return this.executeRun(runId);
+  }
+
+  async executeUntilPause(runId: string): Promise<RunState> {
+    const state = await loadRunState(this.config.runsDir, runId);
+    if (!state) throw new Error(`Run ${runId} not found`);
+    if (state.status === "waiting_user") {
+      await saveRunState(this.config.runsDir, { ...state, status: "running" });
+    }
     return this.executeRun(runId);
   }
 
