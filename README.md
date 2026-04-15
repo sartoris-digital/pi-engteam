@@ -13,6 +13,7 @@ A [Pi coding agent](https://pi.dev) extension that wires a multi-agent engineeri
 - [Custom Tools](#custom-tools)
 - [Safety System](#safety-system)
 - [Observability Server](#observability-server)
+- [Memory Core](#memory-core)
 - [Configuration](#configuration)
 - [Development](#development)
 - [How It Works End-to-End](#how-it-works-end-to-end)
@@ -25,11 +26,12 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 
 **Key capabilities:**
 
-- 11 built-in workflows (plan → build → review, spec → design → plan → build → review, debug, triage, migrate, refactor, and more)
-- 15 specialist agents, each with a focused system prompt and scoped tool access
+- 12 built-in workflows (plan → build → review, spec → design → plan → build → review, issue analysis, debug, triage, migrate, refactor, and more)
+- 16 specialist agents, each with a focused system prompt and scoped tool access
 - Inter-agent messaging via a typed pub/sub message bus
 - Three-layer safety guard: hard blockers, plan-mode gate, and approval-token gate
 - SQLite-backed observability server with a web dashboard
+- Memory Core: automatic session summarisation into daily logs, with optional Obsidian vault sync
 - Single-file ESM bundle — no node_modules required in the Pi extensions folder
 
 ---
@@ -69,15 +71,24 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
     │   └── engteam.sqlite       ← observability DB
     ├── safety.json              ← safety config (auto-created)
     ├── model-routing.json       ← model overrides (optional)
-    └── runs/
-        └── <runId>/
-            ├── state.json       ← run state (workflow, step, budget)
-            ├── events.jsonl     ← append-only event log
-            ├── tasks.json       ← shared task list
-            ├── .secret          ← HMAC key for approval tokens
-            └── approvals/
-                ├── pending/     ← requests waiting for judge
-                └── *.json       ← granted approval tokens
+    ├── runs/
+    │   └── <runId>/
+    │       ├── state.json       ← run state (workflow, step, budget)
+    │       ├── events.jsonl     ← append-only event log
+    │       ├── tasks.json       ← shared task list
+    │       ├── .secret          ← HMAC key for approval tokens
+    │       └── approvals/
+    │           ├── pending/     ← requests waiting for judge
+    │           └── *.json       ← granted approval tokens
+    └── second-brain/
+        ├── scripts/
+        │   ├── flush.mjs        ← standalone flush script (spawned detached)
+        │   └── lib/
+        │       ├── logWriter.mjs    ← buildSessionEntry / appendOrReplaceSession
+        │       ├── transcript.mjs   ← readLastNTurns
+        │       └── config.mjs       ← loadConfig / expandTilde
+        └── logs/
+            └── YYYY-MM-DD.md    ← daily session logs (appended per flush)
 
 <project-cwd>/
 └── .pi/
@@ -156,6 +167,7 @@ Shortcuts let you invoke workflows with a natural-language goal. Each command ta
 
 | Command | Workflow | Description |
 |---------|----------|-------------|
+| `/issue <id>` | `issue-analyze` | Fetch a GitHub, Azure DevOps, or Jira ticket and extract structured requirements into `issue-brief.md`. Detects tracker from AGENTS.md / CLAUDE.md when not explicit. |
 | `/spec <goal>` | `spec-plan-build-review` | Discover requirements with an interactive wizard, write a spec and plan for human approval, then build and review. |
 | `/plan <goal>` | `plan-build-review` | Plan and implement a feature, then review for correctness. |
 | `/plan-fix <goal>` | `plan-build-review-fix` | Plan and implement a feature with a self-healing review+fix loop. |
@@ -171,6 +183,9 @@ Shortcuts let you invoke workflows with a natural-language goal. Each command ta
 **Examples:**
 
 ```
+/issue 1234
+/issue PROJ-42
+/issue https://github.com/org/repo/issues/1234
 /spec "Add dark mode toggle to settings"
 /plan "Add email/password login with JWT tokens"
 /plan-fix "Refactor auth middleware to support OAuth"
@@ -216,6 +231,7 @@ Workflows are state machines where each step dispatches a goal to an agent, wait
 
 | ID | Steps | Description |
 |----|-------|-------------|
+| `issue-analyze` | analyze | Fetch a ticket from GitHub Issues, Azure DevOps, or Jira; extract requirements; write `issue-brief.md` with a suggested downstream workflow. |
 | `spec-plan-build-review` | discover → design → plan → build → review | Interactive discovery wizard → spec (human-gated) → implementation plan (human-gated) → build → review. |
 | `plan-build-review` | plan → build → review | Decompose a goal, implement it, review for correctness and quality. |
 | `plan-build-review-fix` | plan → build → review → fix → review | Same as above with an automatic fix loop on review failures. |
@@ -259,6 +275,36 @@ Workflows are state machines where each step dispatches a goal to an agent, wait
 
 **State:** The active run is tracked in `<project-cwd>/.pi/engteam/active-run.json`. This is per-project so simultaneous `/spec` runs in different directories never collide.
 
+### `/issue` — ticket analysis shortcut
+
+`/issue` accepts a raw ticket ID, a numeric issue number, or a full URL and routes to the `issue-analyze` workflow. The command detects the tracker type automatically.
+
+```
+/issue 1234                                 # GitHub issue #1234 (auto-detected)
+/issue PROJ-42                              # Jira ticket PROJ-42
+/issue AB#9876                              # Azure DevOps work item
+/issue https://github.com/org/repo/issues/1234   # explicit URL
+```
+
+The tracker is resolved in order:
+1. URL scheme (github.com → `github`, dev.azure.com → `ado`, *.atlassian.net → `jira`)
+2. ID format (`AB#` prefix → `ado`, `[A-Z]+-\d+` → `jira`, bare number → `github`)
+3. Project files: `AGENTS.md`, `CLAUDE.md`, `~/.pi/engteam/issue-tracker.json`, `git remote -v`
+
+On `PASS` the run directory contains `issue-brief.md` with:
+- Ticket metadata (tracker, ID, URL, type, priority, status)
+- Extracted problem statement and acceptance criteria
+- Suggested downstream workflow (`spec-plan-build-review`, `debug`, `fix-loop`, or `plan-build-review`)
+- A one-sentence goal string ready to paste into the suggested shortcut
+
+**Typical follow-up:**
+
+```
+/issue 1234
+# → reads issue-brief.md, sees Suggested Workflow: fix-loop, Goal: "Fix null pointer in checkout flow"
+/fix "Fix null pointer in checkout flow"
+```
+
 ### How a step works
 
 1. The engine builds a `StepContext` — goal, runId, runsDir, artifacts from previous steps.
@@ -298,6 +344,7 @@ The team is defined in `agents/*.md`. Each file becomes an agent definition inst
 
 | Agent | Role |
 |-------|------|
+| `issue-analyst` | Fetches issue tickets from GitHub Issues, Azure DevOps, or Jira; detects tracker type; extracts requirements and writes `issue-brief.md` (used by `/issue`) |
 | `discoverer` | Reads a goal and produces a structured set of 3–5 discovery questions (used by `/spec` discover step) |
 | `architect` | System design, ADR authoring, service boundary and API design |
 | `codebase-cartographer` | Builds mental model of existing code, maps modules and dependencies |
@@ -460,6 +507,81 @@ Events are written to `~/.pi/engteam/runs/<runId>/events.jsonl` in real time. Th
 
 ---
 
+## Memory Core
+
+Memory Core automatically summarises each Pi session into a daily markdown log so the team's decisions and completed work accumulate over time.
+
+### How it works
+
+At the end of every session (and before each compaction), Memory Core fires a two-stage flush:
+
+1. **Snapshot** — TypeScript writes a JSON snapshot to a temp file. The snapshot contains all completed runs, the transcript path, log directory, and flush model.
+2. **Flush script** — `flush.mjs` is spawned detached (fire-and-forget). It reads the last N conversation turns, calls the Anthropic API to generate a summary, and appends a structured entry to today's daily log (`~/.pi/engteam/second-brain/logs/YYYY-MM-DD.md`).
+
+The flush script runs outside the Pi process so it never blocks the session.
+
+### Daily log format
+
+Each session appends one entry:
+
+```markdown
+## Session <id> — HH:MMZ
+
+### Runs
+| Run ID | Workflow | Goal | Verdict |
+|--------|----------|------|---------|
+| `abc123` | plan-build-review | Add rate limiting | PASS |
+
+### Changed Files
+- src/middleware/rateLimit.ts
+
+### Summary
+<LLM-generated paragraph summarising decisions, blockers, and outcomes>
+
+---
+```
+
+If the session already has an entry (e.g. after a mid-session compaction), it is replaced in-place rather than duplicated.
+
+### Flush triggers
+
+| Trigger | Pi hook |
+|---------|---------|
+| Session end | `session_end` |
+| Pre-compaction | `session_before_compact` |
+
+### Obsidian vault sync (optional)
+
+Set `obsidianVaultPath` in the memory config to sync daily logs into an Obsidian vault. After each flush the script resolves symlinks on both sides before comparing paths, so macOS `/tmp` → `/private/tmp` aliasing is handled correctly.
+
+### Memory config — `~/.pi/engteam/memory.json`
+
+Created automatically the first time the extension loads. Override any field:
+
+```json
+{
+  "flushModel": "claude-haiku-4-5-20251001",
+  "maxConversationTurns": 20,
+  "obsidianDailyNotesSubdir": "Daily",
+  "obsidianVaultPath": "~/Documents/MyVault"
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `flushModel` | `claude-haiku-4-5-20251001` | Model used to generate session summaries |
+| `maxConversationTurns` | `20` | Maximum turns read from the session transcript |
+| `obsidianDailyNotesSubdir` | `"Daily"` | Subdirectory inside the vault for daily notes |
+| `obsidianVaultPath` | — | Absolute path to your Obsidian vault (optional) |
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Required for the flush script to call the Anthropic API |
+
+---
+
 ## Configuration
 
 ### Safety config — `~/.pi/engteam/safety.json`
@@ -510,6 +632,7 @@ Override the model for any agent or set budget downshift rules:
 | `PI_ENGTEAM_SERVER_PORT` | `4747` | Observability server port |
 | `PI_ENGTEAM_DATA_DIR` | `~/.pi/engteam` | Root data directory |
 | `PI_ENGTEAM_EVENT_URL` | — | Remote HTTP sink for events (optional) |
+| `ANTHROPIC_API_KEY` | — | Required by the Memory Core flush script to call the Anthropic API |
 
 ---
 
@@ -532,12 +655,14 @@ src/
 │   ├── workflow-shortcuts.ts
 │   ├── spec.ts              ← /spec command + input hook
 │   ├── spec-utils.ts        ← parseQuestionsFile, formatAnswers
+│   ├── issue.ts             ← /issue command (tracker detection + issue-analyze)
 │   ├── observe.ts
 │   └── doctor.ts
 ├── ui/
 │   └── QuestionWizard.ts    ← tabbed TUI wizard component (used by /spec)
 ├── workflows/
 │   ├── types.ts             ← Workflow, Step, StepContext, StepResult
+│   ├── issue-analyze.ts     ← fetch ticket + write issue-brief.md
 │   ├── spec-plan-build-review.ts
 │   ├── plan-build-review.ts
 │   ├── plan-build-review-fix.ts
@@ -570,11 +695,24 @@ src/
 │   ├── PlanMode.ts
 │   ├── paths.ts
 │   └── patterns.ts
-└── observer/
-    ├── Observer.ts          ← event emission
-    ├── EventWriter.ts       ← JSONL writer
-    ├── HttpSink.ts          ← optional remote sink
-    └── schema.ts            ← event type definitions
+├── observer/
+│   ├── Observer.ts          ← event emission
+│   ├── EventWriter.ts       ← JSONL writer
+│   ├── HttpSink.ts          ← optional remote sink
+│   └── schema.ts            ← event type definitions
+├── memory/
+│   ├── MemoryCore.ts        ← run cache, flush orchestration, Pi hook registration
+│   ├── snapshot.ts          ← writeSnapshot() — serialises flush payload to temp JSON
+│   ├── spawnFlush.ts        ← ensureScriptsInstalled(), spawnFlush() detached spawn
+│   └── config.ts            ← loadMemoryConfig(), MEMORY_DEFAULTS, expandTilde()
+└── assets/
+    └── second-brain/
+        └── scripts/
+            ├── flush.mjs            ← standalone flush entrypoint
+            └── lib/
+                ├── logWriter.mjs    ← buildSessionEntry / appendOrReplaceSession
+                ├── transcript.mjs   ← readLastNTurns
+                └── config.mjs       ← loadConfig / expandTilde
 
 server/
 ├── index.ts                 ← server entry point (CJS, spawned as child process)
