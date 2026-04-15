@@ -104,36 +104,37 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
 
 - [Pi coding agent](https://pi.dev) installed
 - Node.js ≥ 20
-- pnpm
 
-### Build and install
+### Install via Pi (recommended)
 
 ```bash
-# Clone the repo
-git clone <repo-url>
-cd pi-engteam
-
-# Install dependencies
-pnpm install
-
-# Build extension + server bundles
-pnpm build
-
-# Copy files to Pi's directories
-pnpm engteam:install
-# equivalent to: pnpm build && bash scripts/install.sh
+pi install https://github.com/sartoris-digital/pi-engteam
 ```
 
-`install.sh` copies:
+Pi clones the repo, runs `npm install`, and automatically executes `scripts/postinstall.mjs` which:
 
-| Source | Destination |
-|--------|-------------|
-| `dist/index.js` | `~/.pi/agent/extensions/pi-engteam.js` |
-| `dist/server.cjs` | `~/.pi/engteam/server.cjs` |
-| `better_sqlite3.node` | `~/.pi/engteam/better_sqlite3.node` |
-| `agents/*.md` | `~/.pi/agent/agents/engteam-*.md` |
+| Action | Details |
+|--------|---------|
+| Builds the server bundle | `tsup server/index.ts → dist/server.cjs` |
+| Installs server | `dist/server.cjs` → `~/.pi/engteam/server.cjs` |
+| Installs native addon | `better_sqlite3.node` → `~/.pi/engteam/better_sqlite3.node` |
+| Installs agents | `agents/*.md` → `~/.pi/agent/agents/engteam-*.md` |
 
-Restart Pi, then run `/team-start` to boot the team.
+Pi loads the extension directly from `src/index.ts` via its built-in TypeScript transpiler — no separate build step required. Restart Pi, then run `/team-start` to boot the team.
+
+### Install from source (pnpm)
+
+```bash
+git clone <repo-url>
+cd pi-engteam
+pnpm install   # also runs postinstall automatically
+```
+
+Or to use the pre-built extension bundle instead of jiti/source loading:
+
+```bash
+pnpm engteam:install   # pnpm build && bash scripts/install.sh
+```
 
 ### Uninstall
 
@@ -730,6 +731,7 @@ pnpm typecheck              # tsc --noEmit
 pnpm test                   # vitest run
 pnpm test:watch             # vitest --watch
 pnpm engteam:install        # pnpm build && bash scripts/install.sh
+node scripts/postinstall.mjs  # build server + copy artifacts (runs automatically on install)
 ```
 
 ### Adding a new workflow

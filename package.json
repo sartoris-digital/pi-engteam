@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
   "scripts": {
     "build": "tsup",
     "postbuild": "node --input-type=module -e \"import{cpSync}from'node:fs';cpSync('src/assets','dist/assets',{recursive:true,force:true});\"",
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -39,6 +43,5 @@
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
-  },
-  "packageManager": "pnpm@10.28.2+sha512.41872f037ad22f7348e3b1debbaf7e867cfd448f2726d9cf74c08f19507c31d2c8e7a11525b983febc2df640b5438dee6023ebb1f84ed43cc2d654d2bc326264"
+  }
 }

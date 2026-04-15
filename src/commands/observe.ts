@@ -28,7 +28,8 @@ export async function isServerRunning(port: number): Promise<boolean> {
 }
 
 export async function startServer(port: number): Promise<void> {
-  // server.cjs is installed to ~/.pi/engteam/server.cjs by scripts/install.sh
+  // server.cjs is installed to ~/.pi/engteam/server.cjs by scripts/postinstall.mjs
+  // (or by scripts/install.sh when using the pnpm build workflow)
   const serverBin = join(homedir(), ".pi", "engteam", "server.cjs");
 
   // cwd is ~/.pi/engteam so Node can resolve better-sqlite3 from node_modules there
