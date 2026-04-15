@@ -20,6 +20,8 @@ import { migration } from "./workflows/migration.js";
 import { refactorCampaign } from "./workflows/refactor-campaign.js";
 import { docBackfill } from "./workflows/doc-backfill.js";
 import { specPlanBuildReview } from "./workflows/spec-plan-build-review.js";
+import { issueAnalyze } from "./workflows/issue-analyze.js";
+import { registerIssueCommand } from "./commands/issue.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
 import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
@@ -93,6 +95,18 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Be specific — no padding or vague statements. " +
       "Always call VerdictEmit at the end of your turn.",
   },
+  {
+    name: "issue-analyst",
+    description: "Fetches issue tickets from GitHub, ADO, or Jira CLIs and extracts structured requirements",
+    model: "claude-haiku-4-5-20251001",
+    systemPrompt:
+      "You are the Issue Analyst agent for the pi-engteam engineering team. " +
+      "Read the goal to get the ticket reference and tracker type. " +
+      "Fetch the ticket using the appropriate pre-authenticated CLI (gh, az, or jira). " +
+      "Extract the requirements and write issue-brief.md with all required sections. " +
+      "Select the appropriate downstream workflow based on issue type. " +
+      "Always call VerdictEmit at the end of your turn with step='analyze'.",
+  },
 ];
 
 export default async function (pi: ExtensionAPI) {
@@ -153,6 +167,7 @@ export default async function (pi: ExtensionAPI) {
     ["refactor-campaign", refactorCampaign],
     ["doc-backfill", docBackfill],
     ["spec-plan-build-review", specPlanBuildReview],
+    ["issue-analyze", issueAnalyze],
   ]);
   const engine = new ADWEngine({ runsDir: RUNS_DIR, workflows, team, observer });
 
@@ -169,6 +184,7 @@ export default async function (pi: ExtensionAPI) {
   registerObserveCommand(pi);
   registerWorkflowShortcuts(pi, engine);
   registerSpecCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
+  registerIssueCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
   registerTeamStartCommand(pi, team, AGENT_DEFS);
   registerTeamStopCommand(pi, team);
   registerRunStartCommand(pi, engine);
