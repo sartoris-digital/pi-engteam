@@ -301,6 +301,12 @@ export class MemoryCore {
       ...(existing?.artifacts ?? []),
     ]);
     const changedFiles = artifacts.filter(isLikelyFilePath);
+    const wisdom = {
+      learnings: dedupeStrings([...(existing?.wisdom?.learnings ?? []), ...(verdict.learnings ?? [])]),
+      decisions: dedupeStrings([...(existing?.wisdom?.decisions ?? []), ...(verdict.decisions ?? [])]),
+      issues_found: dedupeStrings([...(existing?.wisdom?.issues_found ?? []), ...(verdict.issues_found ?? [])]),
+      gotchas: dedupeStrings([...(existing?.wisdom?.gotchas ?? []), ...(verdict.gotchas ?? [])]),
+    };
 
     this.runCache.set(runId, {
       runId,
@@ -310,6 +316,7 @@ export class MemoryCore {
       artifacts,
       changedFiles,
       completedAt: new Date().toISOString(),
+      wisdom,
     });
   }
 
@@ -329,6 +336,7 @@ export class MemoryCore {
       artifacts,
       changedFiles,
       completedAt: new Date().toISOString(),
+      wisdom: { learnings: [], decisions: [], issues_found: [], gotchas: [] },
     });
   }
 

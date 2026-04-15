@@ -46,6 +46,62 @@ describe("buildSessionEntry", () => {
 
     expect(entry.match(/src\/b\.ts/g)).toHaveLength(1);
   });
+
+  it("includes Wisdom section for runs with non-empty wisdom arrays", () => {
+    const runWithWisdom = {
+      ...RUN,
+      wisdom: {
+        learnings: ["express-rate-limit uses in-memory store by default"],
+        decisions: ["Chose sliding window over fixed window"],
+        issues_found: [] as string[],
+        gotchas: ["RateLimitInfo headers only set when standardHeaders: true"],
+      },
+    };
+
+    const entry = buildSessionEntry("sess-wisdom", "2026-04-15T14:32:00Z", [runWithWisdom], "Done.");
+
+    expect(entry).toContain("### Wisdom");
+    expect(entry).toContain("**Learnings**");
+    expect(entry).toContain("express-rate-limit uses in-memory store by default");
+    expect(entry).toContain("**Decisions**");
+    expect(entry).toContain("Chose sliding window over fixed window");
+    expect(entry).toContain("**Gotchas**");
+    expect(entry).toContain("RateLimitInfo headers only set when standardHeaders: true");
+    // empty array → category omitted
+    expect(entry).not.toContain("**Issues Found**");
+  });
+
+  it("omits Wisdom section entirely when all wisdom arrays are empty", () => {
+    const runNoWisdom = {
+      ...RUN,
+      wisdom: { learnings: [] as string[], decisions: [] as string[], issues_found: [] as string[], gotchas: [] as string[] },
+    };
+    const entry = buildSessionEntry("sess-no-wisdom", "2026-04-15T14:32:00Z", [runNoWisdom], "Done.");
+    expect(entry).not.toContain("### Wisdom");
+  });
+
+  it("omits Wisdom section when wisdom field is absent on all runs", () => {
+    const entry = buildSessionEntry("sess-no-field", "2026-04-15T14:32:00Z", [RUN], "Done.");
+    expect(entry).not.toContain("### Wisdom");
+  });
+
+  it("Wisdom section appears between Changed Files and Summary", () => {
+    const runWithWisdom = {
+      ...RUN,
+      wisdom: {
+        learnings: ["something learned"],
+        decisions: [] as string[],
+        issues_found: [] as string[],
+        gotchas: [] as string[],
+      },
+    };
+    const entry = buildSessionEntry("sess-order", "2026-04-15T14:32:00Z", [runWithWisdom], "Summary text.");
+    const wisdomPos = entry.indexOf("### Wisdom");
+    const summaryPos = entry.indexOf("### Summary");
+    const changedFilesPos = entry.indexOf("### Changed Files");
+    expect(changedFilesPos).toBeLessThan(wisdomPos);
+    expect(wisdomPos).toBeLessThan(summaryPos);
+  });
 });
 
 describe("appendOrReplaceSession", () => {

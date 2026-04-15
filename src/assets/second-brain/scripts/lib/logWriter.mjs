@@ -4,7 +4,14 @@ import { dirname } from "node:path";
 /**
  * @param {string} sessionId
  * @param {string} timestamp
- * @param {Array<{ runId: string, workflow: string, goal: string, verdict: string, changedFiles?: string[] }>} runs
+ * @param {Array<{
+ *   runId: string,
+ *   workflow: string,
+ *   goal: string,
+ *   verdict: string,
+ *   changedFiles?: string[],
+ *   wisdom?: { learnings?: string[], decisions?: string[], issues_found?: string[], gotchas?: string[] }
+ * }>} runs
  * @param {string} summary
  * @returns {string}
  */
@@ -30,6 +37,42 @@ export function buildSessionEntry(sessionId, timestamp, runs, summary) {
       ? "_No files changed_"
       : changedFiles.map((file) => `- ${file}`).join("\n");
 
+  // Wisdom section — only present if at least one run has a non-empty wisdom array
+  const wisdomBlocks = runs
+    .filter((run) => {
+      const w = run.wisdom;
+      return w && (
+        (w.learnings?.length ?? 0) > 0 ||
+        (w.decisions?.length ?? 0) > 0 ||
+        (w.issues_found?.length ?? 0) > 0 ||
+        (w.gotchas?.length ?? 0) > 0
+      );
+    })
+    .map((run) => {
+      const w = run.wisdom;
+      const lines = [`#### ${run.runId.slice(0, 6)} — ${run.goal}`];
+      if (w.learnings?.length) {
+        lines.push("", "**Learnings**");
+        lines.push(...w.learnings.map((l) => `- ${l}`));
+      }
+      if (w.decisions?.length) {
+        lines.push("", "**Decisions**");
+        lines.push(...w.decisions.map((d) => `- ${d}`));
+      }
+      if (w.issues_found?.length) {
+        lines.push("", "**Issues Found**");
+        lines.push(...w.issues_found.map((i) => `- ${i}`));
+      }
+      if (w.gotchas?.length) {
+        lines.push("", "**Gotchas**");
+        lines.push(...w.gotchas.map((g) => `- ${g}`));
+      }
+      return lines.join("\n");
+    });
+
+  const wisdomSection =
+    wisdomBlocks.length > 0 ? ["", "### Wisdom", ...wisdomBlocks, ""] : [];
+
   return [
     `## Session ${sessionId} — ${time}`,
     "",
@@ -38,6 +81,7 @@ export function buildSessionEntry(sessionId, timestamp, runs, summary) {
     "",
     "### Changed Files",
     changedFilesSection,
+    ...wisdomSection,
     "",
     "### Summary",
     summary,
