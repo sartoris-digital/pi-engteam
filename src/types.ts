@@ -10,7 +10,7 @@ export type TeamMessage = {
   ts: string;
 };
 
-export type RunStatus = "pending" | "running" | "paused" | "succeeded" | "failed" | "aborted";
+export type RunStatus = "pending" | "running" | "paused" | "waiting_user" | "succeeded" | "failed" | "aborted";
 
 export type Budget = {
   maxIterations: number;

@@ -22,6 +22,8 @@ export type StepResult = {
 export type Step = {
   name: string;
   required: boolean;
+  /** If set, engine pauses with this phase after a PASS verdict */
+  pauseAfter?: "answering" | "approving";
   run: (ctx: StepContext) => Promise<StepResult>;
 };
 
