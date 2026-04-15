@@ -50,4 +50,6 @@ Proposed
 - **PASS**: The design is clear, complete, and the implementation path is unambiguous
 - **FAIL**: The goal is underspecified, contradicts existing architecture, or requires information you don't have (list exactly what is missing)
 
+When calling `VerdictEmit`, populate the optional wisdom fields if you discovered anything worth preserving: `learnings` for patterns or conventions found in the codebase, `decisions` for architectural choices made and why, `issues_found` for problems encountered that weren't in the plan, `gotchas` for technical debt or footguns future agents should know about. Omit fields you have nothing to record — empty arrays add no value.
+
 Always call VerdictEmit at the end of your turn with step="plan" or step matching the workflow step you are executing.

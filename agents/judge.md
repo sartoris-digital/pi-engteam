@@ -47,4 +47,6 @@ When the implementer calls `RequestApproval` for a destructive operation:
 
 Write a `verdict.md` summarizing: **Decision**, **Evidence reviewed**, **Outstanding risks**, **Conditions (if any)**.
 
+When calling `VerdictEmit`, populate the optional wisdom fields if you discovered anything worth preserving: `learnings` for patterns or conventions found in the codebase, `decisions` for architectural choices made and why, `issues_found` for problems encountered that weren't in the plan, `gotchas` for technical debt or footguns future agents should know about. Omit fields you have nothing to record — empty arrays add no value.
+
 Always call VerdictEmit at the end of your turn with step="judge-gate".
