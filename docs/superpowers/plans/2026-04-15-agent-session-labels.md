@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace Pi's generic "subagent" label with `agentName [step N/T · stepName]` so the active agent, step position, and step name are visible while a workflow runs.
+**Goal:** Replace Pi's generic "subagent" label with a full step-progress indicator — `agentName [✓ step1 · ● step2 · ○ step3]` — so the active agent and all step completion states are visible while a workflow runs.
 
-**Architecture:** `TeamRuntime` gains a `currentStepContext` field plus `setStepContext`/`clearStepContext` methods. A private `buildSessionLabel` helper formats the label. `session.setSessionName()` is called at agent creation (baseline name) and again in `deliver()` (full label with step context). `ADWEngine.executeRun` calls `setStepContext` before each step and clears it in a `finally` block so label is always cleaned up.
+**Architecture:** `TeamRuntime` gains `completedSteps`, `allSteps`, and `currentStepContext` fields plus `setStepContext`/`markStepComplete`/`clearStepContext`/`refreshAllLabels` methods. A private `buildSessionLabel` maps each step to ✓/●/○. All session labels are refreshed simultaneously whenever step state changes. `ADWEngine.executeRun` calls `setStepContext` (passing all step names) before each step and `markStepComplete` in the `finally` block.
 
 **Tech Stack:** TypeScript, `@mariozechner/pi-coding-agent` `AgentSession.setSessionName()`
 
 ---
 
-### Task 1: Update TeamRuntime with step context tracking and session labels
+### Task 1: Update TeamRuntime with step progress tracking and session labels
 
 **Files:**
 - Modify: `src/team/TeamRuntime.ts`
@@ -43,7 +43,9 @@ type AgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
 export class TeamRuntime {
   private sessions = new Map<string, AgentSession>();
-  private currentStepContext: { name: string; index: number; total: number } | null = null;
+  private currentStepContext: { name: string } | null = null;
+  private completedSteps = new Set<string>();
+  private allSteps: string[] = [];
 
   constructor(private config: TeamRuntimeConfig) {}
 
@@ -51,18 +53,39 @@ export class TeamRuntime {
     return `\n\n---\n## Team Context\nYour name in the team is: **${name}**\nUse SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\nAlways end your turn with VerdictEmit when you have completed your assigned step.`;
   }
 
-  setStepContext(stepName: string, stepIndex: number, totalSteps: number): void {
-    this.currentStepContext = { name: stepName, index: stepIndex, total: totalSteps };
+  setStepContext(stepName: string, _stepIndex: number, _totalSteps: number, allStepNames: string[]): void {
+    this.currentStepContext = { name: stepName };
+    this.allSteps = allStepNames;
+    this.refreshAllLabels();
+  }
+
+  markStepComplete(stepName: string): void {
+    this.completedSteps.add(stepName);
+    this.currentStepContext = null;
+    this.refreshAllLabels();
   }
 
   clearStepContext(): void {
     this.currentStepContext = null;
+    this.refreshAllLabels();
   }
 
   private buildSessionLabel(agentName: string): string {
-    if (!this.currentStepContext) return agentName;
-    const { name, index, total } = this.currentStepContext;
-    return `${agentName} [step ${index + 1}/${total} · ${name}]`;
+    if (this.allSteps.length === 0) return agentName;
+    const indicators = this.allSteps
+      .map(step => {
+        if (this.completedSteps.has(step)) return `✓ ${step}`;
+        if (step === this.currentStepContext?.name) return `● ${step}`;
+        return `○ ${step}`;
+      })
+      .join(" · ");
+    return `${agentName} [${indicators}]`;
+  }
+
+  private refreshAllLabels(): void {
+    for (const [name, session] of this.sessions) {
+      session.setSessionName(this.buildSessionLabel(name));
+    }
   }
 
   async ensureTeammate(name: string, def: AgentDefinition): Promise<void> {
@@ -99,7 +122,7 @@ export class TeamRuntime {
     });
 
     this.sessions.set(name, session);
-    session.setSessionName(name);
+    session.setSessionName(this.buildSessionLabel(name));
 
     this.config.observer.subscribeToSession(
       session as any,
@@ -141,9 +164,9 @@ export class TeamRuntime {
 }
 ```
 
-- [ ] **Step 2: Add `setStepContext` and `clearStepContext` to the mock team in the ADWEngine test**
+- [ ] **Step 2: Add `setStepContext`, `markStepComplete`, and `clearStepContext` to the mock team in the ADWEngine test**
 
-In `tests/unit/adw/ADWEngine.test.ts`, find `makeMockTeam()` (line 60) and add the two new methods:
+In `tests/unit/adw/ADWEngine.test.ts`, find `makeMockTeam()` and replace it:
 
 ```typescript
 function makeMockTeam() {
@@ -153,6 +176,7 @@ function makeMockTeam() {
     deliver: vi.fn(),
     disposeAll: vi.fn(),
     setStepContext: vi.fn(),
+    markStepComplete: vi.fn(),
     clearStepContext: vi.fn(),
   } as any;
 }
@@ -170,14 +194,14 @@ Expected: 0 errors
 
 ---
 
-### Task 2: Wire step context into ADWEngine and commit
+### Task 2: Wire step progress into ADWEngine and commit
 
 **Files:**
-- Modify: `src/adw/ADWEngine.ts:129-150`
+- Modify: `src/adw/ADWEngine.ts` (around line 132)
 
 - [ ] **Step 1: Locate the step execution block in `src/adw/ADWEngine.ts`**
 
-Find this block (around line 129):
+Find this block (around line 132):
 
 ```typescript
       const stepStart = Date.now();
@@ -200,12 +224,17 @@ Find this block (around line 129):
       }
 ```
 
-- [ ] **Step 2: Replace it with the version that pushes and pops step context**
+- [ ] **Step 2: Replace it with the version that pushes step progress and marks completion**
 
 ```typescript
       const stepStart = Date.now();
       const stepIndex = workflow.steps.findIndex(s => s.name === state.currentStep);
-      this.config.team.setStepContext(state.currentStep, stepIndex, workflow.steps.length);
+      this.config.team.setStepContext(
+        state.currentStep,
+        stepIndex,
+        workflow.steps.length,
+        workflow.steps.map(s => s.name),
+      );
       let result: StepResult;
 
       try {
@@ -223,7 +252,7 @@ Find this block (around line 129):
           error: err instanceof Error ? err.message : String(err),
         };
       } finally {
-        this.config.team.clearStepContext();
+        this.config.team.markStepComplete(state.currentStep);
       }
 ```
 
@@ -241,5 +270,5 @@ Expected: all tests pass
 
 ```bash
 git add src/team/TeamRuntime.ts src/adw/ADWEngine.ts tests/unit/adw/ADWEngine.test.ts
-git commit -m "feat: show agent name and step context in Pi session labels"
+git commit -m "feat: show full step progress in Pi session labels (✓/●/○ per step)"
 ```
