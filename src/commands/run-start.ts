@@ -25,7 +25,13 @@ export function registerRunStartCommand(pi: ExtensionAPI, engine: ADWEngine): vo
           maxCostUsd: maxCostStr ? parseFloat(maxCostStr) : undefined,
         },
       });
-      void engine.executeRun(run.runId);
+      // H1: attach rejection handler so workflow errors surface to the user
+      engine.executeRun(run.runId).catch((err: unknown) => {
+        ctx.ui.notify(
+          `Run ${run.runId.slice(0, 8)} failed: ${err instanceof Error ? err.message : String(err)}`,
+          "error",
+        );
+      });
       ctx.ui.notify(
         [
           `Run ${run.runId} started.`,

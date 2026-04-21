@@ -3,18 +3,18 @@ import type { VerdictPayload } from "../../../src/types.js";
 import type { StepContext } from "../../../src/workflows/types.js";
 import { verify } from "../../../src/workflows/verify.js";
 
-function makeCtx(overrides?: Partial<StepContext["run"]>): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((_runId: string, stepName: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(stepName, fn);
-    }),
-  };
-
+function makeCtx(
+  verdicts: Record<string, VerdictPayload> = {},
+  overrides?: Partial<StepContext["run"]>,
+): StepContext {
   const team = {
-    deliver: vi.fn(async (_agentName: string, _msg: unknown) => {
-      // No-op by default; tests fire verdicts directly via listeners
+    deliver: vi.fn(async (_agentName: string, msg: any) => {
+      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
+      if (match) {
+        const stepName = match[1];
+        return verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
+      }
+      return undefined;
     }),
   };
 
@@ -43,23 +43,10 @@ function makeCtx(overrides?: Partial<StepContext["run"]>): StepContext {
     },
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: engine as any,
+    engine: {} as any,
   };
 
-  // Make deliver fire the registered listener immediately after registration
-  (team.deliver as any).mockImplementation(async (_agentName: string, _msg: unknown) => {
-    // verdicts are fired by individual tests
-  });
-
   return ctx;
-}
-
-function fireVerdict(ctx: StepContext, stepName: string, payload: VerdictPayload) {
-  const engine = ctx.engine as any;
-  const calls: Array<[string, string, (v: VerdictPayload) => void]> = engine.registerVerdictListener.mock.calls;
-  const call = calls.findLast(([_runId, sn]) => sn === stepName);
-  if (!call) throw new Error(`No listener registered for step "${stepName}"`);
-  call[2](payload);
 }
 
 describe("verify workflow – structure", () => {
@@ -80,46 +67,36 @@ describe("verify workflow – structure", () => {
 
 describe("verify workflow – audit step", () => {
   it("PASS with gaps → success, no handoffHint", async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({
+      audit: { step: "audit", verdict: "PASS", issues: ["gap1", "gap2"] },
+    });
     const auditStep = verify.steps.find(s => s.name === "audit")!;
 
-    const promise = auditStep.run(ctx);
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "audit", { step: "audit", verdict: "PASS", issues: ["gap1", "gap2"] });
-
-    const result = await promise;
+    const result = await auditStep.run(ctx);
     expect(result.success).toBe(true);
     expect(result.verdict).toBe("PASS");
     expect(result.handoffHint).toBeUndefined();
   });
 
   it("PASS with no-gaps handoffHint → success with no-gaps hint", async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({
+      audit: { step: "audit", verdict: "PASS", handoffHint: "no-gaps" },
+    });
     const auditStep = verify.steps.find(s => s.name === "audit")!;
 
-    const promise = auditStep.run(ctx);
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "audit", {
-      step: "audit",
-      verdict: "PASS",
-      handoffHint: "no-gaps",
-    });
-
-    const result = await promise;
+    const result = await auditStep.run(ctx);
     expect(result.success).toBe(true);
     expect(result.verdict).toBe("PASS");
     expect(result.handoffHint).toBe("no-gaps");
   });
 
   it("FAIL → not success", async () => {
-    const ctx = makeCtx();
+    const ctx = makeCtx({
+      audit: { step: "audit", verdict: "FAIL", issues: ["critical error"] },
+    });
     const auditStep = verify.steps.find(s => s.name === "audit")!;
 
-    const promise = auditStep.run(ctx);
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "audit", { step: "audit", verdict: "FAIL", issues: ["critical error"] });
-
-    const result = await promise;
+    const result = await auditStep.run(ctx);
     expect(result.success).toBe(false);
     expect(result.verdict).toBe("FAIL");
   });
@@ -158,8 +135,10 @@ describe("verify workflow – transitions", () => {
     expect(t.when({ success: false, verdict: "FAIL" })).toBe(false);
   });
 
-  it("write-tests FAIL → halt", () => {
-    const t = verify.transitions.find(tr => tr.from === "write-tests" && tr.to === "halt")!;
+  it("write-tests FAIL → write-tests (retry)", () => {
+    // M3 fix: write-tests failures now retry instead of halting immediately
+    const t = verify.transitions.find(tr => tr.from === "write-tests" && tr.to === "write-tests")!;
+    expect(t).toBeDefined();
     expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
   });
 
@@ -196,22 +175,22 @@ describe("verify workflow – transitions", () => {
 
 describe("verify workflow – write-tests step injects feedback", () => {
   it("includes reviewer issues in prompt when present", async () => {
-    const ctx = makeCtx({
-      artifacts: { "audit-gaps": "gap-report.md" },
-      steps: [
-        {
-          name: "review",
-          verdict: "FAIL",
-          issues: ["missing edge case for null input"],
-        },
-      ],
-    });
+    const ctx = makeCtx(
+      { "write-tests": { step: "write-tests", verdict: "PASS" } },
+      {
+        artifacts: { "audit-gaps": "gap-report.md" },
+        steps: [
+          {
+            name: "review",
+            verdict: "FAIL",
+            issues: ["missing edge case for null input"],
+          },
+        ],
+      },
+    );
 
     const writeTestsStep = verify.steps.find(s => s.name === "write-tests")!;
-    const promise = writeTestsStep.run(ctx);
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "write-tests", { step: "write-tests", verdict: "PASS" });
-    await promise;
+    await writeTestsStep.run(ctx);
 
     const deliverCalls = (ctx.team.deliver as any).mock.calls;
     const msg = deliverCalls[0][1].message as string;
@@ -220,22 +199,22 @@ describe("verify workflow – write-tests step injects feedback", () => {
   });
 
   it("includes failing test output in prompt when validate failed", async () => {
-    const ctx = makeCtx({
-      artifacts: {},
-      steps: [
-        {
-          name: "validate",
-          verdict: "FAIL",
-          handoffHint: "Test suite: 3 failed\n  FAIL src/foo.test.ts",
-        },
-      ],
-    });
+    const ctx = makeCtx(
+      { "write-tests": { step: "write-tests", verdict: "PASS" } },
+      {
+        artifacts: {},
+        steps: [
+          {
+            name: "validate",
+            verdict: "FAIL",
+            handoffHint: "Test suite: 3 failed\n  FAIL src/foo.test.ts",
+          },
+        ],
+      },
+    );
 
     const writeTestsStep = verify.steps.find(s => s.name === "write-tests")!;
-    const promise = writeTestsStep.run(ctx);
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "write-tests", { step: "write-tests", verdict: "PASS" });
-    await promise;
+    await writeTestsStep.run(ctx);
 
     const deliverCalls = (ctx.team.deliver as any).mock.calls;
     const msg = deliverCalls[0][1].message as string;

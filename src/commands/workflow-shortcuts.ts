@@ -114,7 +114,13 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine): 
         }
 
         const run = await engine.startRun({ workflow, goal, budget: {} });
-        void engine.executeRun(run.runId);
+        // H1: attach rejection handler so workflow errors surface to the user
+        engine.executeRun(run.runId).catch((err: unknown) => {
+          ctx.ui.notify(
+            `Run ${run.runId.slice(0, 8)} failed: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
+        });
 
         ctx.ui.notify(
           [

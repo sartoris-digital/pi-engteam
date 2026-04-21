@@ -1,4 +1,4 @@
-import type { RunState, VerdictPayload, BudgetStatus } from "../types.js";
+import type { RunState, BudgetStatus } from "../types.js";
 import type { Workflow, StepContext, StepResult } from "../workflows/types.js";
 import type { TeamRuntime } from "../team/TeamRuntime.js";
 import type { Observer } from "../observer/Observer.js";
@@ -26,22 +26,7 @@ type StartRunParams = {
 };
 
 export class ADWEngine {
-  private verdictListeners = new Map<string, (v: VerdictPayload) => void>();
-
   constructor(private config: ADWConfig) {}
-
-  registerVerdictListener(runId: string, step: string, listener: (v: VerdictPayload) => void): void {
-    this.verdictListeners.set(`${runId}:${step}`, listener);
-  }
-
-  notifyVerdict(runId: string, v: VerdictPayload): void {
-    const key = `${runId}:${v.step}`;
-    const listener = this.verdictListeners.get(key);
-    if (listener) {
-      this.verdictListeners.delete(key);
-      listener(v);
-    }
-  }
 
   async startRun(params: StartRunParams): Promise<RunState> {
     const runId = crypto.randomUUID();
@@ -86,6 +71,13 @@ export class ADWEngine {
     let state = await loadRunState(this.config.runsDir, runId);
     if (!state) throw new Error(`Run ${runId} not found`);
 
+    // C3: guard against re-executing runs that are already in a terminal state
+    const terminalStatuses = ["succeeded", "failed", "aborted"] as const;
+    if (terminalStatuses.includes(state.status as any)) {
+      return state;
+    }
+
+    this.config.team.setRunId(runId);
     state = { ...state, status: "running" };
     await saveRunState(this.config.runsDir, state);
 
@@ -126,6 +118,12 @@ export class ADWEngine {
         payload: { step: state.currentStep },
       });
 
+      // Apply step-level planMode override before the step runs
+      if (stepDef.planMode !== undefined && state.planMode !== stepDef.planMode) {
+        state = { ...state, planMode: stepDef.planMode };
+        await saveRunState(this.config.runsDir, state);
+      }
+
       const startedAt = new Date().toISOString();
       state = updateStep(state, state.currentStep, { startedAt });
 
@@ -159,9 +157,9 @@ export class ADWEngine {
         costUsd: (result as any).costUsd,
         tokens: (result as any).tokens,
       });
-      // Fix 2: merge step artifacts into run-level artifacts map
+      // M1: use spread to stay consistent with the immutable state update pattern
       if (result.artifacts) {
-        Object.assign(state.artifacts, result.artifacts);
+        state = { ...state, artifacts: { ...state.artifacts, ...result.artifacts } };
       }
       state = updateStep(state, state.currentStep, {
         verdict: result.verdict,
@@ -178,7 +176,7 @@ export class ADWEngine {
         iteration: state.iteration,
         category: "lifecycle",
         type: "step.end",
-        payload: { verdict: result.verdict, issues: result.issues },
+        payload: { verdict: result.verdict, issues: result.issues, error: result.error },
       });
 
       const transition = workflow.transitions.find(
@@ -228,12 +226,22 @@ export class ADWEngine {
   async resumeRun(runId: string): Promise<RunState> {
     const state = await loadRunState(this.config.runsDir, runId);
     if (!state) throw new Error(`Run ${runId} not found`);
+    // C3: only resume runs that are in a resumable state
+    const resumable = ["pending", "running", "paused", "waiting_user"] as const;
+    if (!resumable.includes(state.status as any)) {
+      throw new Error(`Run ${runId} is in status '${state.status}' and cannot be resumed`);
+    }
     return this.executeRun(runId);
   }
 
   async executeUntilPause(runId: string): Promise<RunState> {
     const state = await loadRunState(this.config.runsDir, runId);
     if (!state) throw new Error(`Run ${runId} not found`);
+    // C3: guard against re-executing terminal runs
+    const terminalStatuses = ["succeeded", "failed", "aborted"] as const;
+    if (terminalStatuses.includes(state.status as any)) {
+      return state;
+    }
     if (state.status === "waiting_user") {
       await saveRunState(this.config.runsDir, { ...state, status: "running" });
     }

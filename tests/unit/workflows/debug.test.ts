@@ -3,17 +3,22 @@ import type { VerdictPayload } from "../../../src/types.js";
 import type { StepContext } from "../../../src/workflows/types.js";
 import { debug } from "../../../src/workflows/debug.js";
 
-function makeCtx(overrides?: Partial<StepContext["run"]>): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((_runId: string, stepName: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(stepName, fn);
-    }),
-  };
-
+function makeCtx(
+  verdicts: Record<string, VerdictPayload> = {},
+  overrides?: Partial<StepContext["run"]>,
+): StepContext {
   const team = {
-    deliver: vi.fn(async (_agentName: string, _msg: unknown) => {}),
+    deliver: vi.fn(async (agentName: string, msg: any) => {
+      // H4 fix: look up by agentName first (for multi-agent steps like gather-context),
+      // then fall back to the step name extracted from the message summary.
+      if (verdicts[agentName]) return verdicts[agentName];
+      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
+      if (match) {
+        const stepName = match[1];
+        return verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
+      }
+      return undefined;
+    }),
   };
 
   const ctx: StepContext = {
@@ -41,18 +46,10 @@ function makeCtx(overrides?: Partial<StepContext["run"]>): StepContext {
     },
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: engine as any,
+    engine: {} as any,
   };
 
   return ctx;
-}
-
-function fireVerdict(ctx: StepContext, stepName: string, payload: VerdictPayload) {
-  const engine = ctx.engine as any;
-  const calls: Array<[string, string, (v: VerdictPayload) => void]> = engine.registerVerdictListener.mock.calls;
-  const call = calls.findLast(([_runId, sn]) => sn === stepName);
-  if (!call) throw new Error(`No listener registered for step "${stepName}"`);
-  call[2](payload);
 }
 
 describe("debug workflow – structure", () => {
@@ -73,39 +70,14 @@ describe("debug workflow – structure", () => {
 
 describe("debug workflow – gather-context step", () => {
   it("PASS path: both sub-agents pass → success with artifacts", async () => {
-    const ctx = makeCtx();
+    // H4 fix: key verdicts by agentName since both calls now use step="gather-context"
+    const ctx = makeCtx({
+      "knowledge-retriever": { step: "gather-context", verdict: "PASS", artifacts: ["debug-code-context.md"] },
+      "observability-archivist": { step: "gather-context", verdict: "PASS", artifacts: ["debug-traces.md"] },
+    });
     const gatherStep = debug.steps.find(s => s.name === "gather-context")!;
 
-    const promise = gatherStep.run(ctx);
-
-    // Wait for knowledge-retriever listener
-    await vi.waitFor(() =>
-      (ctx.engine as any).registerVerdictListener.mock.calls.some(
-        ([_r, s]: [string, string]) => s === "gather-context-code",
-      ),
-    );
-    fireVerdict(ctx, "gather-context-code", {
-      step: "gather-context-code",
-      verdict: "PASS",
-      artifacts: ["debug-code-context.md"],
-    });
-    // Flush microtask queue so the step continuation registers the traces listener
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // Wait for observability-archivist listener
-    await vi.waitFor(() =>
-      (ctx.engine as any).registerVerdictListener.mock.calls.some(
-        ([_r, s]: [string, string]) => s === "gather-context-traces",
-      ),
-    );
-    fireVerdict(ctx, "gather-context-traces", {
-      step: "gather-context-traces",
-      verdict: "PASS",
-      artifacts: ["debug-traces.md"],
-    });
-
-    const result = await promise;
+    const result = await gatherStep.run(ctx);
     expect(result.success).toBe(true);
     expect(result.verdict).toBe("PASS");
     expect(result.artifacts?.["code-context"]).toBe("debug-code-context.md");
@@ -113,23 +85,13 @@ describe("debug workflow – gather-context step", () => {
   });
 
   it("FAIL path: knowledge-retriever fails → halt immediately, no observability call", async () => {
-    const ctx = makeCtx();
+    // H4 fix: key by agentName
+    const ctx = makeCtx({
+      "knowledge-retriever": { step: "gather-context", verdict: "FAIL", issues: ["repo not accessible"] },
+    });
     const gatherStep = debug.steps.find(s => s.name === "gather-context")!;
 
-    const promise = gatherStep.run(ctx);
-
-    await vi.waitFor(() =>
-      (ctx.engine as any).registerVerdictListener.mock.calls.some(
-        ([_r, s]: [string, string]) => s === "gather-context-code",
-      ),
-    );
-    fireVerdict(ctx, "gather-context-code", {
-      step: "gather-context-code",
-      verdict: "FAIL",
-      issues: ["repo not accessible"],
-    });
-
-    const result = await promise;
+    const result = await gatherStep.run(ctx);
     expect(result.success).toBe(false);
     expect(result.verdict).toBe("FAIL");
 
@@ -184,23 +146,22 @@ describe("debug workflow – transitions", () => {
 
 describe("debug workflow – propose-fix step injects analysis notes", () => {
   it("includes analysis issues in prompt when present", async () => {
-    const ctx = makeCtx({
-      artifacts: { "root-cause": "debug-report.md" },
-      steps: [
-        {
-          name: "analyze",
-          verdict: "PASS",
-          issues: ["null pointer in payment handler at line 42"],
-        },
-      ],
-    });
+    const ctx = makeCtx(
+      { "propose-fix": { step: "propose-fix", verdict: "PASS" } },
+      {
+        artifacts: { "root-cause": "debug-report.md" },
+        steps: [
+          {
+            name: "analyze",
+            verdict: "PASS",
+            issues: ["null pointer in payment handler at line 42"],
+          },
+        ],
+      },
+    );
 
     const proposeStep = debug.steps.find(s => s.name === "propose-fix")!;
-    const promise = proposeStep.run(ctx);
-
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "propose-fix", { step: "propose-fix", verdict: "PASS" });
-    await promise;
+    await proposeStep.run(ctx);
 
     const deliverCalls = (ctx.team.deliver as any).mock.calls;
     const msg = deliverCalls[0][1].message as string;
@@ -211,22 +172,21 @@ describe("debug workflow – propose-fix step injects analysis notes", () => {
 
 describe("debug workflow – judge-gate step injects prior feedback", () => {
   it("includes prior judge feedback in prompt on second iteration", async () => {
-    const ctx = makeCtx({
-      steps: [
-        {
-          name: "judge-gate",
-          verdict: "FAIL",
-          issues: ["option B rollback plan is incomplete"],
-        },
-      ],
-    });
+    const ctx = makeCtx(
+      { "judge-gate": { step: "judge-gate", verdict: "PASS" } },
+      {
+        steps: [
+          {
+            name: "judge-gate",
+            verdict: "FAIL",
+            issues: ["option B rollback plan is incomplete"],
+          },
+        ],
+      },
+    );
 
     const judgeStep = debug.steps.find(s => s.name === "judge-gate")!;
-    const promise = judgeStep.run(ctx);
-
-    await vi.waitFor(() => (ctx.engine as any).registerVerdictListener.mock.calls.length > 0);
-    fireVerdict(ctx, "judge-gate", { step: "judge-gate", verdict: "PASS" });
-    await promise;
+    await judgeStep.run(ctx);
 
     const deliverCalls = (ctx.team.deliver as any).mock.calls;
     const msg = deliverCalls[0][1].message as string;

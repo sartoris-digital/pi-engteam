@@ -7,48 +7,30 @@ async function waitForAgentVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
-  return new Promise((resolve, reject) => {
-    const softReminder = setTimeout(() => {
-      ctx.team.deliver(agentName, {
-        id: crypto.randomUUID(),
-        from: "system",
-        to: agentName,
-        summary: `Reminder: step ${stepName} nearing timeout`,
-        message: `You have 2 minutes remaining to emit a verdict for step "${stepName}". Call VerdictEmit now.`,
-        ts: new Date().toISOString(),
-      }).catch(() => {});
-    }, 8 * 60 * 1000);
-
-    const timeout = setTimeout(() => {
-      clearTimeout(softReminder);
-      reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
-    }, 10 * 60 * 1000);
-
-    (ctx.engine as any).registerVerdictListener(ctx.run.runId, stepName, (v: VerdictPayload) => {
-      clearTimeout(softReminder);
-      clearTimeout(timeout);
-      resolve(v);
-    });
-
-    ctx.team.deliver(agentName, {
-      id: crypto.randomUUID(),
-      from: "system",
-      to: agentName,
-      summary: `Execute step: ${stepName}`,
-      message: prompt,
-      ts: new Date().toISOString(),
-    }).catch(reject);
+  const verdict = await ctx.team.deliver(agentName, {
+    id: crypto.randomUUID(),
+    from: "system",
+    to: agentName,
+    summary: `Execute step: ${stepName}`,
+    message: prompt,
+    ts: new Date().toISOString(),
   });
+  if (!verdict) {
+    throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
+  }
+  return verdict;
 }
 
 const analyzeStep: Step = {
   name: "analyze",
   required: true,
+  planMode: false, // needs Write to produce fix-plan.md
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
 
 Analyze the codebase to identify the root cause of the issue. Produce a concrete fix plan and write it to fix-plan.md.
-Call VerdictEmit with step="analyze".`;
+Call VerdictEmit with verdict="PASS" and step="analyze" when analysis is complete and fix-plan.md is written — regardless of how many issues were found.
+Only call VerdictEmit with verdict="FAIL" if you were unable to complete the analysis (e.g. cannot read the codebase).`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "root-cause-debugger", prompt, "analyze");
@@ -57,9 +39,8 @@ Call VerdictEmit with step="analyze".`;
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`fix-plan-${i}`, a]))
-          : { "fix-plan": "fix-plan.md" },
+        // C4: use a stable "fix-plan" key so implementStep can always find it
+        artifacts: { "fix-plan": verdict.artifacts?.[0] ?? "fix-plan.md" },
       };
     } catch (err) {
       return {
@@ -74,6 +55,7 @@ Call VerdictEmit with step="analyze".`;
 const implementStep: Step = {
   name: "implement",
   required: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const testHint = ctx.run.steps.findLast(s => s.name === "test")?.handoffHint;
     const reviewIssues = ctx.run.steps.findLast(s => s.name === "review")?.issues;
@@ -111,6 +93,7 @@ Implement the fix. Call VerdictEmit with step="implement".`;
 const testStep: Step = {
   name: "test",
   required: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `Run pnpm test. If all pass: PASS. If any fail: FAIL with the specific failure output in handoffHint.
 Call VerdictEmit with step="test".`;
@@ -136,6 +119,7 @@ Call VerdictEmit with step="test".`;
 const reviewStep: Step = {
   name: "review",
   required: true,
+  planMode: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
 
@@ -163,6 +147,7 @@ Call VerdictEmit with step="review".`;
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  planMode: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
 

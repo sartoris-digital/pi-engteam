@@ -22,7 +22,7 @@ export async function createRunState(params: {
     workflow: params.workflow,
     goal: params.goal,
     status: "pending",
-    currentStep: "plan",
+    currentStep: "",  // L1: placeholder; ADWEngine.startRun overwrites with workflow.steps[0].name
     iteration: 0,
     budget: {
       ...DEFAULT_BUDGET,
@@ -53,7 +53,14 @@ export async function loadRunState(runsDir: string, runId: string): Promise<RunS
     const stateFile = join(runsDir, runId, "state.json");
     const raw = await readFile(stateFile, "utf8");
     return JSON.parse(raw) as RunState;
-  } catch {
+  } catch (err) {
+    // M2: distinguish a missing run (ENOENT) from a corrupt/unreadable state file
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(
+        `[pi-engteam] Failed to load run state for ${runId}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     return null;
   }
 }

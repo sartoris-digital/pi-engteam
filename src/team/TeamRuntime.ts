@@ -1,12 +1,9 @@
-import {
-  AuthStorage,
-  createAgentSession,
-  createCodingTools,
-  DefaultResourceLoader,
-  ModelRegistry,
-  SessionManager,
-} from "@mariozechner/pi-coding-agent";
-import type { AgentDefinition, TeamMessage } from "../types.js";
+import { spawn } from "child_process";
+import { mkdir, readFile, unlink, writeFile } from "fs/promises";
+import { existsSync } from "fs";
+import { basename } from "path";
+import { join } from "path";
+import type { AgentDefinition, TeamMessage, VerdictPayload } from "../types.js";
 import type { MessageBus } from "./MessageBus.js";
 import type { Observer } from "../observer/Observer.js";
 
@@ -15,130 +12,131 @@ type TeamRuntimeConfig = {
   bus: MessageBus;
   observer: Observer;
   runsDir: string;
-  customToolsFor: (agentName: string) => any[];
+  /** H2: callback fired after each agent subprocess returns a verdict (replaces dead customToolsFor) */
+  onVerdictReceived?: (runId: string, agentName: string, verdict: VerdictPayload) => void;
+  agentDefs?: AgentDefinition[];
+  /** L2: per-subprocess kill timeout in ms (default 10 minutes) */
+  agentTimeoutMs?: number;
 };
 
-type AgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+function getPiInvocation(args: string[]): { command: string; args: string[] } {
+  const currentScript = process.argv[1];
+  const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+  if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
+    return { command: process.execPath, args: [currentScript, ...args] };
+  }
+  const execName = basename(process.execPath).toLowerCase();
+  const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
+  if (!isGenericRuntime) {
+    return { command: process.execPath, args };
+  }
+  return { command: "pi", args };
+}
 
 export class TeamRuntime {
-  private sessions = new Map<string, AgentSession>();
-  private currentStepContext: { name: string } | null = null;
-  private completedSteps = new Set<string>();
-  private allSteps: string[] = [];
+  private knownDefs = new Map<string, AgentDefinition>();
+  private currentRunId?: string;
 
-  constructor(private config: TeamRuntimeConfig) {}
-
-  private teamSuffix(name: string): string {
-    return `\n\n---\n## Team Context\nYour name in the team is: **${name}**\nUse SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\nAlways end your turn with VerdictEmit when you have completed your assigned step.`;
-  }
-
-  setStepContext(stepName: string, allStepNames: string[]): void {
-    this.currentStepContext = { name: stepName };
-    this.allSteps = allStepNames;
-    this.refreshAllLabels();
-  }
-
-  markStepComplete(stepName: string): void {
-    this.completedSteps.add(stepName);
-    this.currentStepContext = null;
-    this.refreshAllLabels();
-  }
-
-  /** Fallback for abort/crash paths where the step did not complete normally. ADWEngine does not call this in normal flow. */
-  clearStepContext(): void {
-    this.currentStepContext = null;
-    this.refreshAllLabels();
-  }
-
-  private buildSessionLabel(agentName: string): string {
-    if (this.allSteps.length === 0) return agentName;
-    const indicators = this.allSteps
-      .map(step => {
-        if (this.completedSteps.has(step)) return `✓ ${step}`;
-        if (step === this.currentStepContext?.name) return `● ${step}`;
-        return `○ ${step}`;
-      })
-      .join(" · ");
-    return `${agentName} [${indicators}]`;
-  }
-
-  private refreshAllLabels(): void {
-    for (const [name, session] of this.sessions) {
-      session.setSessionName(this.buildSessionLabel(name));
+  constructor(private config: TeamRuntimeConfig) {
+    for (const def of config.agentDefs ?? []) {
+      this.knownDefs.set(def.name, def);
     }
   }
 
-  async ensureTeammate(name: string, def: AgentDefinition): Promise<void> {
-    if (this.sessions.has(name)) return;
+  setRunId(runId: string): void {
+    this.currentRunId = runId;
+  }
 
-    const authStorage = AuthStorage.create();
-    const modelRegistry = ModelRegistry.create(authStorage);
+  /** Called by ADWEngine before each step — no-op in subprocess mode (no persistent sessions). */
+  setStepContext(_stepName: string, _allStepNames: string[]): void {}
 
-    let model: any;
+  /** Called by ADWEngine after each step — no-op in subprocess mode. */
+  markStepComplete(_stepName: string): void {}
+
+  /** Fallback for abort/crash paths — no-op in subprocess mode. */
+  clearStepContext(): void {}
+
+  /** Register (or replace) an agent definition by name. Called by command handlers at runtime. */
+  ensureTeammate(name: string, def: AgentDefinition): void {
+    this.knownDefs.set(name, def);
+  }
+
+  async deliver(to: string, message: TeamMessage): Promise<VerdictPayload | undefined> {
+    const def = this.knownDefs.get(to);
+    if (!def) throw new Error(`Teammate '${to}' is not registered. Add it to AGENT_DEFS.`);
+
+    const tmpDir = join(this.config.runsDir, "_agent_tmp");
+    await mkdir(tmpDir, { recursive: true });
+
+    const id = message.id;
+    const verdictFile = join(tmpDir, `${id}.verdict.json`);
+    const systemPromptFile = join(tmpDir, `${id}.system-prompt.txt`);
+
+    const teamSuffix =
+      `\n\n---\n## Team Context\nYour name in the team is: **${to}**\n` +
+      `Use SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\n` +
+      `Always end your turn with VerdictEmit when you have completed your assigned step.`;
+
+    await writeFile(systemPromptFile, def.systemPrompt + teamSuffix);
+
+    const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
+    const { command, args } = getPiInvocation(piArgs);
+
+    let proc: ReturnType<typeof spawn> | undefined;
+    const killTimeout = setTimeout(() => {
+      proc?.kill();
+    }, this.config.agentTimeoutMs ?? 10 * 60 * 1000); // L2: configurable, default 10 min
+
     try {
-      const { getModel } = await import("@mariozechner/pi-ai");
-      model = getModel("anthropic", def.model as any) ?? getModel("anthropic", "claude-sonnet-4-6");
-    } catch {
-      model = { id: def.model };
+      await new Promise<void>((resolve, reject) => {
+        proc = spawn(command, args, {
+          cwd: this.config.cwd,
+          env: {
+            ...process.env,
+            PI_ENGTEAM_AGENT_MODE: "1",
+            PI_ENGTEAM_AGENT_NAME: to,   // H3: agent name so subprocess can gate GrantApproval
+            PI_ENGTEAM_VERDICT_FILE: verdictFile,
+            PI_ENGTEAM_RUN_ID: this.currentRunId ?? id,
+            PI_ENGTEAM_RUNS_DIR: this.config.runsDir,
+          },
+          stdio: "inherit",
+        });
+        proc.on("close", (code, signal) => {
+          if (code === 0 || code === null) resolve();
+          else reject(new Error(`Agent subprocess exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`));
+        });
+        proc.on("error", reject);
+      });
+    } finally {
+      clearTimeout(killTimeout);
+      try { await unlink(systemPromptFile); } catch {}
     }
 
-    if (!model) throw new Error(`Model not found for agent ${name}: ${def.model}`);
-
-    const loader = new DefaultResourceLoader({
-      cwd: this.config.cwd,
-      systemPrompt: def.systemPrompt + this.teamSuffix(name),
-    });
-    await loader.reload();
-
-    const { session } = await createAgentSession({
-      cwd: this.config.cwd,
-      model,
-      authStorage,
-      modelRegistry,
-      tools: createCodingTools(this.config.cwd),
-      customTools: this.config.customToolsFor(name),
-      resourceLoader: loader,
-      sessionManager: SessionManager.inMemory(),
-    });
-
-    this.sessions.set(name, session);
-    session.setSessionName(this.buildSessionLabel(name));
-
-    this.config.observer.subscribeToSession(
-      session as any,
-      "active",
-      name,
-    );
-  }
-
-  async ensureAllTeammates(definitions: AgentDefinition[]): Promise<void> {
-    await Promise.all(definitions.map(def => this.ensureTeammate(def.name, def)));
-  }
-
-  async deliver(to: string, message: TeamMessage): Promise<void> {
-    const session = this.sessions.get(to);
-    if (!session) throw new Error(`Teammate '${to}' is not running. Call ensureTeammate first.`);
-    session.setSessionName(this.buildSessionLabel(to));
-    const prompt = `<task-notification from="${message.from}">\n${message.message}\n</task-notification>`;
-    await (session as any).prompt(prompt);
+    try {
+      const data = await readFile(verdictFile, "utf8");
+      await unlink(verdictFile).catch(() => {});
+      const payload = JSON.parse(data) as VerdictPayload;
+      // H2: fire callback so the host (index.ts) can update memory / emit observer events
+      this.config.onVerdictReceived?.(this.currentRunId ?? id, to, payload);
+      return payload;
+    } catch {
+      return undefined;
+    }
   }
 
   async deliverAll(message: Omit<TeamMessage, "to">): Promise<void> {
     await Promise.all(
-      Array.from(this.sessions.keys()).map(name =>
+      Array.from(this.knownDefs.keys()).map(name =>
         this.deliver(name, { ...message, to: name })
       )
     );
   }
 
-  getSession(name: string): AgentSession | undefined {
-    return this.sessions.get(name);
+  getSession(_name: string): undefined {
+    return undefined;
   }
 
   async disposeAll(): Promise<void> {
-    for (const session of this.sessions.values()) {
-      (session as any).dispose();
-    }
-    this.sessions.clear();
+    // No persistent sessions to dispose in subprocess mode.
   }
 }

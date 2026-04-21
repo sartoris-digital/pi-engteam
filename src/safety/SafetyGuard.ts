@@ -14,6 +14,8 @@ async function loadRunPlanMode(runsDir: string): Promise<boolean> {
     const runId = (await readFile(activeFile, "utf8")).trim();
     const stateFile = join(runsDir, runId, "state.json");
     const state = JSON.parse(await readFile(stateFile, "utf8"));
+    // Only enforce plan mode for actively running workflows — not for ended/failed/succeeded runs
+    if (state.status !== "running" && state.status !== "waiting_user") return false;
     return state.planMode === true;
   } catch {
     return false;
@@ -60,6 +62,44 @@ async function findValidApproval(
   }
 }
 
+/**
+ * C2: Layer A hard-blocker registration, extracted so it can be applied in
+ * agent subprocess mode as well as controller mode.
+ */
+export function registerHardBlockers(
+  pi: ExtensionAPI,
+  config: Pick<SafetyConfig, "hardBlockers">,
+): void {
+  if (!config.hardBlockers.enabled) return;
+  pi.on("tool_call", async (event: any, _ctx: any) => {
+    const toolName: string = event.tool?.name ?? "";
+    const toolInput: Record<string, unknown> = event.toolInput ?? {};
+
+    if (toolName === "Bash" && typeof toolInput.command === "string") {
+      const result = classifyCommand(toolInput.command);
+      if (result.classification === "blocked") {
+        return {
+          block: true,
+          reason: `[Layer A] Blocked: ${result.reason ?? result.rule ?? "hard-block rule matched"}`,
+          layer: "A",
+        };
+      }
+    }
+
+    if (["Write", "Edit", "Read"].includes(toolName)) {
+      const filePath = ((toolInput.file_path ?? toolInput.path ?? "") as string);
+      if (filePath) {
+        const check = isProtectedPath(filePath);
+        if (check.blocked) {
+          return { block: true, reason: `[Layer A] Protected path: ${check.reason}`, layer: "A" };
+        }
+      }
+    }
+
+    return undefined;
+  });
+}
+
 export function registerSafetyGuard(
   pi: ExtensionAPI,
   config: SafetyConfig & { runsDir: string },
@@ -102,18 +142,19 @@ export function registerSafetyGuard(
       if (!isPlanModeAllowed(toolName, toolInput)) {
         return {
           block: true,
-          reason: `[Layer B] Plan mode is on — only read-only tools are allowed. Disable with /run-set-plan-mode off`,
+          reason: `[Layer B] Plan mode is on — only read-only tools are allowed. Use /run-plan-mode off to disable.`,
           layer: "B",
         };
       }
     }
 
     // --- Layer C: Default-deny for destructive ---
+    // C1: hash must match GrantApproval's token format: { op, command }
     if (toolName === "Bash" && typeof toolInput.command === "string") {
       const result = classifyCommand(toolInput.command);
       if (result.classification === "destructive") {
         const { hashArgs } = await import("./approvals.js");
-        const argsHash = hashArgs(toolInput as Record<string, unknown>);
+        const argsHash = hashArgs({ op: "bash", command: toolInput.command as string });
         const approved = await findValidApproval(config.runsDir, "bash", argsHash);
         if (!approved) {
           return {
@@ -128,7 +169,9 @@ export function registerSafetyGuard(
 
     if (["Write", "Edit"].includes(toolName)) {
       const { hashArgs } = await import("./approvals.js");
-      const argsHash = hashArgs(toolInput as Record<string, unknown>);
+      // C1: use the file path as "command" to match what GrantApproval.ts stores
+      const filePath = (toolInput.file_path ?? toolInput.path ?? "") as string;
+      const argsHash = hashArgs({ op: toolName.toLowerCase(), command: filePath });
       const approved = await findValidApproval(
         config.runsDir,
         toolName.toLowerCase(),

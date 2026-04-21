@@ -8,19 +8,16 @@ function makeCtxWithVerdicts(
   runSteps: Array<{ name: string; issues?: string[]; handoffHint?: string }> = [],
   artifacts: Record<string, string> = {},
 ): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((runId: string, step: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(`${runId}:${step}`, fn);
+  const team = {
+    deliver: vi.fn(async (_agentName: string, msg: any) => {
+      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
+      if (match) {
+        const stepName = match[1];
+        return verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
+      }
+      return undefined;
     }),
-    _emit: (runId: string, step: string, payload: VerdictPayload) => {
-      const fn = listeners.get(`${runId}:${step}`);
-      if (fn) fn(payload);
-    },
   };
-
-  const team = { deliver: vi.fn() };
 
   const run = {
     runId: "test-run-id",
@@ -33,20 +30,8 @@ function makeCtxWithVerdicts(
     run: run as any,
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: engine as any,
+    engine: {} as any,
   };
-
-  (team.deliver as ReturnType<typeof vi.fn>).mockImplementation(
-    (_agentName: string, msg: any) => {
-      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
-      if (match) {
-        const stepName = match[1];
-        const payload = verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
-        engine._emit(run.runId, stepName, payload);
-      }
-      return Promise.resolve();
-    },
-  );
 
   return ctx;
 }
@@ -117,11 +102,12 @@ describe("docBackfill transitions", () => {
     expect(t?.to).toBe("review");
   });
 
-  it("write FAIL → halt", () => {
+  it("write FAIL → plan (re-plan on write failure)", () => {
+    // M3 fix: write failures now loop back to plan so the planner can adjust
     const t = docBackfill.transitions.find(
       t => t.from === "write" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("plan");
   });
 
   it("review PASS → judge-gate", () => {
@@ -173,7 +159,6 @@ describe("docBackfill step execution", () => {
     expect(result.verdict).toBe("PASS");
     expect(result.handoffHint).toBe("no-docs-needed");
 
-    // Transition routes to halt (not plan)
     const t = docBackfill.transitions.find(
       t => t.from === "audit" && t.when(result),
     );
@@ -190,7 +175,6 @@ describe("docBackfill step execution", () => {
     expect(result.verdict).toBe("FAIL");
     expect(result.issues).toContain("could not scan repository");
 
-    // Transition routes to halt
     const t = docBackfill.transitions.find(
       t => t.from === "audit" && t.when(result),
     );

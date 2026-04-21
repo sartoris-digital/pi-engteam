@@ -7,38 +7,18 @@ async function waitForAgentVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
-  return new Promise((resolve, reject) => {
-    const softReminder = setTimeout(() => {
-      ctx.team.deliver(agentName, {
-        id: crypto.randomUUID(),
-        from: "system",
-        to: agentName,
-        summary: `Reminder: step ${stepName} nearing timeout`,
-        message: `You have 2 minutes remaining to emit a verdict for step "${stepName}". Call VerdictEmit now.`,
-        ts: new Date().toISOString(),
-      }).catch(() => {});
-    }, 8 * 60 * 1000);
-
-    const timeout = setTimeout(() => {
-      clearTimeout(softReminder);
-      reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
-    }, 10 * 60 * 1000);
-
-    (ctx.engine as any).registerVerdictListener(ctx.run.runId, stepName, (v: VerdictPayload) => {
-      clearTimeout(softReminder);
-      clearTimeout(timeout);
-      resolve(v);
-    });
-
-    ctx.team.deliver(agentName, {
-      id: crypto.randomUUID(),
-      from: "system",
-      to: agentName,
-      summary: `Execute step: ${stepName}`,
-      message: prompt,
-      ts: new Date().toISOString(),
-    }).catch(reject);
+  const verdict = await ctx.team.deliver(agentName, {
+    id: crypto.randomUUID(),
+    from: "system",
+    to: agentName,
+    summary: `Execute step: ${stepName}`,
+    message: prompt,
+    ts: new Date().toISOString(),
   });
+  if (!verdict) {
+    throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
+  }
+  return verdict;
 }
 
 const auditStep: Step = {
@@ -58,9 +38,8 @@ Audit the codebase for test coverage gaps. Identify untested functions, missing 
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`audit-gaps-${i}`, a]))
-          : {},
+        // C4: stable "audit-gaps" key so writeTestsStep can always find it
+        artifacts: { "audit-gaps": verdict.artifacts?.[0] ?? "audit-gaps.md" },
       };
     } catch (err) {
       return {
@@ -194,8 +173,9 @@ export const verify: Workflow = {
     { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint !== "no-gaps", to: "write-tests" },
     { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint === "no-gaps", to: "halt" },
     { from: "audit",       when: (r) => r.verdict !== "PASS",                                to: "halt" },
-    { from: "write-tests", when: (r) => r.verdict === "PASS",                               to: "validate" },
-    { from: "write-tests", when: (r) => r.verdict !== "PASS",                               to: "halt" },
+    { from: "write-tests", when: (r) => r.verdict === "PASS",  to: "validate" },
+    // M3: retry write-tests instead of halting — budget exhaustion is the backstop
+    { from: "write-tests", when: (r) => r.verdict !== "PASS",  to: "write-tests" },
     { from: "validate",    when: (r) => r.verdict === "PASS",                               to: "review" },
     { from: "validate",    when: (r) => r.verdict !== "PASS",                               to: "write-tests" },
     { from: "review",      when: (r) => r.verdict === "PASS",                               to: "judge-gate" },

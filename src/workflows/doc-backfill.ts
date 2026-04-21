@@ -7,38 +7,18 @@ async function waitForAgentVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
-  return new Promise((resolve, reject) => {
-    const softReminder = setTimeout(() => {
-      ctx.team.deliver(agentName, {
-        id: crypto.randomUUID(),
-        from: "system",
-        to: agentName,
-        summary: `Reminder: step ${stepName} nearing timeout`,
-        message: `You have 2 minutes remaining to emit a verdict for step "${stepName}". Call VerdictEmit now.`,
-        ts: new Date().toISOString(),
-      }).catch(() => {});
-    }, 8 * 60 * 1000);
-
-    const timeout = setTimeout(() => {
-      clearTimeout(softReminder);
-      reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
-    }, 10 * 60 * 1000);
-
-    (ctx.engine as any).registerVerdictListener(ctx.run.runId, stepName, (v: VerdictPayload) => {
-      clearTimeout(softReminder);
-      clearTimeout(timeout);
-      resolve(v);
-    });
-
-    ctx.team.deliver(agentName, {
-      id: crypto.randomUUID(),
-      from: "system",
-      to: agentName,
-      summary: `Execute step: ${stepName}`,
-      message: prompt,
-      ts: new Date().toISOString(),
-    }).catch(reject);
+  const verdict = await ctx.team.deliver(agentName, {
+    id: crypto.randomUUID(),
+    from: "system",
+    to: agentName,
+    summary: `Execute step: ${stepName}`,
+    message: prompt,
+    ts: new Date().toISOString(),
   });
+  if (!verdict) {
+    throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
+  }
+  return verdict;
 }
 
 const auditStep: Step = {
@@ -48,6 +28,7 @@ const auditStep: Step = {
     const prompt = `GOAL: ${ctx.run.goal}
 
 Scan for undocumented public functions/classes (missing JSDoc), modules without READMEs, and ADR gaps.
+Write a summary of all gaps found to doc-audit-gaps.md.
 - If gaps found: list them, call VerdictEmit step="audit" verdict="PASS"
 - If NO gaps found: call VerdictEmit step="audit" verdict="PASS" handoffHint="no-docs-needed"`;
 
@@ -58,9 +39,8 @@ Scan for undocumented public functions/classes (missing JSDoc), modules without 
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`artifact-${i}`, a]))
-          : {},
+        // M6: stable "audit-findings" key so planStep can reference the gap list
+        artifacts: { "audit-findings": verdict.artifacts?.[0] ?? "doc-audit-gaps.md" },
       };
     } catch (err) {
       return {
@@ -79,9 +59,10 @@ const planStep: Step = {
     const prompt = `You are a planner producing a prioritized documentation backfill list.
 
 GOAL: ${ctx.run.goal}
+AUDIT FINDINGS: ${ctx.run.artifacts["audit-findings"] ?? "doc-audit-gaps.md"}
 
 The audit step has identified documentation gaps. Please:
-1. Review the audit findings
+1. Read the audit findings file
 2. Prioritize gaps by impact (public APIs first, then modules, then ADRs)
 3. Estimate effort for each item
 4. Produce a prioritized backfill plan with clear ownership
@@ -243,7 +224,8 @@ export const docBackfill: Workflow = {
     { from: "plan",       when: (r) => r.verdict === "PASS", to: "write" },
     { from: "plan",       when: (r) => r.verdict !== "PASS", to: "halt" },
     { from: "write",      when: (r) => r.verdict === "PASS", to: "review" },
-    { from: "write",      when: (r) => r.verdict !== "PASS", to: "halt" },
+    // M3: loop back to plan on write failure so planner can adjust for blockers
+    { from: "write",      when: (r) => r.verdict !== "PASS", to: "plan" },
     { from: "review",     when: (r) => r.verdict === "PASS", to: "judge-gate" },
     { from: "review",     when: (r) => r.verdict !== "PASS", to: "write" },
     { from: "judge-gate", when: (r) => r.verdict === "PASS", to: "halt" },
