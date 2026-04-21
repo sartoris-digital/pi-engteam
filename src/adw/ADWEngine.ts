@@ -25,8 +25,31 @@ type StartRunParams = {
   initialArtifacts?: string[];
 };
 
+type UiCallbacks = {
+  notify: (msg: string, type?: "info" | "warning" | "error") => void;
+  setStatus: (key: string, text: string | undefined) => void;
+};
+
 export class ADWEngine {
+  private uiCallbacks?: UiCallbacks;
+
   constructor(private config: ADWConfig) {}
+
+  /** Attach Pi UI callbacks so the engine can surface step progress in the TUI. */
+  setUiCallbacks(cbs: UiCallbacks): void {
+    this.uiCallbacks = cbs;
+  }
+
+  /** Detach UI callbacks (called at run end or when context is no longer valid). */
+  clearUiCallbacks(): void {
+    this.uiCallbacks = undefined;
+  }
+
+  private clearUiStatus(): void {
+    this.uiCallbacks?.setStatus("engteam", undefined);
+    this.uiCallbacks?.setStatus("engteam_out", undefined);
+    this.config.team.setAgentLineCallback?.(undefined);
+  }
 
   async startRun(params: StartRunParams): Promise<RunState> {
     const runId = crypto.randomUUID();
@@ -118,6 +141,15 @@ export class ADWEngine {
         payload: { step: state.currentStep },
       });
 
+      // Surface step progress to Pi TUI
+      const stepIndex = workflow.steps.findIndex(s => s.name === state.currentStep);
+      const totalSteps = workflow.steps.length;
+      this.uiCallbacks?.notify(`▶ Step ${stepIndex + 1}/${totalSteps} — ${state.currentStep}`, "info");
+      this.uiCallbacks?.setStatus("engteam", `▶ ${state.currentStep} (${stepIndex + 1}/${totalSteps})`);
+      this.config.team.setAgentLineCallback?.((agent, line) => {
+        this.uiCallbacks?.setStatus("engteam_out", `${agent}: ${line.slice(0, 120)}`);
+      });
+
       // Apply step-level planMode override before the step runs
       if (stepDef.planMode !== undefined && state.planMode !== stepDef.planMode) {
         state = { ...state, planMode: stepDef.planMode };
@@ -179,6 +211,19 @@ export class ADWEngine {
         payload: { verdict: result.verdict, issues: result.issues, error: result.error },
       });
 
+      // Update step status in Pi TUI
+      const tick = result.verdict === "PASS" ? "✓" : "✗";
+      this.uiCallbacks?.setStatus("engteam", `${tick} ${state.currentStep} · ${result.verdict}`);
+      this.uiCallbacks?.setStatus("engteam_out", undefined);
+      this.config.team.setAgentLineCallback?.(undefined);
+      if (result.verdict !== "PASS") {
+        const detail = result.issues?.slice(0, 2).join("; ") ?? result.error ?? "";
+        this.uiCallbacks?.notify(
+          `✗ ${state.currentStep}: FAIL${detail ? ` — ${detail.slice(0, 140)}` : ""}`,
+          "warning",
+        );
+      }
+
       const transition = workflow.transitions.find(
         t => t.from === state!.currentStep && t.when(result),
       );
@@ -211,6 +256,8 @@ export class ADWEngine {
     }
 
     await saveRunState(this.config.runsDir, state);
+
+    this.clearUiStatus();
 
     this.config.observer.emit({
       runId,

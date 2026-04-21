@@ -36,6 +36,7 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 export class TeamRuntime {
   private knownDefs = new Map<string, AgentDefinition>();
   private currentRunId?: string;
+  private agentLineCallback?: (agent: string, line: string) => void;
 
   constructor(private config: TeamRuntimeConfig) {
     for (const def of config.agentDefs ?? []) {
@@ -45,6 +46,11 @@ export class TeamRuntime {
 
   setRunId(runId: string): void {
     this.currentRunId = runId;
+  }
+
+  /** Set (or clear) a callback that receives each line of agent subprocess stdout. */
+  setAgentLineCallback(fn: ((agent: string, line: string) => void) | undefined): void {
+    this.agentLineCallback = fn;
   }
 
   /** Called by ADWEngine before each step — no-op in subprocess mode (no persistent sessions). */
@@ -99,8 +105,19 @@ export class TeamRuntime {
             PI_ENGTEAM_RUN_ID: this.currentRunId ?? id,
             PI_ENGTEAM_RUNS_DIR: this.config.runsDir,
           },
-          stdio: "inherit",
+          stdio: ["inherit", "pipe", "inherit"],
         });
+        // Forward each stdout line to the progress callback so the host UI can surface it
+        if (proc.stdout) {
+          proc.stdout.setEncoding("utf8");
+          proc.stdout.on("data", (chunk: string) => {
+            const lines = chunk.split("\n");
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed) this.agentLineCallback?.(to, trimmed);
+            }
+          });
+        }
         proc.on("close", (code, signal) => {
           if (code === 0 || code === null) resolve();
           else reject(new Error(`Agent subprocess exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`));

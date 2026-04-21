@@ -67,6 +67,7 @@ function makeMockTeam() {
     setStepContext: vi.fn(),
     markStepComplete: vi.fn(),
     clearStepContext: vi.fn(),
+    setAgentLineCallback: vi.fn(),
   } as any;
 }
 

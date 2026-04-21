@@ -110,4 +110,10 @@ describe("TeamRuntime.deliver — subprocess mode", () => {
     const team = makeTeam();
     expect(() => team.setRunId("some-run-id")).not.toThrow();
   });
+
+  it("setAgentLineCallback does not throw when set or cleared", () => {
+    const team = makeTeam();
+    expect(() => team.setAgentLineCallback((agent, line) => { void agent; void line; })).not.toThrow();
+    expect(() => team.setAgentLineCallback(undefined)).not.toThrow();
+  });
 });

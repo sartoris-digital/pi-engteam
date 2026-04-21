@@ -34,11 +34,17 @@ export async function startServer(port: number): Promise<void> {
 
   // cwd is ~/.pi/engteam so Node can resolve better-sqlite3 from node_modules there
   const engteamDir = join(homedir(), ".pi", "engteam");
+  let stderrOutput = "";
   serverProcess = spawn("node", [serverBin], {
     detached: false,
-    stdio: "pipe",
+    stdio: ["ignore", "pipe", "pipe"],
     cwd: engteamDir,
     env: { ...process.env, PI_ENGTEAM_SERVER_PORT: String(port) },
+  });
+
+  serverProcess.stderr?.on("data", (chunk: Buffer) => {
+    stderrOutput += chunk.toString();
+    if (stderrOutput.length > 2000) stderrOutput = stderrOutput.slice(-2000);
   });
 
   serverProcess.on("exit", () => {
@@ -50,8 +56,11 @@ export async function startServer(port: number): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
     if (await isServerRunning(port)) return;
   }
+
+  const errDetail = stderrOutput.trim();
   throw new Error(
-    `Server did not start within 3 seconds on port ${port}`,
+    `Observability server failed to start on port ${port}.` +
+    (errDetail ? `\n\nServer error:\n${errDetail}` : "\n\nNo output from server process. Is better_sqlite3.node compiled for this machine? Run pnpm install && pnpm engteam:install to rebuild."),
   );
 }
 
