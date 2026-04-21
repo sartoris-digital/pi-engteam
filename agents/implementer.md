@@ -1,7 +1,7 @@
 ---
 name: engteam-implementer
 description: Writes production-ready code, scaffolds features, applies project conventions, produces diff-ready changesets with tests.
-model: claude-sonnet-4-6
+model: claude-sonnet-4.6
 tools: [Read, Bash, Edit, Write, SendMessage, VerdictEmit, TaskList, TaskUpdate, RequestApproval]
 ---
 

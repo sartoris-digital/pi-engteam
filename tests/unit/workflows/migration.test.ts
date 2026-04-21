@@ -7,19 +7,16 @@ function makeCtxWithVerdicts(
   verdicts: Record<string, VerdictPayload>,
   runSteps: Array<{ name: string; issues?: string[]; handoffHint?: string }> = [],
 ): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((runId: string, step: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(`${runId}:${step}`, fn);
+  const team = {
+    deliver: vi.fn(async (_agentName: string, msg: any) => {
+      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
+      if (match) {
+        const stepName = match[1];
+        return verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
+      }
+      return undefined;
     }),
-    _emit: (runId: string, step: string, payload: VerdictPayload) => {
-      const fn = listeners.get(`${runId}:${step}`);
-      if (fn) fn(payload);
-    },
   };
-
-  const team = { deliver: vi.fn() };
 
   const run = {
     runId: "test-run-id",
@@ -32,20 +29,8 @@ function makeCtxWithVerdicts(
     run: run as any,
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: engine as any,
+    engine: {} as any,
   };
-
-  (team.deliver as ReturnType<typeof vi.fn>).mockImplementation(
-    (_agentName: string, msg: any) => {
-      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
-      if (match) {
-        const stepName = match[1];
-        const payload = verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
-        engine._emit(run.runId, stepName, payload);
-      }
-      return Promise.resolve();
-    },
-  );
 
   return ctx;
 }
@@ -181,7 +166,6 @@ describe("migration step execution", () => {
     expect(result.issues).toContain("unsafe column drop without backup");
     expect(result.issues).toContain("PII column unencrypted");
 
-    // Verify the transition routes back to plan
     const t = migration.transitions.find(
       t => t.from === "security-review" && t.when(result),
     );

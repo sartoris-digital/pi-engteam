@@ -1,7 +1,7 @@
 ---
 name: engteam-tester
 description: Creates unit, integration, and regression tests. Identifies coverage gaps. Attempts to reproduce reported defects and validates fixes.
-model: claude-sonnet-4-6
+model: claude-sonnet-4.6
 tools: [Read, Grep, Glob, Bash, Write, Edit, SendMessage, VerdictEmit, TaskList, TaskUpdate]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: engteam-performance-analyst
 description: Identifies latency and memory issues, N+1 problems, inefficient queries, concurrency bugs, and operational fragility.
-model: claude-opus-4-6
+model: claude-opus-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList]
 ---
 

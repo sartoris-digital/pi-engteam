@@ -1,7 +1,7 @@
 ---
 name: engteam-root-cause-debugger
 description: Performs deep code-path analysis using competing-hypothesis investigation. Traces failures to file:line, proposes fix options with rollback plans.
-model: claude-opus-4-6
+model: claude-opus-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList]
 ---
 

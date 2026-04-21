@@ -19,6 +19,13 @@ mkdir -p "$EXTENSION_DIR" "$AGENTS_DIR" "$ENGTEAM_DIR/runs"
 cp "$DIST_DIR/index.js" "$EXTENSION_DIR/pi-engteam.js"
 echo "Installed extension: $EXTENSION_DIR/pi-engteam.js"
 
+# Bundled assets (memory scripts etc.) — must sit alongside the bundle so
+# spawnFlush.ts can resolve them via import.meta.url at runtime
+if [ -d "$DIST_DIR/assets" ]; then
+  cp -r "$DIST_DIR/assets" "$EXTENSION_DIR/assets"
+  echo "Installed assets:    $EXTENSION_DIR/assets"
+fi
+
 # Observability server (CJS, spawned by Node as a child process)
 cp "$DIST_DIR/server.cjs" "$ENGTEAM_DIR/server.cjs"
 echo "Installed server:    $ENGTEAM_DIR/server.cjs"

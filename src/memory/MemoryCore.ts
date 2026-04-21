@@ -128,14 +128,18 @@ export async function generateNarrative(
     // (Anthropic, GitHub Copilot, OpenAI, etc.) without requiring a separate API key.
     const piSettings = await readPiSettings();
     const provider = piSettings.defaultProvider ?? "anthropic";
-    const modelId = config.flushModel ?? piSettings.defaultModel ?? "claude-haiku-4-5-20251001";
+    const modelId = config.flushModel ?? piSettings.defaultModel ?? "claude-haiku-4.5";
 
     const model = modelRegistry.find(provider, modelId);
     if (!model) {
       return `(narrative unavailable: model "${provider}/${modelId}" not found in Pi model registry)`;
     }
 
-    const { apiKey, headers } = await modelRegistry.getApiKeyAndHeaders(model);
+    const auth = await modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok) {
+      return `(narrative unavailable: auth error — ${auth.error})`;
+    }
+    const { apiKey, headers } = auth;
     if (!apiKey) {
       return "(narrative unavailable: no API key configured for model)";
     }
@@ -165,7 +169,7 @@ export async function generateNarrative(
 
     const result = await completeSimple(
       model,
-      [{ role: "user", content: prompt }],
+      { messages: [{ role: "user" as const, content: prompt, timestamp: Date.now() }] },
       { maxTokens: 512, apiKey, headers },
     );
     if ((result as any).stopReason === "error") {

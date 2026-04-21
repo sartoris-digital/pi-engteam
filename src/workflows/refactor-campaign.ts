@@ -7,38 +7,18 @@ async function waitForAgentVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
-  return new Promise((resolve, reject) => {
-    const softReminder = setTimeout(() => {
-      ctx.team.deliver(agentName, {
-        id: crypto.randomUUID(),
-        from: "system",
-        to: agentName,
-        summary: `Reminder: step ${stepName} nearing timeout`,
-        message: `You have 2 minutes remaining to emit a verdict for step "${stepName}". Call VerdictEmit now.`,
-        ts: new Date().toISOString(),
-      }).catch(() => {});
-    }, 8 * 60 * 1000);
-
-    const timeout = setTimeout(() => {
-      clearTimeout(softReminder);
-      reject(new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within 10 minutes`));
-    }, 10 * 60 * 1000);
-
-    (ctx.engine as any).registerVerdictListener(ctx.run.runId, stepName, (v: VerdictPayload) => {
-      clearTimeout(softReminder);
-      clearTimeout(timeout);
-      resolve(v);
-    });
-
-    ctx.team.deliver(agentName, {
-      id: crypto.randomUUID(),
-      from: "system",
-      to: agentName,
-      summary: `Execute step: ${stepName}`,
-      message: prompt,
-      ts: new Date().toISOString(),
-    }).catch(reject);
+  const verdict = await ctx.team.deliver(agentName, {
+    id: crypto.randomUUID(),
+    from: "system",
+    to: agentName,
+    summary: `Execute step: ${stepName}`,
+    message: prompt,
+    ts: new Date().toISOString(),
   });
+  if (!verdict) {
+    throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
+  }
+  return verdict;
 }
 
 const mapStep: Step = {

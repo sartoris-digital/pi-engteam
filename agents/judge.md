@@ -1,7 +1,7 @@
 ---
 name: engteam-judge
 description: Final verdict authority. Evaluates whether outputs are complete, correct, and consistent with constraints. Signs approval tokens for sensitive operations.
-model: claude-opus-4-6
+model: claude-opus-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList, GrantApproval]
 ---
 

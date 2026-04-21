@@ -1,7 +1,7 @@
 ---
 name: engteam-planner
 description: Orchestrator. Decomposes goals into sub-tasks, selects specialist agents, sequences work, synthesizes results. Produces a written plan as an artifact.
-model: claude-opus-4-6
+model: claude-opus-4.6
 tools: [SendMessage, VerdictEmit, TaskList, TaskUpdate]
 ---
 

@@ -24,6 +24,8 @@ export type Step = {
   required: boolean;
   /** If set, engine pauses with this phase after a PASS verdict */
   pauseAfter?: "answering" | "approving";
+  /** If set, engine applies this planMode to the run state before running the step */
+  planMode?: boolean;
   run: (ctx: StepContext) => Promise<StepResult>;
 };
 

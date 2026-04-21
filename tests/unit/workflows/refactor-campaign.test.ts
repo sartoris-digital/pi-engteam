@@ -8,19 +8,16 @@ function makeCtxWithVerdicts(
   runSteps: Array<{ name: string; issues?: string[]; handoffHint?: string }> = [],
   artifacts: Record<string, string> = {},
 ): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((runId: string, step: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(`${runId}:${step}`, fn);
+  const team = {
+    deliver: vi.fn(async (_agentName: string, msg: any) => {
+      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
+      if (match) {
+        const stepName = match[1];
+        return verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
+      }
+      return undefined;
     }),
-    _emit: (runId: string, step: string, payload: VerdictPayload) => {
-      const fn = listeners.get(`${runId}:${step}`);
-      if (fn) fn(payload);
-    },
   };
-
-  const team = { deliver: vi.fn() };
 
   const run = {
     runId: "test-run-id",
@@ -33,20 +30,8 @@ function makeCtxWithVerdicts(
     run: run as any,
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: engine as any,
+    engine: {} as any,
   };
-
-  (team.deliver as ReturnType<typeof vi.fn>).mockImplementation(
-    (_agentName: string, msg: any) => {
-      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
-      if (match) {
-        const stepName = match[1];
-        const payload = verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
-        engine._emit(run.runId, stepName, payload);
-      }
-      return Promise.resolve();
-    },
-  );
 
   return ctx;
 }
@@ -181,7 +166,6 @@ describe("refactorCampaign step execution", () => {
     expect(result.verdict).toBe("FAIL");
     expect(result.issues).toContain("cannot determine affected files");
 
-    // Transition routes to halt
     const t = refactorCampaign.transitions.find(
       t => t.from === "map" && t.when(result),
     );
@@ -223,7 +207,6 @@ describe("refactorCampaign step execution", () => {
     expect(result.verdict).toBe("FAIL");
     expect(result.handoffHint).toContain("AccountService");
 
-    // Transition routes back to implement
     const t = refactorCampaign.transitions.find(
       t => t.from === "verify" && t.when(result),
     );

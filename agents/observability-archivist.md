@@ -1,7 +1,7 @@
 ---
 name: engteam-observability-archivist
 description: Records agent decisions, traces, failures, evaluations, and replay state. Analyzes event streams for patterns and provides insights for improving prompts and policies.
-model: claude-sonnet-4-6
+model: claude-sonnet-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList]
 ---
 

@@ -63,6 +63,7 @@ function makeMockTeam() {
     ensureAllTeammates: vi.fn(),
     deliver: vi.fn(),
     disposeAll: vi.fn(),
+    setRunId: vi.fn(),
     setStepContext: vi.fn(),
     markStepComplete: vi.fn(),
     clearStepContext: vi.fn(),

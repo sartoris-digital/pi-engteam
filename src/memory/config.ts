@@ -14,7 +14,7 @@ export const DEFAULT_MEMORY_CONFIG_PATH = join(
 export const MEMORY_DEFAULTS: MemoryConfig = {
   obsidianDailyNotesSubdir: "Daily",
   maxConversationTurns: 20,
-  flushModel: "claude-haiku-4-5-20251001",
+  flushModel: "claude-haiku-4.5",
 };
 
 export function expandTilde(pathValue: string | undefined): string | undefined {

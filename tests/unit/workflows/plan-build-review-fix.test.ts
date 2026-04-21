@@ -3,103 +3,40 @@ import type { StepContext } from "../../../src/workflows/types.js";
 import type { VerdictPayload } from "../../../src/types.js";
 import { planBuildReviewFix } from "../../../src/workflows/plan-build-review-fix.js";
 
-function makeCtx(overrides: Partial<StepContext> = {}): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((runId: string, step: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(`${runId}:${step}`, fn);
-    }),
-    _emit: (runId: string, step: string, payload: VerdictPayload) => {
-      const fn = listeners.get(`${runId}:${step}`);
-      if (fn) fn(payload);
-    },
-  };
-
+function makeCtxWithVerdicts(
+  verdicts: Record<string, VerdictPayload>,
+  runSteps: Array<{ name: string; issues?: string[] }> = [],
+): StepContext {
   const team = {
-    deliver: vi.fn((_agentName: string, _msg: object) => Promise.resolve()),
+    deliver: vi.fn(async (_agentName: string, msg: any) => {
+      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
+      if (match) {
+        const stepName = match[1];
+        return verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
+      }
+      return undefined;
+    }),
   };
 
   const run = {
     runId: "test-run-id",
     goal: "test goal",
     artifacts: {} as Record<string, string>,
-    steps: [] as Array<{ name: string; issues?: string[] }>,
+    steps: runSteps as any[],
   };
 
   const ctx: StepContext = {
     run: run as any,
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: engine as any,
-    ...overrides,
+    engine: {} as any,
   };
-
-  // Make deliver call the verdict listener synchronously for the step in the message
-  (team.deliver as ReturnType<typeof vi.fn>).mockImplementation(
-    (_agentName: string, msg: any) => {
-      // Extract step from message summary ("Execute step: <name>")
-      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
-      if (match) {
-        const stepName = match[1];
-        engine._emit(run.runId, stepName, {
-          step: stepName,
-          verdict: "PASS",
-        });
-      }
-      return Promise.resolve();
-    },
-  );
 
   return ctx;
 }
 
-function makeCtxWithVerdicts(
-  verdicts: Record<string, VerdictPayload>,
-): StepContext {
-  const listeners = new Map<string, (v: VerdictPayload) => void>();
-
-  const engine = {
-    registerVerdictListener: vi.fn((runId: string, step: string, fn: (v: VerdictPayload) => void) => {
-      listeners.set(`${runId}:${step}`, fn);
-    }),
-    _emit: (runId: string, step: string, payload: VerdictPayload) => {
-      const fn = listeners.get(`${runId}:${step}`);
-      if (fn) fn(payload);
-    },
-  };
-
-  const team = {
-    deliver: vi.fn(),
-  };
-
-  const run = {
-    runId: "test-run-id",
-    goal: "test goal",
-    artifacts: {} as Record<string, string>,
-    steps: [] as Array<{ name: string; issues?: string[] }>,
-  };
-
-  const ctx: StepContext = {
-    run: run as any,
-    team: team as any,
-    observer: { emit: vi.fn() } as any,
-    engine: engine as any,
-  };
-
-  (team.deliver as ReturnType<typeof vi.fn>).mockImplementation(
-    (_agentName: string, msg: any) => {
-      const match = typeof msg.summary === "string" && msg.summary.match(/Execute step: (.+)/);
-      if (match) {
-        const stepName = match[1];
-        const payload = verdicts[stepName] ?? { step: stepName, verdict: "PASS" };
-        engine._emit(run.runId, stepName, payload);
-      }
-      return Promise.resolve();
-    },
-  );
-
-  return ctx;
+function makeCtx(): StepContext {
+  return makeCtxWithVerdicts({});
 }
 
 describe("planBuildReviewFix workflow definition", () => {
@@ -191,18 +128,15 @@ describe("planBuildReviewFix step execution", () => {
   });
 
   it("fix step injects review issues from ctx.run.steps", async () => {
-    const ctx = makeCtx();
-    // Seed a prior review step with issues
-    (ctx.run.steps as any[]).push({
-      name: "review",
-      issues: ["missing null check", "test coverage low"],
-    });
+    const ctx = makeCtxWithVerdicts(
+      { fix: { step: "fix", verdict: "PASS" } },
+      [{ name: "review", issues: ["missing null check", "test coverage low"] }],
+    );
 
     const fixStep = planBuildReviewFix.steps.find(s => s.name === "fix")!;
     const result = await fixStep.run(ctx);
     expect(result.verdict).toBe("PASS");
 
-    // The message delivered should contain the review issues
     const deliverCalls = (ctx.team.deliver as ReturnType<typeof vi.fn>).mock.calls;
     const fixDeliverCall = deliverCalls.find(
       ([_agent, msg]: [string, any]) => msg.summary === "Execute step: fix",
@@ -213,14 +147,13 @@ describe("planBuildReviewFix step execution", () => {
   });
 
   it("review FAIL then fix PASS loop: fix step returns PASS", async () => {
-    const ctx = makeCtxWithVerdicts({
-      review: { step: "review", verdict: "FAIL", issues: ["type error on line 42"] },
-      fix: { step: "fix", verdict: "PASS" },
-    });
-    (ctx.run.steps as any[]).push({
-      name: "review",
-      issues: ["type error on line 42"],
-    });
+    const ctx = makeCtxWithVerdicts(
+      {
+        review: { step: "review", verdict: "FAIL", issues: ["type error on line 42"] },
+        fix: { step: "fix", verdict: "PASS" },
+      },
+      [{ name: "review", issues: ["type error on line 42"] }],
+    );
 
     const reviewStep = planBuildReviewFix.steps.find(s => s.name === "review")!;
     const reviewResult = await reviewStep.run(ctx);

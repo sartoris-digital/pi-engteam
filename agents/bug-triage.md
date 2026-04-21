@@ -1,7 +1,7 @@
 ---
 name: engteam-bug-triage
 description: Classifies incoming bugs, deduplicates reports, assigns severity, maps likely owners, and routes issues into the right queues.
-model: claude-haiku-4-5-20251001
+model: claude-haiku-4.5
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList, TaskUpdate]
 ---
 

@@ -22,6 +22,7 @@ describe("plan-build-review workflow integration", () => {
 
     const mockTeam = {
       deliver: vi.fn(),
+      setRunId: vi.fn(),
       setStepContext: vi.fn(),
       markStepComplete: vi.fn(),
     } as any;
@@ -35,17 +36,14 @@ describe("plan-build-review workflow integration", () => {
       observer: mockObserver,
     });
 
-    // When deliver is called, immediately notify the engine with a PASS verdict for that step
+    // deliver() now returns the verdict directly
     mockTeam.deliver.mockImplementation(async (_agentName: string, msg: any) => {
       const stepName = (msg.summary as string)?.replace("Execute step: ", "") ?? "unknown";
-      // Use setImmediate to simulate the async agent responding after the current microtask
-      setImmediate(() => {
-        engine.notifyVerdict(state.runId, {
-          step: stepName,
-          verdict: "PASS",
-          artifacts: [`${stepName}-output.md`],
-        } satisfies VerdictPayload);
-      });
+      return {
+        step: stepName,
+        verdict: "PASS",
+        artifacts: [`${stepName}-output.md`],
+      } satisfies VerdictPayload;
     });
 
     const state = await engine.startRun({
@@ -65,7 +63,7 @@ describe("plan-build-review workflow integration", () => {
 
   it("halts with failed status when plan step returns FAIL", async () => {
     const mockObserver = { emit: vi.fn() } as any;
-    const mockTeam = { deliver: vi.fn(), setStepContext: vi.fn(), markStepComplete: vi.fn() } as any;
+    const mockTeam = { deliver: vi.fn(), setRunId: vi.fn(), setStepContext: vi.fn(), markStepComplete: vi.fn() } as any;
     const workflows = new Map([["plan-build-review", planBuildReview]]);
 
     const engine = new ADWEngine({
@@ -77,13 +75,11 @@ describe("plan-build-review workflow integration", () => {
 
     mockTeam.deliver.mockImplementation(async (_agentName: string, msg: any) => {
       const stepName = (msg.summary as string)?.replace("Execute step: ", "") ?? "unknown";
-      setImmediate(() => {
-        engine.notifyVerdict(state.runId, {
-          step: stepName,
-          verdict: "FAIL",
-          issues: ["Goal is not feasible"],
-        } satisfies VerdictPayload);
-      });
+      return {
+        step: stepName,
+        verdict: "FAIL",
+        issues: ["Goal is not feasible"],
+      } satisfies VerdictPayload;
     });
 
     const state = await engine.startRun({
@@ -101,7 +97,7 @@ describe("plan-build-review workflow integration", () => {
 
   it("persists final state to disk after completion", async () => {
     const mockObserver = { emit: vi.fn() } as any;
-    const mockTeam = { deliver: vi.fn(), setStepContext: vi.fn(), markStepComplete: vi.fn() } as any;
+    const mockTeam = { deliver: vi.fn(), setRunId: vi.fn(), setStepContext: vi.fn(), markStepComplete: vi.fn() } as any;
     const workflows = new Map([["plan-build-review", planBuildReview]]);
 
     const engine = new ADWEngine({
@@ -113,9 +109,7 @@ describe("plan-build-review workflow integration", () => {
 
     mockTeam.deliver.mockImplementation(async (_agentName: string, msg: any) => {
       const stepName = (msg.summary as string)?.replace("Execute step: ", "") ?? "unknown";
-      setImmediate(() => {
-        engine.notifyVerdict(state.runId, { step: stepName, verdict: "PASS", artifacts: [] });
-      });
+      return { step: stepName, verdict: "PASS", artifacts: [] } satisfies VerdictPayload;
     });
 
     const state = await engine.startRun({

@@ -1,7 +1,7 @@
 ---
 name: engteam-security-auditor
 description: Runs static checks, scans for insecure patterns and secrets, flags dependency and auth issues, enforces security and compliance rules.
-model: claude-opus-4-6
+model: claude-opus-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList]
 ---
 

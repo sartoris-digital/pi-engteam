@@ -31,7 +31,8 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 - Inter-agent messaging via a typed pub/sub message bus
 - Three-layer safety guard: hard blockers, plan-mode gate, and approval-token gate
 - SQLite-backed observability server with a web dashboard
-- Memory Core: automatic session summarisation into daily logs, with optional Obsidian vault sync
+- Memory Core: automatic session summarisation into daily logs with wisdom capture, and optional Obsidian vault sync
+- Live step-progress labels in Pi's TUI: every agent session shows `agentName [✓ step1 · ● step2 · ○ step3]` while a workflow runs
 - Loads directly from TypeScript source via Pi's built-in transpiler (`pi install`) or as a pre-built ESM bundle (`pnpm engteam:install`)
 
 ---
@@ -42,7 +43,7 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 Pi coding agent
 └── pi-engteam extension (src/index.ts via jiti on pi install; dist/index.js on build install)
     ├── ADWEngine          workflow orchestration / run state machine
-    ├── TeamRuntime        agent session lifecycle + tool injection
+    ├── TeamRuntime        agent session lifecycle + tool injection + step-progress labels
     ├── MessageBus         typed pub/sub (agent → agent or broadcast)
     ├── SafetyGuard        three-layer tool-call interceptor
     ├── Observer           event emission to disk + optional HTTP sink
@@ -337,9 +338,9 @@ The team is defined in `agents/*.md`. Each file becomes an agent definition inst
 
 | Agent | Model | Role |
 |-------|-------|------|
-| `planner` | claude-opus-4-6 | Decomposes goals into tasks, writes `plan.md`, selects workflow steps |
+| `planner` | claude-opus-4-6 | Decomposes goals into tasks, writes `plan.md`, selects workflow steps. Runs a 6-lens requirements gap analysis (missing questions, undefined guardrails, scope risks, unvalidated assumptions, missing acceptance criteria, edge cases) before writing the plan. |
 | `implementer` | claude-sonnet-4-6 | Writes code, scaffolds features, applies project conventions, requests approval for destructive ops |
-| `reviewer` | claude-opus-4-6 | Deep code inspection: logic errors, bad abstractions, hidden coupling, regression risk |
+| `reviewer` | claude-opus-4-6 | Deep code inspection: logic errors, bad abstractions, hidden coupling, regression risk. Requires 3 evidence gates — fresh test output, LSP diagnostics, and acceptance-criteria coverage — before issuing any verdict. |
 
 ### Specialist agents — spawned by workflows on demand
 
@@ -350,12 +351,12 @@ The team is defined in `agents/*.md`. Each file becomes an agent definition inst
 | `architect` | System design, ADR authoring, service boundary and API design |
 | `codebase-cartographer` | Builds mental model of existing code, maps modules and dependencies |
 | `bug-triage` | Classifies bugs P0–P3, deduplicates, assigns ownership area |
-| `incident-investigator` | Pulls logs, traces, and metrics; builds probable-cause hypothesis tree |
+| `incident-investigator` | Pulls logs, traces, and metrics; builds probable-cause hypothesis tree using the same 7-stage competing-hypothesis protocol as `root-cause-debugger`, with a Timeline section in its output. |
 | `judge` | Final verdict authority; the only agent that can call `GrantApproval` |
 | `knowledge-retriever` | Fetches and summarizes code, docs, ADRs, and tickets |
 | `observability-archivist` | Retrieves run history, event logs, and traces |
 | `performance-analyst` | Latency, N+1, memory, and concurrency review |
-| `root-cause-debugger` | Deep code-path tracing across services, commit correlation |
+| `root-cause-debugger` | Deep code-path tracing across services, commit correlation. Uses a 7-stage competing-hypothesis protocol: Observe → Hypothesize → Gather evidence → Rebuttal → Rank → Synthesize → Probe. |
 | `security-auditor` | Static analysis, secrets scanning, auth and dependency review |
 | `tester` | Unit, integration, and regression test authoring; coverage gap analysis |
 
@@ -389,6 +390,10 @@ Signal the completion of a workflow step. **Agents must call this at the end of 
 | `issues` | string[]? | Required when `verdict` is `FAIL` |
 | `artifacts` | string[]? | File paths produced in this step |
 | `handoffHint` | string? | Escalation routing hint: `'security'`, `'perf'`, `'re-plan'` |
+| `learnings` | string[]? | Generalizable insights from this step, accumulated into Memory Core |
+| `decisions` | string[]? | Key decisions made and their rationale, accumulated into Memory Core |
+| `issues_found` | string[]? | Bugs or problems discovered during the step, accumulated into Memory Core |
+| `gotchas` | string[]? | Non-obvious caveats worth remembering, accumulated into Memory Core |
 
 ### `TaskList`
 
@@ -536,11 +541,23 @@ Each session appends one entry:
 ### Changed Files
 - src/middleware/rateLimit.ts
 
+### Wisdom
+**Learnings**
+- express-rate-limit requires trust proxy to be set when behind a load balancer
+
+**Decisions**
+- Chose sliding window over fixed window to avoid burst traffic at window boundaries
+
+**Gotchas**
+- Rate limit headers differ between express-rate-limit v6 and v7
+
 ### Summary
 <LLM-generated paragraph summarising decisions, blockers, and outcomes>
 
 ---
 ```
+
+The Wisdom section is only present when at least one run in the session emitted `learnings`, `decisions`, `issues_found`, or `gotchas` via `VerdictEmit`. Values are deduplicated across steps and runs within the session.
 
 If the session already has an entry (e.g. after a mid-session compaction), it is replaced in-place rather than duplicated.
 
@@ -776,6 +793,7 @@ Here is the full flow from `/team-start` to a completed run:
        └── Emits lifecycle:run_started event
 
 3. ADWEngine.executeRun(runId) — step: "plan"
+   └── TeamRuntime labels updated: "planner [● plan · ○ build · ○ review]" on all sessions
    └── Builds StepContext (goal, runId, prior artifacts)
    └── MessageBus delivers prompt to "planner" agent
    └── SafetyGuard intercepts all tool calls in real time
@@ -783,6 +801,7 @@ Here is the full flow from `/team-start` to a completed run:
        └── Layer B: plan-mode allows read-only tools only
    └── Planner calls TaskUpdate (writes plan), VerdictEmit("plan", "PASS", artifacts=["plan.md"])
    └── ADWEngine receives verdict → transitions to "build"
+   └── TeamRuntime labels updated: "planner [✓ plan · ● build · ○ review]" on all sessions
 
 4. Step: "build"
    └── StepContext includes plan.md artifact from previous step
