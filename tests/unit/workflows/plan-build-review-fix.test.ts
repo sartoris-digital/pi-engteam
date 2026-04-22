@@ -88,11 +88,11 @@ describe("planBuildReviewFix transitions", () => {
     expect(t?.to).toBe("review");
   });
 
-  it("fix FAIL → halt", () => {
+  it("fix FAIL → plan", () => {
     const t = planBuildReviewFix.transitions.find(
       t => t.from === "fix" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("plan");
   });
 });
 

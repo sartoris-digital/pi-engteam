@@ -149,7 +149,8 @@ export const planBuildReview: Workflow = {
     { from: "plan",   when: (r) => r.verdict === "PASS",   to: "build" },
     { from: "plan",   when: (r) => r.verdict !== "PASS",   to: "halt" },
     { from: "build",  when: (r) => r.verdict === "PASS",   to: "review" },
-    { from: "build",  when: (r) => r.verdict !== "PASS",   to: "halt" },
+    // H2: build failures should re-plan instead of halting outright
+    { from: "build",  when: (r) => r.verdict !== "PASS",   to: "plan" },
     { from: "review", when: (_r) => true,                  to: "halt" },
   ],
   defaults: {

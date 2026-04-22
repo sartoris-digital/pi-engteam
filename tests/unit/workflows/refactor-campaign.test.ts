@@ -54,7 +54,7 @@ describe("refactorCampaign workflow definition", () => {
   });
 
   it("has correct defaults", () => {
-    expect(refactorCampaign.defaults.maxIterations).toBe(8);
+    expect(refactorCampaign.defaults.maxIterations).toBe(12);
     expect(refactorCampaign.defaults.maxCostUsd).toBe(40);
     expect(refactorCampaign.defaults.maxWallSeconds).toBe(7200);
   });

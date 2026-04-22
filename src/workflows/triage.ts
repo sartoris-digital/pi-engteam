@@ -27,7 +27,7 @@ const classifyStep: Step = {
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `BUG REPORT: ${ctx.run.goal}
 
-Classify this bug: assign P0-P3 severity, identify the owner area (security/performance/regression/ux/infra), and check for duplicates in the codebase. Write a triage summary. Call VerdictEmit with step="classify".`;
+Classify this bug: assign P0-P3 severity, identify the owner area (security/performance/regression/ux/infra), and check for duplicates in the codebase. Write a triage summary to triage-summary.md. Call VerdictEmit with step="classify", artifacts=["triage-summary.md"].`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "bug-triage", prompt, "classify");
@@ -35,9 +35,8 @@ Classify this bug: assign P0-P3 severity, identify the owner area (security/perf
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`artifact-${i}`, a]))
-          : {},
+        // M1: stable key so routeStep can explicitly consume the classifier output
+        artifacts: { "triage-summary": verdict.artifacts?.[0] ?? "triage-summary.md" },
       };
     } catch (err) {
       return {
@@ -53,9 +52,11 @@ const routeStep: Step = {
   name: "route",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    const triageSummary = ctx.run.artifacts["triage-summary"] ?? "triage-summary.md";
     const prompt = `BUG: ${ctx.run.goal}
-CLASSIFICATION: See previous classify step output.
+CLASSIFICATION SUMMARY: ${triageSummary}
 
+Read the classification summary file.
 Write a routing recommendation: which workflow should handle this (debug/fix-loop/security-review/etc.), who the likely owner is, and what the SLA should be. Call VerdictEmit with step="route".`;
 
     try {

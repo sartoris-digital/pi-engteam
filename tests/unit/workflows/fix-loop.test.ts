@@ -136,8 +136,8 @@ describe("fix-loop workflow – transitions", () => {
     expect(t.when({ success: true, verdict: "PASS" })).toBe(true);
   });
 
-  it("judge-gate FAIL → analyze (full re-plan)", () => {
-    const t = fixLoop.transitions.find(tr => tr.from === "judge-gate" && tr.to === "analyze")!;
+  it("judge-gate FAIL → implement", () => {
+    const t = fixLoop.transitions.find(tr => tr.from === "judge-gate" && tr.to === "implement")!;
     expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
   });
 });

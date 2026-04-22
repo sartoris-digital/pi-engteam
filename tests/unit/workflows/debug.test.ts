@@ -30,7 +30,7 @@ function makeCtx(
       currentStep: "gather-context",
       iteration: 0,
       budget: {
-        maxIterations: 6,
+        maxIterations: 10,
         maxCostUsd: 20,
         maxWallSeconds: 3600,
         maxTokens: 100000,
@@ -62,7 +62,7 @@ describe("debug workflow – structure", () => {
   });
 
   it("defaults are set correctly", () => {
-    expect(debug.defaults.maxIterations).toBe(6);
+    expect(debug.defaults.maxIterations).toBe(10);
     expect(debug.defaults.maxCostUsd).toBe(20);
     expect(debug.defaults.maxWallSeconds).toBe(3600);
   });
@@ -118,8 +118,8 @@ describe("debug workflow – transitions", () => {
     expect(t.when({ success: true, verdict: "PASS" })).toBe(true);
   });
 
-  it("analyze FAIL → halt", () => {
-    const t = debug.transitions.find(tr => tr.from === "analyze" && tr.to === "halt")!;
+  it("analyze FAIL → gather-context", () => {
+    const t = debug.transitions.find(tr => tr.from === "analyze" && tr.to === "gather-context")!;
     expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
   });
 
@@ -144,7 +144,21 @@ describe("debug workflow – transitions", () => {
   });
 });
 
-describe("debug workflow – propose-fix step injects analysis notes", () => {
+describe("debug workflow – analyze/propose-fix artifact flow", () => {
+  it("analyze stores a stable root-cause artifact key", async () => {
+    const ctx = makeCtx({
+      analyze: { step: "analyze", verdict: "PASS", artifacts: ["debug-report.md"] },
+    }, {
+      currentStep: "analyze",
+      artifacts: { "code-context": "debug-code-context.md", "trace-context": "debug-traces.md" },
+    });
+
+    const analyzeStep = debug.steps.find(s => s.name === "analyze")!;
+    const result = await analyzeStep.run(ctx);
+    expect(result.artifacts?.["root-cause"]).toBe("debug-report.md");
+  });
+
+
   it("includes analysis issues in prompt when present", async () => {
     const ctx = makeCtx(
       { "propose-fix": { step: "propose-fix", verdict: "PASS" } },

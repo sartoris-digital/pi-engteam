@@ -187,7 +187,8 @@ export const planBuildReviewFix: Workflow = {
     { from: "review", when: (r) => r.verdict === "PASS",  to: "halt" },
     { from: "review", when: (r) => r.verdict !== "PASS",  to: "fix" },
     { from: "fix",    when: (r) => r.verdict === "PASS",  to: "review" },
-    { from: "fix",    when: (r) => r.verdict !== "PASS",  to: "halt" },
+    // H3: if the fixer is blocked, re-plan instead of halting the self-healing workflow
+    { from: "fix",    when: (r) => r.verdict !== "PASS",  to: "plan" },
   ],
   defaults: {
     maxIterations: 12,

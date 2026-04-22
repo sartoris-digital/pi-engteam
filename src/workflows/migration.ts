@@ -245,7 +245,8 @@ export const migration: Workflow = {
     { from: "security-review", when: (r) => r.verdict === "PASS", to: "implement" },
     { from: "security-review", when: (r) => r.verdict !== "PASS", to: "plan" },
     { from: "implement",       when: (r) => r.verdict === "PASS", to: "test" },
-    { from: "implement",       when: (r) => r.verdict !== "PASS", to: "halt" },
+    // H4: implementation blockers should feed back into planning instead of halting
+    { from: "implement",       when: (r) => r.verdict !== "PASS", to: "plan" },
     { from: "test",            when: (r) => r.verdict === "PASS", to: "judge-gate" },
     { from: "test",            when: (r) => r.verdict !== "PASS", to: "implement" },
     { from: "judge-gate",      when: (r) => r.verdict === "PASS", to: "halt" },

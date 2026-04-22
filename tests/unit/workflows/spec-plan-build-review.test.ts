@@ -15,6 +15,7 @@ describe("specPlanBuildReview workflow", () => {
     const review   = specPlanBuildReview.steps.find(s => s.name === "review")!;
 
     expect(discover.pauseAfter).toBe("answering");
+    expect(discover.planMode).toBe(false);
     expect(design.pauseAfter).toBe("approving");
     expect(plan.pauseAfter).toBe("approving");
     expect(build.pauseAfter).toBeUndefined();
@@ -34,6 +35,7 @@ describe("specPlanBuildReview workflow", () => {
     expect(findTransition("design",   passResult)).toBe("plan");
     expect(findTransition("plan",     passResult)).toBe("build");
     expect(findTransition("build",    passResult)).toBe("review");
+    expect(findTransition("build",    failResult)).toBe("plan");
     expect(findTransition("review",   passResult)).toBe("halt");
   });
 });

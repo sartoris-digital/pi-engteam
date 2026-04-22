@@ -352,14 +352,71 @@ export default async function (pi: ExtensionAPI) {
     }
   });
 
-  // Input hook: handles "approve" keywords during waiting_user approval phases
+  // Input hook: handles waiting_user phases for approval and freeform answering
   pi.on("input", async (event, ctx) => {
     const { readActiveRun, clearActiveRun } = await import("./adw/ActiveRun.js");
     const activeRun = await readActiveRun();
-    if (!activeRun || activeRun.phase !== "approving") return { action: "continue" as const };
+    if (!activeRun) return { action: "continue" as const };
 
-    const text = event.text.toLowerCase().trim();
-    const isApproval = text === "approve" || text === "approved" || text.includes("looks good");
+    const text = event.text.trim();
+    const lower = text.toLowerCase();
+
+    // C1/L3: handle the discovery answering phase for spec-plan-build-review.
+    // Any non-command message is captured as answers.md and the workflow resumes.
+    if (activeRun.phase === "answering") {
+      if (!text) {
+        ctx.ui.notify("Reply with your discovery answers in one message, and I’ll save them to answers.md.", "info");
+        return { action: "handled" as const };
+      }
+      if (text.startsWith("/")) {
+        return { action: "continue" as const };
+      }
+      if (lower === "approve" || lower === "approved" || lower.includes("looks good")) {
+        ctx.ui.notify("This step needs answers, not approval. Reply with your answers in one message.", "info");
+        return { action: "handled" as const };
+      }
+
+      const { writeFile, mkdir } = await import("fs/promises");
+      const answersPath = join(activeRun.runsDir, activeRun.runId, "answers.md");
+      await mkdir(join(activeRun.runsDir, activeRun.runId), { recursive: true });
+      await writeFile(answersPath, text);
+      await clearActiveRun();
+      ctx.ui.notify(`answers written → ${answersPath}\n\nRunning design…`, "info");
+
+      engine.executeUntilPause(activeRun.runId)
+        .then(async (state) => {
+          if (state.status === "waiting_user") {
+            const ar = await readActiveRun();
+            if (ar?.stepName === "design") {
+              ctx.ui.notify(
+                `spec written → ${join(RUNS_DIR, activeRun.runId, "spec.md")}\n\nReview the spec, then type "approve" when ready to write the plan.`,
+                "info",
+              );
+            } else if (ar?.stepName === "plan") {
+              ctx.ui.notify(
+                `plan written → ${join(RUNS_DIR, activeRun.runId, "plan.md")}\n\nReview the plan, then type "approve" when ready to build.`,
+                "info",
+              );
+            }
+          } else if (state.status === "succeeded") {
+            ctx.ui.notify("✓ Workflow complete.", "info");
+          } else if (state.status === "failed") {
+            ctx.ui.notify(`Workflow stopped: step ${state.currentStep} failed.`, "error");
+          }
+        })
+        .catch((err: unknown) => {
+          ctx.ui.notify(
+            `Workflow resume failed: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
+        });
+
+      return { action: "handled" as const };
+    }
+
+    if (activeRun.phase !== "approving") return { action: "continue" as const };
+
+    const isApproval = lower === "approve" || lower === "approved" || lower.includes("looks good");
 
     if (!isApproval) {
       ctx.ui.notify('Type "approve" when you are ready to continue.', "info");
@@ -375,22 +432,29 @@ export default async function (pi: ExtensionAPI) {
     };
     ctx.ui.notify(stepAckMessages[stepName] ?? "Approved. Resuming…", "info");
 
-    void engine.executeUntilPause(runId).then(state => {
-      if (state.status === "waiting_user") {
-        readActiveRun().then(ar => {
+    engine.executeUntilPause(runId)
+      .then(async (state) => {
+        if (state.status === "waiting_user") {
+          const ar = await readActiveRun();
           if (ar?.stepName === "plan") {
             ctx.ui.notify(
               `plan written → ${join(RUNS_DIR, runId, "plan.md")}\n\nReview the plan, then type "approve" when ready to build.`,
               "info",
             );
           }
-        });
-      } else if (state.status === "succeeded") {
-        ctx.ui.notify("✓ Workflow complete.", "info");
-      } else if (state.status === "failed") {
-        ctx.ui.notify(`Workflow stopped: step ${state.currentStep} failed.`, "error");
-      }
-    });
+        } else if (state.status === "succeeded") {
+          ctx.ui.notify("✓ Workflow complete.", "info");
+        } else if (state.status === "failed") {
+          ctx.ui.notify(`Workflow stopped: step ${state.currentStep} failed.`, "error");
+        }
+      })
+      .catch((err: unknown) => {
+        // H5: surface resume errors instead of silently discarding them
+        ctx.ui.notify(
+          `Workflow resume failed: ${err instanceof Error ? err.message : String(err)}`,
+          "error",
+        );
+      });
 
     return { action: "handled" as const };
   });

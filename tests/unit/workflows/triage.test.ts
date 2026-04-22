@@ -113,6 +113,17 @@ describe("triage step execution", () => {
     expect(judgeResult.success).toBe(true);
   });
 
+  it("classify returns a stable triage-summary artifact", async () => {
+    const ctx = makeCtxWithVerdicts({
+      classify: { step: "classify", verdict: "PASS", artifacts: ["triage-summary.md"] },
+    });
+
+    const classifyStep = triage.steps.find(s => s.name === "classify")!;
+    const result = await classifyStep.run(ctx);
+    expect(result.success).toBe(true);
+    expect(result.artifacts?.["triage-summary"]).toBe("triage-summary.md");
+  });
+
   it("classify FAIL → step returns success=false immediately", async () => {
     const ctx = makeCtxWithVerdicts({
       classify: { step: "classify", verdict: "FAIL", issues: ["insufficient bug report"] },
@@ -123,6 +134,24 @@ describe("triage step execution", () => {
     expect(result.success).toBe(false);
     expect(result.verdict).toBe("FAIL");
     expect(result.issues).toContain("insufficient bug report");
+  });
+
+  it("route reads the triage summary artifact path", async () => {
+    const ctx = makeCtxWithVerdicts(
+      { route: { step: "route", verdict: "PASS" } },
+      [],
+    );
+    (ctx.run as any).artifacts = { "triage-summary": "triage-summary.md" };
+
+    const routeStep = triage.steps.find(s => s.name === "route")!;
+    await routeStep.run(ctx);
+
+    const deliverCalls = (ctx.team.deliver as ReturnType<typeof vi.fn>).mock.calls;
+    const routeCall = deliverCalls.find(
+      ([_agent, msg]: [string, any]) => msg.summary === "Execute step: route",
+    );
+    expect(routeCall).toBeDefined();
+    expect(routeCall[1].message).toContain("triage-summary.md");
   });
 
   it("judge-gate FAIL includes previous feedback in prompt on re-run", async () => {

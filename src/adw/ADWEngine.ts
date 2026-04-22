@@ -126,7 +126,8 @@ export class ADWEngine {
         break;
       }
 
-      const stepDef = workflow.steps.find(s => s.name === state!.currentStep);
+      const currentStep = state.currentStep;
+      const stepDef = workflow.steps.find(s => s.name === currentStep);
       if (!stepDef) {
         state = { ...state, status: "failed" };
         break;
@@ -134,18 +135,18 @@ export class ADWEngine {
 
       this.config.observer.emit({
         runId,
-        step: state.currentStep,
+        step: currentStep,
         iteration: state.iteration,
         category: "lifecycle",
         type: "step.start",
-        payload: { step: state.currentStep },
+        payload: { step: currentStep },
       });
 
       // Surface step progress to Pi TUI
-      const stepIndex = workflow.steps.findIndex(s => s.name === state.currentStep);
+      const stepIndex = workflow.steps.findIndex(s => s.name === currentStep);
       const totalSteps = workflow.steps.length;
-      this.uiCallbacks?.notify(`▶ Step ${stepIndex + 1}/${totalSteps} — ${state.currentStep}`, "info");
-      this.uiCallbacks?.setStatus("engteam", `▶ ${state.currentStep} (${stepIndex + 1}/${totalSteps})`);
+      this.uiCallbacks?.notify(`▶ Step ${stepIndex + 1}/${totalSteps} — ${currentStep}`, "info");
+      this.uiCallbacks?.setStatus("engteam", `▶ ${currentStep} (${stepIndex + 1}/${totalSteps})`);
       this.config.team.setAgentLineCallback?.((agent, line) => {
         this.uiCallbacks?.setStatus("engteam_out", `${agent}: ${line.slice(0, 120)}`);
       });
@@ -251,6 +252,22 @@ export class ADWEngine {
           runsDir: this.config.runsDir,
         });
         await saveRunState(this.config.runsDir, state);
+
+        // C1: surface clear pause instructions in the TUI for workflows started via /run-start
+        const pauseMessage = stepDef.pauseAfter === "answering"
+          ? [
+              `questions written → ${this.config.runsDir}/${runId}/questions.md`,
+              "",
+              "Reply in chat with your discovery answers in a single message and I'll save them to answers.md and continue.",
+              `Or write ${this.config.runsDir}/${runId}/answers.md manually, then run /run-resume ${runId}.`,
+            ].join("\n")
+          : [
+              `step ready for approval → ${stepDef.name}`,
+              "",
+              'Type "approve" when you are ready to continue.',
+            ].join("\n");
+        this.uiCallbacks?.notify(pauseMessage, "info");
+        this.uiCallbacks?.setStatus("engteam", `⏸ waiting for user (${stepDef.pauseAfter})`);
         break;
       }
     }

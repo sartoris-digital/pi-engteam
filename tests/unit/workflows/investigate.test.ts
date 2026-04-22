@@ -125,6 +125,17 @@ describe("investigate step execution", () => {
     expect(result.issues).toContain("no logs available");
   });
 
+  it("analyze stores a stable incident-report artifact key", async () => {
+    const ctx = makeCtxWithVerdicts({
+      analyze: { step: "analyze", verdict: "PASS", artifacts: ["incident-report.md"] },
+    });
+    (ctx.run as any).artifacts = { context: "context-pack.md" };
+
+    const analyzeStep = investigate.steps.find(s => s.name === "analyze")!;
+    const result = await analyzeStep.run(ctx);
+    expect(result.artifacts?.["incident-report"]).toBe("incident-report.md");
+  });
+
   it("judge-gate FAIL includes previous feedback in prompt on re-run", async () => {
     const previousFeedback = ["hypothesis lacks evidence", "missing timeline"];
     const ctx = makeCtxWithVerdicts(
@@ -134,6 +145,8 @@ describe("investigate step execution", () => {
       [{ name: "judge-gate", issues: previousFeedback }],
     );
 
+    (ctx.run as any).artifacts = { "incident-report": "incident-report.md" };
+
     const judgeGateStep = investigate.steps.find(s => s.name === "judge-gate")!;
     await judgeGateStep.run(ctx);
 
@@ -142,6 +155,7 @@ describe("investigate step execution", () => {
       ([_agent, msg]: [string, any]) => msg.summary === "Execute step: judge-gate",
     );
     expect(judgeDeliverCall).toBeDefined();
+    expect(judgeDeliverCall[1].message).toContain("incident-report.md");
     expect(judgeDeliverCall[1].message).toContain("PREVIOUS JUDGE FEEDBACK:");
     expect(judgeDeliverCall[1].message).toContain("hypothesis lacks evidence");
   });

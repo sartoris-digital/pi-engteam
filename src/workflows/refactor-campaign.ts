@@ -294,7 +294,8 @@ export const refactorCampaign: Workflow = {
     { from: "judge-gate", when: (r) => r.verdict !== "PASS", to: "design" },
   ],
   defaults: {
-    maxIterations: 8,
+    // M4: raised from 8 — the 6-step workflow has multiple design/implement/review back-loops
+    maxIterations: 12,
     maxCostUsd: 40,
     maxWallSeconds: 7200,
   },

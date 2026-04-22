@@ -94,11 +94,11 @@ describe("migration transitions", () => {
     expect(t?.to).toBe("test");
   });
 
-  it("implement FAIL → halt", () => {
+  it("implement FAIL → plan", () => {
     const t = migration.transitions.find(
       t => t.from === "implement" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("plan");
   });
 
   it("test PASS → judge-gate", () => {

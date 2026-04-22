@@ -63,9 +63,8 @@ Build a timeline and probability-ranked hypothesis tree. Write an incident-repor
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`artifact-${i}`, a]))
-          : {},
+        // L2: stable key so judge-gate can reference the actual report path
+        artifacts: { "incident-report": verdict.artifacts?.[0] ?? "incident-report.md" },
       };
     } catch (err) {
       return {
@@ -86,9 +85,11 @@ const judgeGateStep: Step = {
       ? `\nPREVIOUS JUDGE FEEDBACK:\n${previousFeedback.join("\n")}`
       : "";
 
+    const incidentReport = ctx.run.artifacts["incident-report"] ?? "incident-report.md";
     const prompt = `INCIDENT: ${ctx.run.goal}
-HYPOTHESIS TREE: See incident-report.md
+HYPOTHESIS TREE: ${incidentReport}
 
+Read the incident report file.
 Review the investigation findings. If the hypothesis tree is well-evidenced and actionable, PASS. If it needs deeper investigation, FAIL with specific gaps to address.${feedbackSection}
 
 Call VerdictEmit with step="judge-gate".`;

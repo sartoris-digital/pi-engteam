@@ -24,6 +24,8 @@ async function waitForVerdict(
 const discoverStep: Step = {
   name: "discover",
   required: true,
+  // L3: allow the user to write answers.md via the Pi session while paused in the answering phase
+  planMode: false,
   pauseAfter: "answering",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are gathering requirements for this feature goal:
@@ -183,11 +185,14 @@ const reviewStep: Step = {
   name: "review",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    const specArtifact = ctx.run.artifacts["spec"] ?? "spec.md";
     const prompt = `You are the reviewer. Review the implementation for:
 
 GOAL: ${ctx.run.goal}
+SPEC: ${specArtifact}
 
 Check all changed/created files for logical errors, missing tests, security issues, and spec compliance.
+Read the spec file and verify the implementation matches it.
 Call VerdictEmit with step: "review", verdict: "PASS" or "FAIL" with specific issues.
 Set handoffHint: "security" | "perf" | "re-plan" if the failure category warrants specialist escalation.`;
 
@@ -217,7 +222,8 @@ export const specPlanBuildReview: Workflow = {
     { from: "plan",     when: (r) => r.verdict === "PASS", to: "build" },
     { from: "plan",     when: (r) => r.verdict !== "PASS", to: "halt" },
     { from: "build",    when: (r) => r.verdict === "PASS", to: "review" },
-    { from: "build",    when: (r) => r.verdict !== "PASS", to: "halt" },
+    // H2: build failures should re-plan instead of discarding discover/spec/plan work
+    { from: "build",    when: (r) => r.verdict !== "PASS", to: "plan" },
     { from: "review",   when: (_r) => true,                to: "halt" },
   ],
   defaults: {

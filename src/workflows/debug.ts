@@ -28,7 +28,7 @@ const gatherContextStep: Step = {
     const codePrompt = `GOAL: ${ctx.run.goal}
 
 Retrieve relevant code context for debugging. Identify the files, functions, and modules involved in the reported issue. Summarize your findings and write them to debug-code-context.md.
-Call VerdictEmit with step="gather-context-code".`;
+Call VerdictEmit with step="gather-context".`;
 
     try {
       // H4: use the actual ADW step name "gather-context" for both sub-calls so
@@ -46,7 +46,7 @@ Call VerdictEmit with step="gather-context-code".`;
       const tracePrompt = `GOAL: ${ctx.run.goal}
 
 Retrieve observability data relevant to the issue: logs, traces, metrics, error events. Summarize findings and write them to debug-traces.md.
-Call VerdictEmit with step="gather-context-traces".`;
+Call VerdictEmit with step="gather-context".`;
 
       const traceCtx = await waitForAgentVerdict(ctx, "observability-archivist", tracePrompt, "gather-context");
       if (traceCtx.verdict !== "PASS") {
@@ -97,9 +97,8 @@ Call VerdictEmit with step="analyze".`;
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`root-cause-${i}`, a]))
-          : { "root-cause": ctx.run.artifacts["root-cause"] ?? "debug-report.md" },
+        // C2: use a stable key so proposeFixStep can always resolve the report path
+        artifacts: { "root-cause": verdict.artifacts?.[0] ?? ctx.run.artifacts["root-cause"] ?? "debug-report.md" },
       };
     } catch (err) {
       return {
@@ -181,14 +180,16 @@ export const debug: Workflow = {
     { from: "gather-context", when: (r) => r.verdict === "PASS",  to: "analyze" },
     { from: "gather-context", when: (r) => r.verdict !== "PASS",  to: "halt" },
     { from: "analyze",        when: (r) => r.verdict === "PASS",  to: "propose-fix" },
-    { from: "analyze",        when: (r) => r.verdict !== "PASS",  to: "halt" },
+    // M2: if root-cause analysis fails, gather fresh context rather than halting immediately
+    { from: "analyze",        when: (r) => r.verdict !== "PASS",  to: "gather-context" },
     { from: "propose-fix",    when: (r) => r.verdict === "PASS",  to: "judge-gate" },
     { from: "propose-fix",    when: (r) => r.verdict !== "PASS",  to: "analyze" },
     { from: "judge-gate",     when: (r) => r.verdict === "PASS",  to: "halt" },
     { from: "judge-gate",     when: (r) => r.verdict !== "PASS",  to: "analyze" },
   ],
   defaults: {
-    maxIterations: 6,
+    // M5: raised from 6 — the gather/analyze/propose/judge loop needs room for ~2+ circuits
+    maxIterations: 10,
     maxCostUsd: 20,
     maxWallSeconds: 3600,
   },
