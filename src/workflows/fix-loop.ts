@@ -95,7 +95,22 @@ const testStep: Step = {
   required: true,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const prompt = `Run pnpm test. If all pass: PASS. If any fail: FAIL with the specific failure output in handoffHint.
+    const changedFiles = Object.entries(ctx.run.artifacts)
+      .filter(([k]) => k.startsWith("impl-artifact-"))
+      .map(([, v]) => v)
+      .join("\n");
+
+    const prompt = `GOAL: ${ctx.run.goal}
+CHANGED FILES:
+${changedFiles || "(see recent implement step artifacts)"}
+
+Steps:
+1. Locate the package.json that owns the changed files: walk up the directory tree from the first changed file until you find a package.json with a "test" script.
+2. Run the test suite from THAT directory (not the cwd), using the command found in the test script (pnpm test, npm test, yarn test, etc.).
+3. If no test suite covers these files (no package.json found, or project has no test script), call VerdictEmit with verdict="PASS" and note the gap in issues[].
+4. If tests fail due to an infrastructure/environment problem (missing deps, not a Node.js project, wrong runtime), call VerdictEmit with verdict="PASS" and document the infra problem in handoffHint — do not loop on environment errors outside your control.
+5. If tests fail because of a code bug in the changed files, call VerdictEmit with verdict="FAIL" with the specific failure in handoffHint.
+
 Call VerdictEmit with step="test".`;
 
     try {
@@ -189,7 +204,8 @@ export const fixLoop: Workflow = {
     { from: "review",     when: (r) => r.verdict === "PASS",  to: "judge-gate" },
     { from: "review",     when: (r) => r.verdict !== "PASS",  to: "implement" },
     { from: "judge-gate", when: (r) => r.verdict === "PASS",  to: "halt" },
-    { from: "judge-gate", when: (r) => r.verdict !== "PASS",  to: "analyze" },
+    // M3: judge feedback is usually implementation feedback, not a reason to redo root-cause analysis
+    { from: "judge-gate", when: (r) => r.verdict !== "PASS",  to: "implement" },
   ],
   defaults: {
     maxIterations: 12,
