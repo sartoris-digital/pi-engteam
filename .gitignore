@@ -1,3 +1,5 @@
 node_modules/
-dist/
+dist/*
+# Pre-built server bundle ships with the repo so postinstall works without devDependencies
+!dist/server.cjs
 .worktrees/

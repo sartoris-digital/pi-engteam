@@ -122,10 +122,8 @@ async function installAgents() {
 
 async function main() {
   console.log("[pi-engteam] postinstall: building server and installing files...");
-  const built = await buildServer();
-  if (built) {
-    await installServer();
-  }
+  await buildServer(); // best-effort; skipped if tsup (devDep) is unavailable
+  await installServer(); // always attempt — uses pre-built dist/server.cjs if build was skipped
   await installAgents();
   console.log("[pi-engteam] postinstall done.");
 }
