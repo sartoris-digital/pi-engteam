@@ -53,6 +53,6 @@ describe("loadMemoryConfig", () => {
     expect(config.obsidianVaultPath).toBe(join(homedir(), "Documents/Vault"));
     expect(expandTilde("/absolute/path")).toBe("/absolute/path");
     expect(expandTilde(undefined)).toBeUndefined();
-    expect(DEFAULT_MEMORY_CONFIG_PATH).toContain(".pi/engteam/second-brain/config.json");
+    expect(DEFAULT_MEMORY_CONFIG_PATH).toContain(".pi/engineering-team/second-brain/config.json");
   });
 });

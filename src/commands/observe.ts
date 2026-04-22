@@ -4,7 +4,7 @@ import { join } from "path";
 import { homedir } from "os";
 
 export const SERVER_PORT = parseInt(
-  process.env.PI_ENGTEAM_SERVER_PORT ?? "4747",
+  process.env.PI_ENGINEERING_SERVER_PORT ?? "4747",
   10,
 );
 
@@ -28,18 +28,18 @@ export async function isServerRunning(port: number): Promise<boolean> {
 }
 
 export async function startServer(port: number): Promise<void> {
-  // server.cjs is installed to ~/.pi/engteam/server.cjs by scripts/postinstall.mjs
+  // server.cjs is installed to ~/.pi/engineering-team/server.cjs by scripts/postinstall.mjs
   // (or by scripts/install.sh when using the pnpm build workflow)
-  const serverBin = join(homedir(), ".pi", "engteam", "server.cjs");
+  const serverBin = join(homedir(), ".pi", "engineering-team", "server.cjs");
 
-  // cwd is ~/.pi/engteam so Node can resolve better-sqlite3 from node_modules there
-  const engteamDir = join(homedir(), ".pi", "engteam");
+  // cwd is ~/.pi/engineering-team so Node can resolve better-sqlite3 from node_modules there
+  const engineeringTeamDir = join(homedir(), ".pi", "engineering-team");
   let stderrOutput = "";
   serverProcess = spawn("node", [serverBin], {
     detached: false,
     stdio: ["ignore", "pipe", "pipe"],
-    cwd: engteamDir,
-    env: { ...process.env, PI_ENGTEAM_SERVER_PORT: String(port) },
+    cwd: engineeringTeamDir,
+    env: { ...process.env, PI_ENGINEERING_SERVER_PORT: String(port) },
   });
 
   serverProcess.stderr?.on("data", (chunk: Buffer) => {
@@ -60,13 +60,13 @@ export async function startServer(port: number): Promise<void> {
   const errDetail = stderrOutput.trim();
   throw new Error(
     `Observability server failed to start on port ${port}.` +
-    (errDetail ? `\n\nServer error:\n${errDetail}` : "\n\nNo output from server process. Is better_sqlite3.node compiled for this machine? Run pnpm install && pnpm engteam:install to rebuild."),
+    (errDetail ? `\n\nServer error:\n${errDetail}` : "\n\nNo output from server process. Is better_sqlite3.node compiled for this machine? Run pnpm install && pnpm engineering:install to rebuild."),
   );
 }
 
 export function registerObserveCommand(pi: ExtensionAPI): void {
   pi.registerCommand("observe", {
-    description: "Start or stop the pi-engteam observability server. Usage: /observe [stop]",
+    description: "Start or stop the pi-engineering observability server. Usage: /observe [stop]",
     handler: async (args: string, ctx) => {
       const stop = args.trim().toLowerCase() === "stop";
       if (stop) {

@@ -4,9 +4,9 @@ import { join } from "path";
 import { homedir } from "os";
 import { existsSync } from "fs";
 
-const PORT = parseInt(process.env.PI_ENGTEAM_SERVER_PORT ?? "4747", 10);
-const DATA_DIR = process.env.PI_ENGTEAM_DATA_DIR ?? join(homedir(), ".pi", "engteam");
-const DB_PATH = join(DATA_DIR, "server", "engteam.sqlite");
+const PORT = parseInt(process.env.PI_ENGINEERING_SERVER_PORT ?? "4747", 10);
+const DATA_DIR = process.env.PI_ENGINEERING_TEAM_DATA_DIR ?? join(homedir(), ".pi", "engineering-team");
+const DB_PATH = join(DATA_DIR, "server", "engineering-team.sqlite");
 const RUNS_DIR = join(DATA_DIR, "runs");
 
 // better-sqlite3 uses the `bindings` package to locate its native addon, but
@@ -23,7 +23,7 @@ const NATIVE_BINDING = NATIVE_BINDING_CANDIDATES.find(existsSync);
 async function main() {
   const app = buildServer({ dbPath: DB_PATH, runsDir: RUNS_DIR, port: PORT, nativeBinding: NATIVE_BINDING });
   await app.listen({ port: PORT, host: "127.0.0.1" });
-  console.log(`[pi-engteam-server] Listening on http://127.0.0.1:${PORT}`);
+  console.log(`[pi-engineering-server] Listening on http://127.0.0.1:${PORT}`);
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

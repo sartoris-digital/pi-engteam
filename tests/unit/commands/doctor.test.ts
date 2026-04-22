@@ -40,12 +40,12 @@ describe("registerDoctorCommand", () => {
     vi.resetAllMocks();
   });
 
-  it("registers a command named 'engteam-doctor'", async () => {
+  it("registers a command named 'engineering-doctor'", async () => {
     const registerDoctorCommand = await loadDoctor();
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
     expect(mock.registerCommand).toHaveBeenCalledOnce();
-    expect(mock.registerCommand.mock.calls[0][0]).toBe("engteam-doctor");
+    expect(mock.registerCommand.mock.calls[0][0]).toBe("engineering-doctor");
   });
 
   it("reports all checks passed when all files exist and safety.json is valid JSON", async () => {

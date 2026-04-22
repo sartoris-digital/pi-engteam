@@ -26,8 +26,8 @@ export function createVerdictEmitTool(onVerdict: (v: VerdictPayload) => void) {
       })),
     }),
     execute: async (_id, params) => {
-      // Write verdict to file for subprocess mode (PI_ENGTEAM_VERDICT_FILE)
-      const verdictFile = process.env["PI_ENGTEAM_VERDICT_FILE"];
+      // Write verdict to file for subprocess mode (PI_ENGINEERING_VERDICT_FILE)
+      const verdictFile = process.env["PI_ENGINEERING_VERDICT_FILE"];
       if (verdictFile) {
         const { writeFileSync } = await import("fs");
         writeFileSync(verdictFile, JSON.stringify(params));

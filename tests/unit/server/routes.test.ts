@@ -72,7 +72,7 @@ describe("routes", () => {
     const res = await app.inject({ method: "GET", url: "/" });
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/html/);
-    expect(res.body).toContain("pi-engteam observer");
+    expect(res.body).toContain("pi-engineering observer");
   });
 
   it("GET /stats -> 200 with counts", async () => {

@@ -46,8 +46,8 @@ export class ADWEngine {
   }
 
   private clearUiStatus(): void {
-    this.uiCallbacks?.setStatus("engteam", undefined);
-    this.uiCallbacks?.setStatus("engteam_out", undefined);
+    this.uiCallbacks?.setStatus("engineering", undefined);
+    this.uiCallbacks?.setStatus("engineering_out", undefined);
     this.config.team.setAgentLineCallback?.(undefined);
   }
 
@@ -146,9 +146,9 @@ export class ADWEngine {
       const stepIndex = workflow.steps.findIndex(s => s.name === currentStep);
       const totalSteps = workflow.steps.length;
       this.uiCallbacks?.notify(`▶ Step ${stepIndex + 1}/${totalSteps} — ${currentStep}`, "info");
-      this.uiCallbacks?.setStatus("engteam", `▶ ${currentStep} (${stepIndex + 1}/${totalSteps})`);
+      this.uiCallbacks?.setStatus("engineering", `▶ ${currentStep} (${stepIndex + 1}/${totalSteps})`);
       this.config.team.setAgentLineCallback?.((agent, line) => {
-        this.uiCallbacks?.setStatus("engteam_out", `${agent}: ${line.slice(0, 120)}`);
+        this.uiCallbacks?.setStatus("engineering_out", `${agent}: ${line.slice(0, 120)}`);
       });
 
       // Apply step-level planMode override before the step runs
@@ -214,8 +214,8 @@ export class ADWEngine {
 
       // Update step status in Pi TUI
       const tick = result.verdict === "PASS" ? "✓" : "✗";
-      this.uiCallbacks?.setStatus("engteam", `${tick} ${state.currentStep} · ${result.verdict}`);
-      this.uiCallbacks?.setStatus("engteam_out", undefined);
+      this.uiCallbacks?.setStatus("engineering", `${tick} ${state.currentStep} · ${result.verdict}`);
+      this.uiCallbacks?.setStatus("engineering_out", undefined);
       this.config.team.setAgentLineCallback?.(undefined);
       if (result.verdict !== "PASS") {
         const detail = result.issues?.slice(0, 2).join("; ") ?? result.error ?? "";
@@ -267,7 +267,7 @@ export class ADWEngine {
               'Type "approve" when you are ready to continue.',
             ].join("\n");
         this.uiCallbacks?.notify(pauseMessage, "info");
-        this.uiCallbacks?.setStatus("engteam", `⏸ waiting for user (${stepDef.pauseAfter})`);
+        this.uiCallbacks?.setStatus("engineering", `⏸ waiting for user (${stepDef.pauseAfter})`);
         break;
       }
     }

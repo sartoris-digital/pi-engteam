@@ -12,7 +12,7 @@ const DEFAULT_SAFETY: SafetyConfig = {
     destructiveOverride: [],
   },
   approvalAuthority: "judge",
-  exemptPaths: ["./tmp/**", "./.pi/engteam/runs/**"],
+  exemptPaths: ["./tmp/**", "./.pi/engineering-team/runs/**"],
   tokenTtlSeconds: 300,
   allowRunLifetimeScope: true,
 };
@@ -39,12 +39,12 @@ async function loadJson<T>(path: string, defaults: T): Promise<T> {
   }
 }
 
-const engteamDir = () => join(homedir(), ".pi", "engteam");
+const engineeringTeamDir = () => join(homedir(), ".pi", "engineering-team");
 
 export async function loadSafetyConfig(): Promise<SafetyConfig> {
-  return loadJson(join(engteamDir(), "safety.json"), DEFAULT_SAFETY);
+  return loadJson(join(engineeringTeamDir(), "safety.json"), DEFAULT_SAFETY);
 }
 
 export async function loadModelRouting(): Promise<ModelRouting> {
-  return loadJson(join(engteamDir(), "model-routing.json"), DEFAULT_MODEL_ROUTING);
+  return loadJson(join(engineeringTeamDir(), "model-routing.json"), DEFAULT_MODEL_ROUTING);
 }

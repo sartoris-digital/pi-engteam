@@ -15,21 +15,21 @@ async function checkExists(path: string, label: string): Promise<CheckResult> {
 }
 
 export function registerDoctorCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("engteam-doctor", {
-    description: "Check pi-engteam installation health",
+  pi.registerCommand("engineering-doctor", {
+    description: "Check pi-engineering installation health",
     handler: async (_args: string, ctx) => {
       const home = homedir();
       const checks: CheckResult[] = [];
 
       checks.push(
         await checkExists(
-          join(home, ".pi", "agent", "extensions", "pi-engteam.js"),
+          join(home, ".pi", "agent", "extensions", "pi-engineering.js"),
           "Extension file",
         ),
       );
       checks.push(
         await checkExists(
-          join(home, ".pi", "engteam", "runs"),
+          join(home, ".pi", "engineering-team", "runs"),
           "Runs directory",
         ),
       );
@@ -54,13 +54,13 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
       for (const name of agentNames) {
         checks.push(
           await checkExists(
-            join(home, ".pi", "agent", "agents", `engteam-${name}.md`),
+            join(home, ".pi", "agent", "agents", `engineering-${name}.md`),
             `Agent: ${name}`,
           ),
         );
       }
 
-      const safetyPath = join(home, ".pi", "engteam", "safety.json");
+      const safetyPath = join(home, ".pi", "engineering-team", "safety.json");
       try {
         const raw = await readFile(safetyPath, "utf8");
         JSON.parse(raw);
@@ -77,7 +77,7 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
       const failed = checks.filter(c => !c.ok).length;
 
       const output = [
-        `pi-engteam doctor — ${passed} passed, ${failed} issues`,
+        `pi-engineering doctor — ${passed} passed, ${failed} issues`,
         "",
         ...checks.map(c => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.message}`),
         "",

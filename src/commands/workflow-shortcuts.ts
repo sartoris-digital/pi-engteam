@@ -82,7 +82,7 @@ const SHORTCUTS: ShortcutDef[] = [
 
 function formatWorkflowHelp(): string {
   return [
-    "pi-engteam workflows — run any with /<command> <goal in plain English>",
+    "pi-engineering workflows — run any with /<command> <goal in plain English>",
     "",
     ...SHORTCUTS.map(
       (s) =>
@@ -94,7 +94,7 @@ function formatWorkflowHelp(): string {
     "  • /run-status <runId>  — check progress on a running workflow",
     "  • /run-abort  <runId>  — stop a running workflow",
     "  • /observe             — open the observability dashboard",
-    "  • /engteam-doctor      — check installation health",
+    "  • /engineering-doctor  — check installation health",
   ].join("\n");
 }
 
@@ -130,7 +130,7 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine): 
             `Watch progress:`,
             `  /run-status ${run.runId}`,
             `  /observe  (dashboard at http://127.0.0.1:4747)`,
-            `  tail -f ~/.pi/engteam/runs/${run.runId}/events.jsonl`,
+            `  tail -f ~/.pi/engineering-team/runs/${run.runId}/events.jsonl`,
           ].join("\n"),
           "info",
         );
@@ -140,7 +140,7 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine): 
 
   // /workflows — list all available workflows with examples
   pi.registerCommand("workflows", {
-    description: "List all available pi-engteam workflows with example usage",
+    description: "List all available pi-engineering workflows with example usage",
     handler: async (_args, ctx) => {
       ctx.ui.notify(formatWorkflowHelp(), "info");
     },

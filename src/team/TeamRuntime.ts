@@ -99,11 +99,11 @@ export class TeamRuntime {
           cwd: this.config.cwd,
           env: {
             ...process.env,
-            PI_ENGTEAM_AGENT_MODE: "1",
-            PI_ENGTEAM_AGENT_NAME: to,   // H3: agent name so subprocess can gate GrantApproval
-            PI_ENGTEAM_VERDICT_FILE: verdictFile,
-            PI_ENGTEAM_RUN_ID: this.currentRunId ?? id,
-            PI_ENGTEAM_RUNS_DIR: this.config.runsDir,
+            PI_ENGINEERING_AGENT_MODE: "1",
+            PI_ENGINEERING_AGENT_NAME: to,   // H3: agent name so subprocess can gate GrantApproval
+            PI_ENGINEERING_VERDICT_FILE: verdictFile,
+            PI_ENGINEERING_RUN_ID: this.currentRunId ?? id,
+            PI_ENGINEERING_RUNS_DIR: this.config.runsDir,
           },
           stdio: ["inherit", "pipe", "inherit"],
         });

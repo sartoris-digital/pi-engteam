@@ -1,4 +1,4 @@
-# pi-engteam
+# pi-engineering
 
 A [Pi coding agent](https://pi.dev) extension that wires a multi-agent engineering team into your Pi session. Agents communicate over a message bus, execute structured workflows, and are kept safe by a three-layer safety guard with cryptographic approval tokens.
 
@@ -22,7 +22,7 @@ A [Pi coding agent](https://pi.dev) extension that wires a multi-agent engineeri
 
 ## Overview
 
-pi-engteam gives Pi a persistent team of specialist agents — planner, implementer, reviewer, architect, security auditor, and more — that collaborate on software tasks. You describe a goal; the planner decomposes it; specialists execute steps; a judge gates destructive operations.
+pi-engineering gives Pi a persistent team of specialist agents — planner, implementer, reviewer, architect, security auditor, and more — that collaborate on software tasks. You describe a goal; the planner decomposes it; specialists execute steps; a judge gates destructive operations.
 
 **Key capabilities:**
 
@@ -33,7 +33,7 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 - SQLite-backed observability server with a web dashboard
 - Memory Core: automatic session summarisation into daily logs with wisdom capture, and optional Obsidian vault sync
 - Live step-progress labels in Pi's TUI: every agent session shows `agentName [✓ step1 · ● step2 · ○ step3]` while a workflow runs
-- Loads directly from TypeScript source via Pi's built-in transpiler (`pi install`) or as a pre-built ESM bundle (`pnpm engteam:install`)
+- Loads directly from TypeScript source via Pi's built-in transpiler (`pi install`) or as a pre-built ESM bundle (`pnpm engineering:install`)
 
 ---
 
@@ -41,7 +41,7 @@ pi-engteam gives Pi a persistent team of specialist agents — planner, implemen
 
 ```
 Pi coding agent
-└── pi-engteam extension (src/index.ts via jiti on pi install; dist/index.js on build install)
+└── pi-engineering extension (src/index.ts via jiti on pi install; dist/index.js on build install)
     ├── ADWEngine          workflow orchestration / run state machine
     ├── TeamRuntime        agent session lifecycle + tool injection + step-progress labels
     ├── MessageBus         typed pub/sub (agent → agent or broadcast)
@@ -53,7 +53,7 @@ Pi coding agent
 Observability server (dist/server.cjs — CJS, spawned as child process)
     ├── Fastify HTTP API   /health, /runs, /runs/:id/events, /stats
     ├── EventWatcher       tails runs/<runId>/events.jsonl → SQLite
-    └── SQLite DB          ~/.pi/engteam/server/engteam.sqlite
+    └── SQLite DB          ~/.pi/engineering-team/server/engineering-team.sqlite
 ```
 
 ### Directory layout at runtime
@@ -62,14 +62,14 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
 ~/.pi/
 ├── agent/
 │   ├── extensions/
-│   │   └── pi-engteam.js        ← ESM bundle (build workflow only; pi install uses source directly)
+│   │   └── pi-engineering.js        ← ESM bundle (build workflow only; pi install uses source directly)
 │   └── agents/
-│       └── engteam-*.md         ← agent definition files
-└── engteam/
+│       └── engineering-*.md         ← agent definition files
+└── engineering-team/
     ├── server.cjs               ← CJS observability server
     ├── better_sqlite3.node      ← native SQLite addon
     ├── server/
-    │   └── engteam.sqlite       ← observability DB
+    │   └── engineering-team.sqlite       ← observability DB
     ├── safety.json              ← safety config (auto-created)
     ├── model-routing.json       ← model overrides (optional)
     ├── runs/
@@ -93,7 +93,7 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
 
 <project-cwd>/
 └── .pi/
-    └── engteam/
+    └── engineering-team/
         └── active-run.json  ← per-project pause state for /spec (runId, phase, stepName)
 ```
 
@@ -109,7 +109,7 @@ Observability server (dist/server.cjs — CJS, spawned as child process)
 ### Install via Pi (recommended)
 
 ```bash
-pi install https://github.com/sartoris-digital/pi-engteam
+pi install https://github.com/sartoris-digital/pi-engineering
 ```
 
 Pi clones the repo, runs `npm install`, and automatically executes `scripts/postinstall.mjs` which:
@@ -117,24 +117,24 @@ Pi clones the repo, runs `npm install`, and automatically executes `scripts/post
 | Action | Details |
 |--------|---------|
 | Builds the server bundle | `tsup server/index.ts → dist/server.cjs` |
-| Installs server | `dist/server.cjs` → `~/.pi/engteam/server.cjs` |
-| Installs native addon | `better_sqlite3.node` → `~/.pi/engteam/better_sqlite3.node` |
-| Installs agents | `agents/*.md` → `~/.pi/agent/agents/engteam-*.md` |
+| Installs server | `dist/server.cjs` → `~/.pi/engineering-team/server.cjs` |
+| Installs native addon | `better_sqlite3.node` → `~/.pi/engineering-team/better_sqlite3.node` |
+| Installs agents | `agents/*.md` → `~/.pi/agent/agents/engineering-*.md` |
 
 Pi loads the extension directly from `src/index.ts` via its built-in TypeScript transpiler — no separate build step required. Restart Pi, then run `/team-start` to boot the team.
 
 ### Install from source (pnpm)
 
 ```bash
-git clone https://github.com/sartoris-digital/pi-engteam
-cd pi-engteam
+git clone https://github.com/sartoris-digital/pi-engineering
+cd pi-engineering
 pnpm install   # also runs postinstall automatically
 ```
 
 Or to use the pre-built extension bundle instead of jiti/source loading:
 
 ```bash
-pnpm engteam:install   # pnpm build && bash scripts/install.sh
+pnpm engineering:install   # pnpm build && bash scripts/install.sh
 ```
 
 ### Uninstall
@@ -212,7 +212,7 @@ Goal: Add email/password login with JWT tokens
 Watch progress:
   /run-status a1b2c3d4-...
   /observe  (dashboard at http://127.0.0.1:4747)
-  tail -f ~/.pi/engteam/runs/<runId>/events.jsonl
+  tail -f ~/.pi/engineering-team/runs/<runId>/events.jsonl
 ```
 
 ### Utilities
@@ -221,7 +221,7 @@ Watch progress:
 |---------|-------------|
 | `/observe` | Start the observability server on port 4747. |
 | `/observe stop` | Stop the observability server. |
-| `/engteam-doctor` | Check installation health: extension, runs dir, agent files, safety config. |
+| `/engineering-doctor` | Check installation health: extension, runs dir, agent files, safety config. |
 
 ---
 
@@ -275,7 +275,7 @@ Workflows are state machines where each step dispatches a goal to an agent, wait
 
 **Approval gate:** After `design` and `plan` complete, the run pauses with `status: waiting_user`. Typing `approve`, `approved`, or `looks good` in the Pi prompt resumes execution. Any other input echoes a reminder.
 
-**State:** The active run is tracked in `<project-cwd>/.pi/engteam/active-run.json`. This is per-project so simultaneous `/spec` runs in different directories never collide.
+**State:** The active run is tracked in `<project-cwd>/.pi/engineering-team/active-run.json`. This is per-project so simultaneous `/spec` runs in different directories never collide.
 
 ### `/issue` — ticket analysis shortcut
 
@@ -291,7 +291,7 @@ Workflows are state machines where each step dispatches a goal to an agent, wait
 The tracker is resolved in order:
 1. URL scheme (github.com → `github`, dev.azure.com → `ado`, *.atlassian.net → `jira`)
 2. ID format (`AB#` prefix → `ado`, `[A-Z]+-\d+` → `jira`, bare number → `github`)
-3. Project files: `AGENTS.md`, `CLAUDE.md`, `~/.pi/engteam/issue-tracker.json`, `git remote -v`
+3. Project files: `AGENTS.md`, `CLAUDE.md`, `~/.pi/engineering-team/issue-tracker.json`, `git remote -v`
 
 On `PASS` the run directory contains `issue-brief.md` with:
 - Ticket metadata (tracker, ID, URL, type, priority, status)
@@ -332,7 +332,7 @@ The engine checks budget at the start of each iteration. Exhaustion halts the ru
 
 ## Agent Roster
 
-The team is defined in `agents/*.md`. Each file becomes an agent definition installed to `~/.pi/agent/agents/engteam-*.md`.
+The team is defined in `agents/*.md`. Each file becomes an agent definition installed to `~/.pi/agent/agents/engineering-*.md`.
 
 ### Core team — spawned at `/team-start`
 
@@ -481,7 +481,7 @@ Implementer                    Judge
 
 ## Observability Server
 
-Start with `/observe`. The server runs on port 4747 (configurable via `PI_ENGTEAM_SERVER_PORT`).
+Start with `/observe`. The server runs on port 4747 (configurable via `PI_ENGINEERING_SERVER_PORT`).
 
 ### Endpoints
 
@@ -509,7 +509,7 @@ Start with `/observe`. The server runs on port 4747 (configurable via `PI_ENGTEA
 | `approval` | RequestApproval and GrantApproval events |
 | `error` | Agent errors and step failures |
 
-Events are written to `~/.pi/engteam/runs/<runId>/events.jsonl` in real time. The server's `EventWatcher` tails these files and ingests them into SQLite so they can be queried across runs.
+Events are written to `~/.pi/engineering-team/runs/<runId>/events.jsonl` in real time. The server's `EventWatcher` tails these files and ingests them into SQLite so they can be queried across runs.
 
 ---
 
@@ -522,7 +522,7 @@ Memory Core automatically summarises each Pi session into a daily markdown log s
 At the end of every session (and before each compaction), Memory Core fires a two-stage flush:
 
 1. **Narrative generation** — `MemoryCore.doFlush()` runs inside the Pi process and calls `completeSimple` from `@mariozechner/pi-ai` using credentials resolved via `pi.modelRegistry` (the Pi Agent SDK's live model registry). This means the summary uses **whatever provider and model the user has configured in Pi** — Anthropic, GitHub Copilot, OpenAI, or any other — with no separate API key required.
-2. **Snapshot + flush script** — The pre-generated narrative is written into a JSON snapshot. `flush.mjs` is spawned detached (fire-and-forget) as a pure I/O script: it writes the narrative to today's daily log (`~/.pi/engteam/second-brain/logs/YYYY-MM-DD.md`) and optionally creates an Obsidian symlink. No LLM call is made inside `flush.mjs`.
+2. **Snapshot + flush script** — The pre-generated narrative is written into a JSON snapshot. `flush.mjs` is spawned detached (fire-and-forget) as a pure I/O script: it writes the narrative to today's daily log (`~/.pi/engineering-team/second-brain/logs/YYYY-MM-DD.md`) and optionally creates an Obsidian symlink. No LLM call is made inside `flush.mjs`.
 
 Separating the LLM call (in-process) from the file I/O (detached) means the summary always uses Pi's configured credentials, and the flush script remains a simple dependency-free Node.js script.
 
@@ -572,7 +572,7 @@ If the session already has an entry (e.g. after a mid-session compaction), it is
 
 Set `obsidianVaultPath` in the memory config to sync daily logs into an Obsidian vault. After each flush the script resolves symlinks on both sides before comparing paths, so macOS `/tmp` → `/private/tmp` aliasing is handled correctly.
 
-### Memory config — `~/.pi/engteam/memory.json`
+### Memory config — `~/.pi/engineering-team/memory.json`
 
 Created automatically the first time the extension loads. Override any field:
 
@@ -596,7 +596,7 @@ Created automatically the first time the extension loads. Override any field:
 
 ## Configuration
 
-### Safety config — `~/.pi/engteam/safety.json`
+### Safety config — `~/.pi/engineering-team/safety.json`
 
 Created automatically on first run. Override any field:
 
@@ -621,7 +621,7 @@ Created automatically on first run. Override any field:
 | `tokenTtl` | `300` | Approval token lifetime in seconds |
 | `allowRunLifetimeScope` | `false` | Allow run-lifetime scope tokens |
 
-### Model routing — `~/.pi/engteam/model-routing.json`
+### Model routing — `~/.pi/engineering-team/model-routing.json`
 
 Override the model for any agent or set budget downshift rules:
 
@@ -641,9 +641,9 @@ Override the model for any agent or set budget downshift rules:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PI_ENGTEAM_SERVER_PORT` | `4747` | Observability server port |
-| `PI_ENGTEAM_DATA_DIR` | `~/.pi/engteam` | Root data directory |
-| `PI_ENGTEAM_EVENT_URL` | — | Remote HTTP sink for events (optional) |
+| `PI_ENGINEERING_SERVER_PORT` | `4747` | Observability server port |
+| `PI_ENGINEERING_TEAM_DATA_DIR` | `~/.pi/engineering-team` | Root data directory |
+| `PI_ENGINEERING_EVENT_URL` | — | Remote HTTP sink for events (optional) |
 
 ---
 
@@ -747,7 +747,7 @@ pnpm build                  # tsup: ESM extension + CJS server
 pnpm typecheck              # tsc --noEmit
 pnpm test                   # vitest run
 pnpm test:watch             # vitest --watch
-pnpm engteam:install        # pnpm build && bash scripts/install.sh
+pnpm engineering:install        # pnpm build && bash scripts/install.sh
 node scripts/postinstall.mjs  # build server + copy artifacts (runs automatically on install)
 ```
 
@@ -773,7 +773,7 @@ The extension and server are built as two separate tsup targets:
 
 Pi loads the extension in an isolated context without access to `node_modules`, so every dependency used by the extension must be either bundled (via `noExternal`) or provided by Pi itself (via `external`). `@mariozechner/pi-tui` is injected by Pi's extension loader as a virtual module and must not be bundled.
 
-`better-sqlite3` ships a native `.node` binary that cannot be bundled. `install.sh` copies it to `~/.pi/engteam/better_sqlite3.node` and the server resolves it via the `nativeBinding` constructor option, bypassing the `bindings` package entirely.
+`better-sqlite3` ships a native `.node` binary that cannot be bundled. `install.sh` copies it to `~/.pi/engineering-team/better_sqlite3.node` and the server resolves it via the `nativeBinding` constructor option, bypassing the `bindings` package entirely.
 
 ---
 
@@ -789,7 +789,7 @@ Here is the full flow from `/team-start` to a completed run:
 2. /plan "add rate limiting to the API gateway"
    └── Shortcut command parses goal
    └── ADWEngine.startRun({ workflow: "plan-build-review", goal, budget: {} })
-       └── Creates RunState in ~/.pi/engteam/runs/<runId>/state.json
+       └── Creates RunState in ~/.pi/engineering-team/runs/<runId>/state.json
        └── Emits lifecycle:run_started event
 
 3. ADWEngine.executeRun(runId) — step: "plan"

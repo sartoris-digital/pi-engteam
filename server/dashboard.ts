@@ -4,7 +4,7 @@ export function getDashboardHtml(baseUrl: string): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>pi-engteam observer</title>
+<title>pi-engineering observer</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: #0f0f0f; color: #e0e0e0; padding: 24px; }
@@ -26,7 +26,7 @@ export function getDashboardHtml(baseUrl: string): string {
 </style>
 </head>
 <body>
-<h1>pi-engteam observer</h1>
+<h1>pi-engineering observer</h1>
 <div class="stats" id="stats">Loading...</div>
 <button class="refresh-btn" onclick="load()">Refresh</button>
 <table>

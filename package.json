@@ -1,5 +1,5 @@
 {
-  "name": "@sartoris/pi-engteam",
+  "name": "@sartoris/pi-engineering",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "install:extension": "bash scripts/install.sh",
     "uninstall:extension": "bash scripts/uninstall.sh",
-    "engteam:install": "pnpm build && bash scripts/install.sh"
+    "engineering:install": "pnpm build && bash scripts/install.sh"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0",

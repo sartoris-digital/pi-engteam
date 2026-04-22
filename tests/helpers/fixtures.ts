@@ -4,11 +4,11 @@ import { mkdtempSync } from "fs";
 import { mkdir } from "fs/promises";
 
 export function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "pi-engteam-test-"));
+  return mkdtempSync(join(tmpdir(), "pi-engineering-test-"));
 }
 
 export async function makeTmpDirAsync(): Promise<string> {
-  const dir = join(tmpdir(), `pi-engteam-test-${Date.now()}`);
+  const dir = join(tmpdir(), `pi-engineering-test-${Date.now()}`);
   await mkdir(dir, { recursive: true });
   return dir;
 }

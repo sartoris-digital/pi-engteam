@@ -62,7 +62,7 @@ export function registerIssueCommand(
             "  1. Pass a full ticket URL (github.com, dev.azure.com, atlassian.net)",
             "  2. Use --tracker flag:  /issue <id> --tracker github|ado|jira",
             "  3. Jira IDs are auto-detected (e.g. PROJ-123)",
-            '  4. Create ~/.pi/engteam/issue-tracker.json: { "default": "github" }',
+            '  4. Create ~/.pi/engineering-team/issue-tracker.json: { "default": "github" }',
             "  5. Ensure a git remote pointing to github.com or dev.azure.com",
           ].join("\n"),
           "error",
@@ -140,7 +140,7 @@ export function registerIssueCommand(
             `Watch progress:`,
             `  /run-status ${downstream.runId}`,
             `  /observe  (dashboard at http://127.0.0.1:4747)`,
-            `  tail -f ~/.pi/engteam/runs/${downstream.runId}/events.jsonl`,
+            `  tail -f ~/.pi/engineering-team/runs/${downstream.runId}/events.jsonl`,
           ].join("\n"),
           "info",
         );

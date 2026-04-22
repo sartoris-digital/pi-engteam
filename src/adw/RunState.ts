@@ -57,7 +57,7 @@ export async function loadRunState(runsDir: string, runId: string): Promise<RunS
     // M2: distinguish a missing run (ENOENT) from a corrupt/unreadable state file
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       console.error(
-        `[pi-engteam] Failed to load run state for ${runId}:`,
+        `[pi-engineering] Failed to load run state for ${runId}:`,
         err instanceof Error ? err.message : String(err),
       );
     }

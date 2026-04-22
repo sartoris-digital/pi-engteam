@@ -6,7 +6,7 @@ import type { MemoryConfig } from "../types.js";
 export const DEFAULT_MEMORY_CONFIG_PATH = join(
   homedir(),
   ".pi",
-  "engteam",
+  "engineering-team",
   "second-brain",
   "config.json",
 );

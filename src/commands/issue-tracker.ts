@@ -35,7 +35,7 @@ function extractBareId(input: string, tracker: TrackerType): string {
 
 export async function readTrackerConfig(): Promise<TrackerType | null> {
   try {
-    const configPath = join(homedir(), ".pi", "engteam", "issue-tracker.json");
+    const configPath = join(homedir(), ".pi", "engineering-team", "issue-tracker.json");
     const raw = await readFile(configPath, "utf8");
     const parsed = JSON.parse(raw) as { default?: string };
     const t = parsed.default;

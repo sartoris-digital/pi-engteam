@@ -34317,7 +34317,7 @@ function getDashboardHtml(baseUrl) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>pi-engteam observer</title>
+<title>pi-engineering observer</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: #0f0f0f; color: #e0e0e0; padding: 24px; }
@@ -34339,7 +34339,7 @@ function getDashboardHtml(baseUrl) {
 </style>
 </head>
 <body>
-<h1>pi-engteam observer</h1>
+<h1>pi-engineering observer</h1>
 <div class="stats" id="stats">Loading...</div>
 <button class="refresh-btn" onclick="load()">Refresh</button>
 <table>
@@ -34572,9 +34572,9 @@ function buildServer(opts) {
 var import_path3 = require("path");
 var import_os = require("os");
 var import_fs3 = require("fs");
-var PORT = parseInt(process.env.PI_ENGTEAM_SERVER_PORT ?? "4747", 10);
-var DATA_DIR = process.env.PI_ENGTEAM_DATA_DIR ?? (0, import_path3.join)((0, import_os.homedir)(), ".pi", "engteam");
-var DB_PATH = (0, import_path3.join)(DATA_DIR, "server", "engteam.sqlite");
+var PORT = parseInt(process.env.PI_ENGINEERING_SERVER_PORT ?? "4747", 10);
+var DATA_DIR = process.env.PI_ENGINEERING_TEAM_DATA_DIR ?? (0, import_path3.join)((0, import_os.homedir)(), ".pi", "engineering-team");
+var DB_PATH = (0, import_path3.join)(DATA_DIR, "server", "engineering-team.sqlite");
 var RUNS_DIR = (0, import_path3.join)(DATA_DIR, "runs");
 var NATIVE_BINDING_CANDIDATES = [
   // Placed next to server.cjs by install.sh
@@ -34586,7 +34586,7 @@ var NATIVE_BINDING = NATIVE_BINDING_CANDIDATES.find(import_fs3.existsSync);
 async function main() {
   const app = buildServer({ dbPath: DB_PATH, runsDir: RUNS_DIR, port: PORT, nativeBinding: NATIVE_BINDING });
   await app.listen({ port: PORT, host: "127.0.0.1" });
-  console.log(`[pi-engteam-server] Listening on http://127.0.0.1:${PORT}`);
+  console.log(`[pi-engineering-server] Listening on http://127.0.0.1:${PORT}`);
 }
 main().catch((err) => {
   console.error(err);

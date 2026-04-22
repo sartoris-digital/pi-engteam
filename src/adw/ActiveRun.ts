@@ -9,11 +9,11 @@ export type ActiveRunState = {
 };
 
 function activeRunPath(): string {
-  return join(process.cwd(), ".pi", "engteam", "active-run.json");
+  return join(process.cwd(), ".pi", "engineering-team", "active-run.json");
 }
 
 export async function writeActiveRun(state: ActiveRunState): Promise<void> {
-  const dir = join(process.cwd(), ".pi", "engteam");
+  const dir = join(process.cwd(), ".pi", "engineering-team");
   await mkdir(dir, { recursive: true });
   await writeFile(activeRunPath(), JSON.stringify(state, null, 2));
 }

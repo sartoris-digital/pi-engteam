@@ -42,7 +42,7 @@ export function registerRunStartCommand(pi: ExtensionAPI, engine: ADWEngine): vo
           `Run ${run.runId} started.`,
           `Workflow: ${workflow}`,
           `Goal: ${goal}`,
-          `Monitor: ~/.pi/engteam/runs/${run.runId}/events.jsonl`,
+          `Monitor: ~/.pi/engineering-team/runs/${run.runId}/events.jsonl`,
         ].join("\n"),
         "info",
       );

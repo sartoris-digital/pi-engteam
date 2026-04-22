@@ -8,7 +8,7 @@ import type { CompletedRun, MemoryConfig, VerdictPayload } from "../types.js";
 import { writeSnapshot } from "./snapshot.js";
 import { ensureScriptsInstalled, spawnFlush } from "./spawnFlush.js";
 
-const SECOND_BRAIN_DIR = join(homedir(), ".pi", "engteam", "second-brain");
+const SECOND_BRAIN_DIR = join(homedir(), ".pi", "engineering-team", "second-brain");
 const LOGS_DIR = join(SECOND_BRAIN_DIR, "logs");
 const LAST_FLUSH_PATH = join(SECOND_BRAIN_DIR, ".last-flush");
 

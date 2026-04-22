@@ -4,7 +4,7 @@ import { homedir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-const SCRIPTS_DEST = join(homedir(), ".pi", "engteam", "second-brain", "scripts");
+const SCRIPTS_DEST = join(homedir(), ".pi", "engineering-team", "second-brain", "scripts");
 const SCRIPT_FILES = [
   "flush.mjs",
   "lib/config.mjs",
