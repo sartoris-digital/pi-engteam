@@ -98,6 +98,25 @@ export class Vault {
     return result.changes > 0;
   }
 
+  // Side-effect-free check that the master key can decrypt at least one row.
+  // Used by passphrase recovery — does NOT touch use_count or last_used_at.
+  // Empty vault returns true (no validation possible). All-rows-fail returns false.
+  verifyDecryptable(): boolean {
+    const rows = this.db
+      .prepare("SELECT value_enc, iv, tag FROM secrets")
+      .all() as Array<{ value_enc: Buffer; iv: Buffer; tag: Buffer }>;
+    if (rows.length === 0) return true;
+    for (const row of rows) {
+      try {
+        decrypt(row.value_enc, this.masterKey, row.iv, row.tag);
+        return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
+  }
+
   close(): void {
     this.db.close();
   }

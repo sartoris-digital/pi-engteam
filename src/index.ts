@@ -280,8 +280,20 @@ export default async function (pi: ExtensionAPI) {
       });
       pi.registerTool(createUseSecretTool({ resolver: subResolver, spawnSubprocess: defaultSpawn }));
     } catch (err) {
-      // Vault unavailable in subprocess — UseSecret simply isn't registered. Agent will get a tool-not-found error if it tries to call it.
-      console.warn("[pi-engineering] UseSecret unavailable in subprocess:", err instanceof Error ? err.message : String(err));
+      // Vault unavailable: register a stub tool so the agent gets an actionable
+      // diagnostic instead of a generic "Tool UseSecret not found".
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn("[pi-engineering] UseSecret unavailable in subprocess:", reason);
+      const stubResolver = {
+        resolve: () => {
+          throw new Error(
+            `UseSecret unavailable: secrets vault could not be unlocked in this subprocess (${reason}). ` +
+            `Run /secret-list or /secret-set in a Pi controller session to initialize the vault, then retry.`,
+          );
+        },
+        listNames: () => [],
+      };
+      pi.registerTool(createUseSecretTool({ resolver: stubResolver, spawnSubprocess: defaultSpawn }));
     }
 
     return;

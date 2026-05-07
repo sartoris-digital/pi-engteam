@@ -222,6 +222,57 @@ describe("UseSecret execution", () => {
   });
 });
 
+describe("SecretResolver name validation (round-3 MEDIUM #1 regression)", () => {
+  let vault: Vault;
+  let dir: string;
+
+  afterEach(() => {
+    try { vault.close(); } catch { /* ignore */ }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  function makeResolver() {
+    ({ vault, dir } = freshVault());
+    const emitEvent = vi.fn();
+    return { resolver: createSecretResolver({ vault, emitEvent }), emitEvent };
+  }
+
+  it("rejects lowercase names without echoing the bad value back to the agent", () => {
+    const { resolver, emitEvent } = makeResolver();
+    let caught: unknown;
+    try { resolver.resolve("api_key" as unknown as string, { agent: "x", target: "bash" }); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(Error);
+    const msg = (caught as Error).message;
+    expect(msg).not.toContain("api_key");
+    expect(msg).toContain("[A-Z][A-Z0-9_]");
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects names containing shell metacharacters or whitespace", () => {
+    const { resolver } = makeResolver();
+    const evil = "FOO; rm -rf /";
+    expect(() => resolver.resolve(evil, { agent: "x", target: "bash" })).toThrow(/[A-Z][A-Z0-9_]/);
+  });
+
+  it("rejects names that start with a digit", () => {
+    const { resolver } = makeResolver();
+    expect(() => resolver.resolve("9KEY", { agent: "x", target: "bash" })).toThrow(/[A-Z][A-Z0-9_]/);
+  });
+
+  it("accepts conventional uppercase env-var-style names", () => {
+    const { resolver, emitEvent } = makeResolver();
+    vault.set("OPENAI_API_KEY", "v");
+    expect(resolver.resolve("OPENAI_API_KEY", { agent: "x", target: "bash" })).toBe("v");
+    expect(emitEvent).toHaveBeenCalledOnce();
+  });
+
+  it("rejects names longer than 128 characters", () => {
+    const { resolver } = makeResolver();
+    const tooLong = "A" + "B".repeat(128);
+    expect(() => resolver.resolve(tooLong, { agent: "x", target: "bash" })).toThrow(/[A-Z][A-Z0-9_]/);
+  });
+});
+
 describe("UseSecret stdout/stderr scrubbing (CRITICAL #2 regression)", () => {
   let vault: Vault;
   let dir: string;

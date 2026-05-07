@@ -152,3 +152,51 @@ describe("Vault — list", () => {
     expect(row.use_count).toBe(0);
   });
 });
+
+describe("Vault — verifyDecryptable (round-3 MEDIUM #2 regression)", () => {
+  it("returns true for an empty vault (no rows to validate against)", () => {
+    vault = freshVault();
+    expect(vault.verifyDecryptable()).toBe(true);
+  });
+
+  it("returns true when at least one row decrypts with the master key", () => {
+    vault = freshVault();
+    vault.set("K", "v");
+    expect(vault.verifyDecryptable()).toBe(true);
+  });
+
+  it("returns false when the master key is wrong (no row decrypts)", () => {
+    const dir = join(tmpdir(), `vault-verify-${randomBytes(6).toString("hex")}`);
+    mkdirSync(dir, { recursive: true });
+    const dbPath = join(dir, "secrets.db");
+    const goodKey = generateMasterKey();
+    const seed = new Vault({ dbPath, masterKey: goodKey });
+    seed.init();
+    seed.set("K", "v");
+    seed.close();
+
+    const wrong = new Vault({ dbPath, masterKey: generateMasterKey() });
+    wrong.init();
+    expect(wrong.verifyDecryptable()).toBe(false);
+    wrong.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("does NOT mutate use_count or last_used_at — passphrase probes must be invisible to audit data", () => {
+    vault = freshVault();
+    vault.set("AUDITED", "v");
+    vault.get("AUDITED"); // use_count = 1, last_used_at = T1
+    const beforeRow = vault.list().find((r) => r.name === "AUDITED");
+    const beforeCount = beforeRow!.use_count;
+    const beforeUsed = beforeRow!.last_used_at;
+
+    // Multiple verifyDecryptable calls — they must NOT touch audit fields.
+    vault.verifyDecryptable();
+    vault.verifyDecryptable();
+    vault.verifyDecryptable();
+
+    const afterRow = vault.list().find((r) => r.name === "AUDITED");
+    expect(afterRow!.use_count).toBe(beforeCount);
+    expect(afterRow!.last_used_at).toBe(beforeUsed);
+  });
+});
