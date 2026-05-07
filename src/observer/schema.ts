@@ -6,8 +6,8 @@ export const EVENT_TYPES = {
   tool_result: ["ok", "error"],
   message: ["sent", "received", "broadcast"],
   verdict: ["emit"],
-  budget: ["tick", "warn_75", "warn_90", "exhausted", "extended"],
-  safety: ["block", "warn", "plan_mode_on", "plan_mode_off"],
+  budget: ["tick", "warn_75", "warn_90", "exhausted", "extended", "rate_warn", "rate_pause"],
+  safety: ["block", "warn", "plan_mode_on", "plan_mode_off", "secret_access", "secret_skip", "secret_scrub", "verifier_script_updated"],
   approval: ["request", "grant", "consume", "revoke", "expired"],
   error: ["uncaught", "agent_crash", "router_drop", "sink_failure"],
 } as const;

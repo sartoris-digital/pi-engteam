@@ -40,6 +40,23 @@ import { registerRunStatusCommand } from "./commands/run-status.js";
 import { loadMemoryConfig } from "./memory/config.js";
 import { MemoryCore } from "./memory/MemoryCore.js";
 import type { AgentDefinition } from "./types.js";
+import { Vault } from "./secrets/Vault.js";
+import { MasterKeyManager } from "./secrets/MasterKey.js";
+import { createKeyringBackend } from "./secrets/Keyring.js";
+import { createSecretResolver } from "./secrets/SecretResolver.js";
+import { createUseSecretTool } from "./secrets/UseSecret.js";
+import { defaultSpawn } from "./secrets/spawn.js";
+import { registerWatcher } from "./secrets/Integration.js";
+import { loadPatterns } from "./secrets/patterns.js";
+import { registerSecretSetCommand } from "./commands/secret-set.js";
+import { registerSecretListCommand } from "./commands/secret-list.js";
+import { registerSecretRmCommand } from "./commands/secret-rm.js";
+import { registerSecretRotateCommand } from "./commands/secret-rotate.js";
+import { registerSecretExportCommand } from "./commands/secret-export.js";
+import { registerSecretImportCommand } from "./commands/secret-import.js";
+import { registerSecretScrubCommand } from "./commands/secret-scrub.js";
+import { RateLimitGuard } from "./rateLimit/RateLimitGuard.js";
+import { loadRateLimitConfig } from "./rateLimit/config.js";
 
 const ENGINEERING_DIR = join(homedir(), ".pi", "engineering-team");
 const RUNS_DIR = join(ENGINEERING_DIR, "runs");
@@ -240,11 +257,55 @@ export default async function (pi: ExtensionAPI) {
       pi.registerTool(createGrantApprovalTool(subRunsDir, subRunId));
     }
 
+    const subVaultDir = join(homedir(), ".pi", "engineering-team");
+    const subVaultPath = join(subVaultDir, "secrets.db");
+    const subSaltPath = join(subVaultDir, "secrets.salt");
+    const subKeyring = createKeyringBackend();
+    const subMasterMgr = new MasterKeyManager({
+      keyringBackend: subKeyring,
+      saltPath: subSaltPath,
+      vaultDbPath: subVaultPath,
+    });
+    try {
+      const subKey = await subMasterMgr.ensureInitialized();
+      const subVault = new Vault({ dbPath: subVaultPath, masterKey: subKey });
+      subVault.init();
+      const subResolver = createSecretResolver({
+        vault: subVault,
+        emitEvent: () => { /* no-op in subprocess; controller-side observer not available */ },
+      });
+      pi.registerTool(createUseSecretTool({ resolver: subResolver, spawnSubprocess: defaultSpawn }) as any);
+    } catch (err) {
+      // Vault unavailable in subprocess — UseSecret simply isn't registered. Agent will get a tool-not-found error if it tries to call it.
+      console.warn("[pi-engineering] UseSecret unavailable in subprocess:", err instanceof Error ? err.message : String(err));
+    }
+
     return;
   }
   // ── Controller mode (normal Pi session) ────────────────────────────────────
 
   await mkdir(RUNS_DIR, { recursive: true });
+
+  const VAULT_DIR = ENGINEERING_DIR;
+  const VAULT_PATH = join(VAULT_DIR, "secrets.db");
+  const VAULT_SALT_PATH = join(VAULT_DIR, "secrets.salt");
+  const keyringBackend = createKeyringBackend();
+  const masterMgr = new MasterKeyManager({
+    keyringBackend,
+    saltPath: VAULT_SALT_PATH,
+    vaultDbPath: VAULT_PATH,
+  });
+
+  // Vault is lazy-initialized on first use — we don't force the user to type a passphrase at extension boot if they're not using secrets yet.
+  let cachedVault: Vault | null = null;
+  async function getVault(): Promise<Vault> {
+    if (cachedVault) return cachedVault;
+    const masterKey = await masterMgr.ensureInitialized();
+    const v = new Vault({ dbPath: VAULT_PATH, masterKey });
+    v.init();
+    cachedVault = v;
+    return v;
+  }
 
   const safetyConfig = await loadSafetyConfig();
   const memoryConfig = await loadMemoryConfig();
@@ -330,6 +391,51 @@ export default async function (pi: ExtensionAPI) {
   registerRunPlanModeCommand(pi, RUNS_DIR);
   registerRunStatusCommand(pi, RUNS_DIR);
   await memoryCore.register(pi);
+
+  const secretEmitEvent = (evt: { category: "safety" | "budget"; type: string; payload: Record<string, unknown> }) => {
+    observer.emit({
+      runId: activeRunId,
+      category: evt.category as any,
+      type: evt.type as any,
+      payload: evt.payload,
+      summary: `${evt.category}:${evt.type}`,
+    });
+  };
+
+  registerSecretSetCommand(pi);
+  registerSecretListCommand(pi);
+  registerSecretRmCommand(pi);
+  registerSecretRotateCommand(pi);
+  registerSecretExportCommand(pi);
+  registerSecretImportCommand(pi);
+  registerSecretScrubCommand(pi);
+
+  try {
+    const watcherVault = await getVault();
+    registerWatcher(pi, {
+      enabled: true,
+      interactivePrompt: true,
+      onSkipBehavior: "warn",
+      entropyEnabled: false,
+      vault: watcherVault,
+      emitEvent: secretEmitEvent,
+      loadPatterns: () => loadPatterns(),
+    });
+  } catch (err) {
+    console.warn("[pi-engineering] Watcher unavailable (vault init failed):", err instanceof Error ? err.message : String(err));
+  }
+
+  const rateLimitConfig = await loadRateLimitConfig();
+  const rateLimitGuard = new RateLimitGuard(rateLimitConfig, (evt) => {
+    observer.emit({
+      runId: activeRunId,
+      category: "budget" as const,
+      type: evt.kind === "warn" ? "rate_warn" as any : "rate_pause" as any,
+      payload: { provider: evt.provider, saturation_pct: evt.saturationPct },
+      summary: `rate ${evt.kind}: ${evt.provider} at ${evt.saturationPct}%`,
+    });
+  });
+  void rateLimitGuard;
 
   pi.on("session_start", async (event: any, _ctx: any) => {
     if (event.reason === "startup") {
