@@ -308,4 +308,44 @@ describe("MasterKeyManager — refuses to overwrite an existing vault", () => {
 
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("accepts a correct passphrase even when the first vault row is corrupt (round-2 MEDIUM #2 regression)", async () => {
+    // If validateKeyAgainstVault only checks rows[0], a corrupt first row would
+    // permanently lock out a correct passphrase. The fix iterates all rows.
+    const Database = (await import("better-sqlite3")).default;
+    const dir = tmpDir();
+    const dbPath = join(dir, "secrets.db");
+    const saltPath = join(dir, "secrets.salt");
+
+    const passphrase = "the-real-passphrase";
+    const salt = generateSalt();
+    const realKey = deriveKeyFromPassphrase(passphrase, salt);
+    writeFileSync(saltPath, salt);
+
+    // Seed two rows, then corrupt the FIRST row (alphabetically: aaa-corrupt < zzz-good).
+    const seed = new Vault({ dbPath, masterKey: realKey });
+    seed.init();
+    seed.set("aaa-corrupt", "value-that-will-be-corrupted");
+    seed.set("zzz-good", "still-decryptable");
+    seed.close();
+
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE secrets SET tag = ? WHERE name = 'aaa-corrupt'").run(Buffer.alloc(16, 0));
+    raw.close();
+
+    const backend = makeMockBackend();
+    const promptFn = vi.fn().mockResolvedValue(passphrase);
+
+    const mgr = new MasterKeyManager({
+      keyringBackend: backend,
+      saltPath,
+      vaultDbPath: dbPath,
+      promptFn,
+    });
+
+    const key = await mgr.ensureInitialized();
+    expect(key.equals(realKey)).toBe(true);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });

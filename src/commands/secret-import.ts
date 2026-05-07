@@ -80,9 +80,19 @@ export function registerSecretImportCommand(pi: ExtensionAPI): void {
         const existing = new Set(vault.list().map((r) => r.name));
 
         // Phase 1: decrypt all entries up front so a partial failure never leaves
-        // the vault in a half-imported state.
+        // the vault in a half-imported state. Also reject duplicate names within
+        // the export blob — INSERT OR REPLACE would silently lose the earlier entry.
         const decrypted: Array<{ name: string; plaintext: string; notes: string | null }> = [];
+        const seenInBlob = new Set<string>();
         for (const entry of blob.entries) {
+          if (seenInBlob.has(entry.name)) {
+            ctx.ui.notify(
+              `Export blob contains duplicate entry "${entry.name}". Aborting — fix the source export and retry.`,
+              "error",
+            );
+            return;
+          }
+          seenInBlob.add(entry.name);
           let plaintext: string;
           try {
             plaintext = decrypt(

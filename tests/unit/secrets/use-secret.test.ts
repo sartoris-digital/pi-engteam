@@ -127,20 +127,25 @@ describe("UseSecret input validation", () => {
     return { tool, spawnSubprocess, emitEvent };
   }
 
-  it("rejects empty name with structured error", async () => {
+  it("throws on empty name (Pi marks failure only when execute throws)", async () => {
     const { tool } = makeTools();
-    const result = await tool.execute("call-1", { name: "", target: "bash", command: "echo $SECRET" } as any, undefined, undefined, NOOP_CTX);
-    const parsed = parseResult(result);
-    expect(parsed.error).toBeTruthy();
-    expect(parsed.hint).toBeTruthy();
+    await expect(
+      tool.execute("call-1", { name: "", target: "bash", command: "echo $SECRET" } as any, undefined, undefined, NOOP_CTX),
+    ).rejects.toThrow(/missing or empty field 'name'/);
   });
 
-  it("rejects empty command with structured error", async () => {
+  it("throws on empty command", async () => {
     const { tool } = makeTools();
-    const result = await tool.execute("call-2", { name: "KEY", target: "bash", command: "" } as any, undefined, undefined, NOOP_CTX);
-    const parsed = parseResult(result);
-    expect(parsed.error).toBeTruthy();
-    expect(parsed.hint).toBeTruthy();
+    await expect(
+      tool.execute("call-2", { name: "KEY", target: "bash", command: "" } as any, undefined, undefined, NOOP_CTX),
+    ).rejects.toThrow(/missing or empty field 'command'/);
+  });
+
+  it("throws when secret is not in the vault, error message names the missing key", async () => {
+    const { tool } = makeTools();
+    await expect(
+      tool.execute("call-3", { name: "NOT_THERE", target: "bash", command: "true" } as any, undefined, undefined, NOOP_CTX),
+    ).rejects.toThrow(/NOT_THERE/);
   });
 });
 

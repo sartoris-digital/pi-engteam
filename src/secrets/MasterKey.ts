@@ -105,20 +105,24 @@ export class MasterKeyManager {
   }
 }
 
-// Returns true if the candidate key successfully decrypts an entry in the vault.
+// Returns true if the candidate key successfully decrypts at least one entry in the vault.
 // An empty vault (no rows yet) returns true — no validation possible, accept the key.
+// Iterates rows so a single corrupt entry does not lock out a correct passphrase.
 function validateKeyAgainstVault(vaultDbPath: string, candidate: Buffer): boolean {
   const vault = new Vault({ dbPath: vaultDbPath, masterKey: candidate });
   try {
     vault.init();
     const rows = vault.list();
     if (rows.length === 0) return true;
-    try {
-      vault.get(rows[0].name);
-      return true;
-    } catch {
-      return false;
+    for (const row of rows) {
+      try {
+        vault.get(row.name);
+        return true;
+      } catch {
+        continue;
+      }
     }
+    return false;
   } catch {
     return false;
   } finally {

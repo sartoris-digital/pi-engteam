@@ -87,18 +87,20 @@ function exportVault(
   return { version: 1, salt: salt.toString("base64"), entries };
 }
 
-// Simulate the import logic (mirrors secret-import.ts handler logic).
+// Simulate the import logic (mirrors secret-import.ts handler logic — three-phase
+// with intra-blob duplicate detection).
 function importBlob(
   vault: Vault,
   blob: ReturnType<typeof exportVault>,
   exportPassphrase: string,
   conflictResolver: (name: string) => "overwrite" | "skip" | "abort",
-): { imported: number; skipped: number; aborted: boolean } {
+): { imported: number; skipped: number; aborted: boolean; duplicateInBlob?: string } {
   const exportKey = deriveKeyFromPassphrase(exportPassphrase, Buffer.from(blob.salt, "base64"));
   const existing = new Set(vault.list().map((r) => r.name));
-  let imported = 0;
-  let skipped = 0;
 
+  // Phase 1: decrypt all + reject intra-blob duplicates.
+  const seenInBlob = new Set<string>();
+  const decrypted: Array<{ name: string; plaintext: string; notes: string | null }> = [];
   for (const entry of blob.entries as Array<{
     name: string;
     iv: string;
@@ -107,23 +109,36 @@ function importBlob(
     notes: string | null;
     created_at: number;
   }>) {
+    if (seenInBlob.has(entry.name)) {
+      return { imported: 0, skipped: 0, aborted: true, duplicateInBlob: entry.name };
+    }
+    seenInBlob.add(entry.name);
     const plaintext = decrypt(
       Buffer.from(entry.ciphertext, "base64"),
       exportKey,
       Buffer.from(entry.iv, "base64"),
       Buffer.from(entry.tag, "base64"),
     );
+    decrypted.push({ name: entry.name, plaintext, notes: entry.notes });
+  }
 
+  // Phase 2: resolve conflicts before any writes.
+  const toApply: typeof decrypted = [];
+  let skipped = 0;
+  for (const entry of decrypted) {
     if (existing.has(entry.name)) {
       const action = conflictResolver(entry.name);
-      if (action === "abort") return { imported, skipped, aborted: true };
+      if (action === "abort") return { imported: 0, skipped, aborted: true };
       if (action === "skip") { skipped++; continue; }
     }
-
-    vault.set(entry.name, plaintext, entry.notes ?? undefined);
-    imported++;
+    toApply.push(entry);
   }
-  return { imported, skipped, aborted: false };
+
+  // Phase 3: apply.
+  for (const entry of toApply) {
+    vault.set(entry.name, entry.plaintext, entry.notes ?? undefined);
+  }
+  return { imported: toApply.length, skipped, aborted: false };
 }
 
 describe("secret-export → secret-import roundtrip", () => {
@@ -183,6 +198,38 @@ describe("secret-import conflict: overwrite", () => {
     expect(result.imported).toBe(1);
     expect(result.skipped).toBe(0);
     expect(dest.get("TOKEN")).toBe("new-value");
+  });
+});
+
+describe("secret-import intra-blob duplicate detection (round-2 MEDIUM #3 regression)", () => {
+  it("aborts before any write when the export blob contains two entries with the same name", () => {
+    // Build a synthetic blob with duplicate names by exporting one entry, then
+    // appending a second entry with the same name encrypted under the same key.
+    const source = makeTempVault();
+    source.set("DUP", "first-value");
+    const blob = exportVault(source, "pass");
+
+    // Encrypt a second value under the same export key, append to entries.
+    const exportKey = deriveKeyFromPassphrase("pass", Buffer.from(blob.salt, "base64"));
+    const second = encrypt("second-value", exportKey);
+    blob.entries.push({
+      name: "DUP",
+      iv: second.iv.toString("base64"),
+      tag: second.tag.toString("base64"),
+      ciphertext: second.ciphertext.toString("base64"),
+      notes: null,
+      created_at: Date.now(),
+    });
+
+    const dest = makeTempVault();
+    const result = importBlob(dest, blob, "pass", () => {
+      throw new Error("conflictResolver must not be called when intra-blob duplicate is detected");
+    });
+    expect(result.aborted).toBe(true);
+    expect(result.duplicateInBlob).toBe("DUP");
+    expect(result.imported).toBe(0);
+    // No writes happened — vault remains empty.
+    expect(dest.list()).toHaveLength(0);
   });
 });
 

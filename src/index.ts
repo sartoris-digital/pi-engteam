@@ -261,15 +261,14 @@ export default async function (pi: ExtensionAPI) {
     const subVaultPath = join(subVaultDir, "secrets.db");
     const subSaltPath = join(subVaultDir, "secrets.salt");
     const subKeyring = createKeyringBackend();
-    const { promptPassphrase: subPrompt, isTtyAvailable: subTtyAvailable } =
-      await import("./secrets/Passphrase.js");
+    // Subprocess agents NEVER prompt for a passphrase — TeamRuntime can spawn workers
+    // with inherited stdin so isTTY alone is not safe. The agent-mode env var is the
+    // canonical signal. Vault unlock is the controller's responsibility.
     const subMasterMgr = new MasterKeyManager({
       keyringBackend: subKeyring,
       saltPath: subSaltPath,
       vaultDbPath: subVaultPath,
-      // Subprocess agents typically run headless; only attach the prompt when a
-      // TTY actually exists, otherwise a hung prompt would deadlock the run.
-      promptFn: subTtyAvailable() ? subPrompt : undefined,
+      promptFn: undefined,
     });
     try {
       const subKey = await subMasterMgr.ensureInitialized();

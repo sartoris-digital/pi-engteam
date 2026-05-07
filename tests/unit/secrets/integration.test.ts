@@ -264,6 +264,30 @@ describe("registerWatcher", () => {
     expect(result.text).toBe("key=${SECRET:ANTHROPIC_API_KEY}");
     expect(vaultSet).toHaveBeenCalledTimes(1);
   });
+
+  it("when enabled and interactive (CRITICAL #1 regression), still transforms — never silently passes the secret through", async () => {
+    const onSpy = vi.fn();
+    const pi = { on: onSpy } as unknown as Parameters<typeof registerWatcher>[0];
+    const { config, vaultSet } = makeConfig({ interactivePrompt: true });
+    registerWatcher(pi, config);
+    const handler = onSpy.mock.calls[0][1] as (
+      event: { text: string; images?: unknown },
+      ctx: { ui: { notify: (m: string, t?: string) => void } },
+    ) => Promise<{ action: string; text?: string }>;
+    const value = `sk-ant-${A20}`;
+    const notify = vi.fn();
+    const result = await handler(
+      { text: `key=${value}` },
+      { ui: { notify } },
+    );
+    // The interactive path MUST NOT return action: "continue" with the raw value (round-1 CRITICAL #1).
+    expect(result.action).toBe("transform");
+    expect(result.text).toBe("key=${SECRET:ANTHROPIC_API_KEY}");
+    expect(result.text).not.toContain(value);
+    expect(vaultSet).toHaveBeenCalledTimes(1);
+    // Interactive mode also surfaces a notify so the user knows what happened.
+    expect(notify).toHaveBeenCalled();
+  });
 });
 
 describe("processInput — uses injected loadPatterns", () => {

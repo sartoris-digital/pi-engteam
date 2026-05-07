@@ -880,6 +880,8 @@ interface RateLimitConfig {
 
 Stored at `~/.pi/engineering-team/rate-limits.json`. RateLimitGuard wraps `TeamRuntime`'s session.send paths. Surfaces `budget:rate-warn` and `budget:rate-pause` events into observability.
 
+**Wiring deferred to Phase 1.5.** Phase 1 ships the RateLimitGuard module, config loader, and observer event types as standalone units with full unit-test coverage. The `acquire`/`release` integration into `TeamRuntime.deliver()` and ADW step dispatch is its own architectural change that touches every outbound LLM call site, and is scheduled for Phase 1.5 alongside the conversion of subprocess-mode `UseSecret` audit events into a per-subprocess JSONL the controller ingests.
+
 ### 10.2 Re-framings throughout
 
 **Budget shape.** Pi-engteam's existing `maxCostUsd` becomes a secondary signal. Primary budget becomes:
@@ -1014,7 +1016,7 @@ Standalone modules with no dependency on the agent-topology changes. Unlocks sec
 
 Ships:
 
-- New module `src/rateLimit/RateLimitGuard.ts` + config `~/.pi/engineering-team/rate-limits.json`
+- New module `src/rateLimit/RateLimitGuard.ts` + config `~/.pi/engineering-team/rate-limits.json` (module ships in Phase 1; `acquire`/`release` wiring into `TeamRuntime` deferred to Phase 1.5 — see §10.1)
 - New module `src/secrets/Vault.ts`, `src/secrets/Crypto.ts`, `src/secrets/Watcher.ts`
 - Encrypted SQLite at `~/.pi/engineering-team/secrets.db`
 - OS-keyring integration with passphrase fallback
