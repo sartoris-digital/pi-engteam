@@ -269,3 +269,78 @@ describe("scan determinism", () => {
     }
   });
 });
+
+describe("AWS secret-access-key capture group", () => {
+  const SECRET_VALUE = "a".repeat(40);
+
+  it("stores only the 40-char credential, not the assignment label", () => {
+    const matches = scan(`aws_secret_access_key=${SECRET_VALUE}`);
+    const aws = findByName(matches, "AWS secret access key");
+    expect(aws).toBeDefined();
+    expect(aws!.value).toBe(SECRET_VALUE);
+    expect(aws!.value.length).toBe(40);
+  });
+
+  it("rewriteWithPlaceholders leaves the label intact and replaces only the value", () => {
+    const input = `aws_secret_access_key=${SECRET_VALUE}`;
+    const matches = scan(input);
+    const { rewritten, placeholders } = rewriteWithPlaceholders(input, matches);
+    expect(rewritten).toBe("aws_secret_access_key=${SECRET:AWS_SECRET_ACCESS_KEY}");
+    expect(placeholders).toEqual([{ name: "AWS_SECRET_ACCESS_KEY", original: SECRET_VALUE }]);
+  });
+
+  it("preserves whitespace around the assignment separator", () => {
+    const input = `aws_secret_access_key  =  ${SECRET_VALUE} trailing`;
+    const matches = scan(input);
+    const aws = findByName(matches, "AWS secret access key");
+    expect(aws).toBeDefined();
+    expect(aws!.value).toBe(SECRET_VALUE);
+  });
+});
+
+describe("empty-string regex guard", () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "secret-empty-regex-"));
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("loadUserPatterns filters out a regex that matches the empty string", () => {
+    const path = join(dir, "empty.json");
+    writeFileSync(
+      path,
+      JSON.stringify([
+        { name: "EmptyMatcher", regex: "a*", suggestedName: "EMPTY", priority: 200 },
+        { name: "GoodMatcher", regex: "good_[A-Za-z0-9]{10}", suggestedName: "GOOD", priority: 201 },
+      ]),
+    );
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+    try {
+      const patterns = loadUserPatterns(path);
+      expect(patterns.length).toBe(1);
+      expect(patterns[0].name).toBe("GoodMatcher");
+    } finally {
+      console.warn = origWarn;
+    }
+    expect(warnings.some((w) => w.includes("EmptyMatcher"))).toBe(true);
+  });
+
+  it("scan terminates even if a zero-length pattern bypasses validation", () => {
+    // Direct injection — bypass loadUserPatterns. The defensive lastIndex guard inside
+    // scan() must prevent an infinite loop.
+    const start = Date.now();
+    const matches = scan("hello world", {
+      patterns: [
+        { name: "ZeroLength", regex: /a*/g, suggestedName: "ZERO", priority: 0 },
+      ],
+    });
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(1000);
+    expect(matches).toEqual([]);
+  });
+});

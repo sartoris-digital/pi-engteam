@@ -1,23 +1,29 @@
 // tests/unit/secrets/keyring.test.ts
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
-import { rmSync, mkdirSync, existsSync } from "fs";
+import { rmSync, mkdirSync, existsSync, writeFileSync } from "fs";
 import {
   createKeyringBackend,
   KEYRING_SERVICE,
   KEYRING_ACCOUNT_MASTER,
   type KeyringBackend,
+  type KeyringGetResult,
 } from "../../../src/secrets/Keyring.js";
 import { MasterKeyManager } from "../../../src/secrets/MasterKey.js";
+import { Vault } from "../../../src/secrets/Vault.js";
+import { generateSalt, deriveKeyFromPassphrase } from "../../../src/secrets/Crypto.js";
 
 // --- KeyringBackend interface ---
 
 function makeMockBackend(): KeyringBackend {
   const store = new Map<string, string>();
   return {
-    get: vi.fn((service, account) => store.get(`${service}:${account}`) ?? null),
+    get: vi.fn((service: string, account: string): KeyringGetResult => {
+      const v = store.get(`${service}:${account}`);
+      return v === undefined ? { kind: "not-found" } : { kind: "value", value: v };
+    }),
     set: vi.fn((service, account, value) => { store.set(`${service}:${account}`, value); }),
     delete: vi.fn((service, account) => {
       const key = `${service}:${account}`;
@@ -29,19 +35,19 @@ function makeMockBackend(): KeyringBackend {
 }
 
 describe("KeyringBackend mock — passthrough", () => {
-  it("set then get returns stored value", () => {
+  it("set then get returns stored value as tri-state value result", () => {
     const backend = makeMockBackend();
     backend.set("svc", "acct", "secret");
-    expect(backend.get("svc", "acct")).toBe("secret");
+    expect(backend.get("svc", "acct")).toEqual({ kind: "value", value: "secret" });
     expect(backend.set).toHaveBeenCalledWith("svc", "acct", "secret");
     expect(backend.get).toHaveBeenCalledWith("svc", "acct");
   });
 
-  it("delete removes value and returns true", () => {
+  it("delete removes value and returns true; subsequent get returns not-found", () => {
     const backend = makeMockBackend();
     backend.set("svc", "acct", "x");
     expect(backend.delete("svc", "acct")).toBe(true);
-    expect(backend.get("svc", "acct")).toBeNull();
+    expect(backend.get("svc", "acct")).toEqual({ kind: "not-found" });
   });
 
   it("delete of missing key returns false", () => {
@@ -192,6 +198,113 @@ describe("MasterKeyManager — zeroize", () => {
     mgr.zeroize();
 
     await expect(mgr.getMasterKey()).rejects.toThrow("ensureInitialized");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// --- Vault-overwrite protection (Codex HIGH #3 regression tests) ---
+
+function seedVault(dbPath: string, key: Buffer): void {
+  const v = new Vault({ dbPath, masterKey: key });
+  v.init();
+  v.set("known", "expected-value");
+  v.close();
+}
+
+describe("MasterKeyManager — refuses to overwrite an existing vault", () => {
+  it("rejects when keyring access errors and a vault already exists", async () => {
+    const dir = tmpDir();
+    const dbPath = join(dir, "secrets.db");
+    const realKey = randomBytes(32);
+    seedVault(dbPath, realKey);
+
+    const backend: KeyringBackend = {
+      get: vi.fn((): KeyringGetResult => ({ kind: "error", error: "keyring locked" })),
+      set: vi.fn(),
+      delete: vi.fn(() => false),
+    };
+
+    const mgr = new MasterKeyManager({
+      keyringBackend: backend,
+      saltPath: join(dir, "secrets.salt"),
+      vaultDbPath: dbPath,
+    });
+
+    await expect(mgr.ensureInitialized()).rejects.toThrow(/keyring unavailable/i);
+    expect(backend.set).not.toHaveBeenCalled();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects when keyring has no entry, vault exists, and there is no salt for recovery", async () => {
+    const dir = tmpDir();
+    const dbPath = join(dir, "secrets.db");
+    const realKey = randomBytes(32);
+    seedVault(dbPath, realKey);
+
+    const backend = makeMockBackend();
+    const mgr = new MasterKeyManager({
+      keyringBackend: backend,
+      saltPath: join(dir, "secrets.salt"),
+      vaultDbPath: dbPath,
+    });
+
+    await expect(mgr.ensureInitialized()).rejects.toThrow(/Restore the keyring entry|delete the vault/i);
+    expect(backend.set).not.toHaveBeenCalled();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects when keyring has no entry, vault and salt exist, but passphrase derives a non-matching key", async () => {
+    const dir = tmpDir();
+    const dbPath = join(dir, "secrets.db");
+    const saltPath = join(dir, "secrets.salt");
+
+    const correctSalt = generateSalt();
+    const correctKey = deriveKeyFromPassphrase("the-real-passphrase", correctSalt);
+    writeFileSync(saltPath, correctSalt);
+    seedVault(dbPath, correctKey);
+
+    const backend = makeMockBackend();
+    const promptFn = vi.fn().mockResolvedValue("wrong-passphrase");
+
+    const mgr = new MasterKeyManager({
+      keyringBackend: backend,
+      saltPath,
+      vaultDbPath: dbPath,
+      promptFn,
+    });
+
+    await expect(mgr.ensureInitialized()).rejects.toThrow(/Passphrase did not match/i);
+    expect(backend.set).not.toHaveBeenCalled();
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("accepts a correct passphrase when the vault and salt exist and keyring has no entry", async () => {
+    const dir = tmpDir();
+    const dbPath = join(dir, "secrets.db");
+    const saltPath = join(dir, "secrets.salt");
+
+    const passphrase = "correct-horse-battery-staple";
+    const salt = generateSalt();
+    const expectedKey = deriveKeyFromPassphrase(passphrase, salt);
+    writeFileSync(saltPath, salt);
+    seedVault(dbPath, expectedKey);
+
+    const backend = makeMockBackend();
+    const promptFn = vi.fn().mockResolvedValue(passphrase);
+
+    const mgr = new MasterKeyManager({
+      keyringBackend: backend,
+      saltPath,
+      vaultDbPath: dbPath,
+      promptFn,
+    });
+
+    const key = await mgr.ensureInitialized();
+    expect(key.equals(expectedKey)).toBe(true);
 
     rmSync(dir, { recursive: true, force: true });
   });

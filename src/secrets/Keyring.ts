@@ -1,6 +1,11 @@
 // src/secrets/Keyring.ts
+export type KeyringGetResult =
+  | { kind: "value"; value: string }
+  | { kind: "not-found" }
+  | { kind: "error"; error: string };
+
 export interface KeyringBackend {
-  get(service: string, account: string): string | null;
+  get(service: string, account: string): KeyringGetResult;
   set(service: string, account: string, value: string): void;
   delete(service: string, account: string): boolean;
 }
@@ -8,26 +13,36 @@ export interface KeyringBackend {
 export const KEYRING_SERVICE = "pi-engineering";
 export const KEYRING_ACCOUNT_MASTER = "secrets-master";
 
+function isNotFoundError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /not\s*found|no such|does not exist/i.test(err.message);
+}
+
 export function createKeyringBackend(): KeyringBackend | null {
   try {
     // Dynamic import to catch platform failures at init time, not at module load.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Entry } = require("@napi-rs/keyring") as typeof import("@napi-rs/keyring");
 
-    // Smoke-test the backend on first call; throws if unavailable (e.g., headless Linux).
+    // Probe: any non-"not found" error means the keyring is unreachable.
     const probe = new Entry(KEYRING_SERVICE, "__probe__");
     try { probe.getPassword(); } catch (e) {
-      // "not found" is fine; any other error means keyring is unavailable
-      if (e instanceof Error && !e.message.toLowerCase().includes("not found")) throw e;
+      if (!isNotFoundError(e)) throw e;
     }
 
     return {
-      get(service, account) {
+      get(service, account): KeyringGetResult {
         try {
           const entry = new Entry(service, account);
-          return entry.getPassword() ?? null;
-        } catch {
-          return null;
+          const value = entry.getPassword();
+          if (value === null || value === undefined) return { kind: "not-found" };
+          return { kind: "value", value };
+        } catch (err) {
+          if (isNotFoundError(err)) return { kind: "not-found" };
+          return {
+            kind: "error",
+            error: err instanceof Error ? err.message : String(err),
+          };
         }
       },
       set(service, account, value) {

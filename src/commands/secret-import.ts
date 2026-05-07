@@ -78,9 +78,10 @@ export function registerSecretImportCommand(pi: ExtensionAPI): void {
 
       try {
         const existing = new Set(vault.list().map((r) => r.name));
-        let imported = 0;
-        let skipped = 0;
 
+        // Phase 1: decrypt all entries up front so a partial failure never leaves
+        // the vault in a half-imported state.
+        const decrypted: Array<{ name: string; plaintext: string; notes: string | null }> = [];
         for (const entry of blob.entries) {
           let plaintext: string;
           try {
@@ -94,11 +95,17 @@ export function registerSecretImportCommand(pi: ExtensionAPI): void {
             ctx.ui.notify(`Decryption failed for "${entry.name}" — wrong passphrase?`, "error");
             return;
           }
+          decrypted.push({ name: entry.name, plaintext, notes: entry.notes });
+        }
 
+        // Phase 2: resolve all conflicts before any writes.
+        const toApply: Array<{ name: string; plaintext: string; notes: string | null }> = [];
+        let skipped = 0;
+        for (const entry of decrypted) {
           if (existing.has(entry.name)) {
             const action = await promptConflict(entry.name);
             if (action === "abort") {
-              ctx.ui.notify("Import aborted.", "info");
+              ctx.ui.notify("Import aborted — vault unchanged.", "info");
               return;
             }
             if (action === "skip") {
@@ -107,13 +114,16 @@ export function registerSecretImportCommand(pi: ExtensionAPI): void {
             }
             // overwrite: fall through
           }
+          toApply.push(entry);
+        }
 
-          vault.set(entry.name, plaintext, entry.notes ?? undefined);
-          imported++;
+        // Phase 3: apply all writes after every decision is final.
+        for (const entry of toApply) {
+          vault.set(entry.name, entry.plaintext, entry.notes ?? undefined);
         }
 
         ctx.ui.notify(
-          `Import complete: ${imported} imported, ${skipped} skipped.`,
+          `Import complete: ${toApply.length} imported, ${skipped} skipped.`,
           "info",
         );
       } finally {

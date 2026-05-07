@@ -57,8 +57,16 @@ export function registerSecretScrubCommand(pi: ExtensionAPI): void {
       // Collect all candidate files.
       const candidates: string[] = [];
       await collectFiles(RUNS_DIR, candidates);
-      const today = new Date().toISOString().slice(0, 10);
-      candidates.push(join(SECOND_BRAIN_LOGS, `${today}.md`));
+      // Walk every second-brain log, not just today's — secrets leaked yesterday
+      // would otherwise persist forever.
+      await collectFiles(SECOND_BRAIN_LOGS, candidates);
+      // Active Pi session JSONL is where most leaked user content actually lives.
+      try {
+        const activeSession = ctx.sessionManager?.getSessionFile?.();
+        if (activeSession) candidates.push(activeSession);
+      } catch {
+        // ctx.sessionManager may be unavailable in some invocation paths.
+      }
 
       for (const filePath of candidates) {
         let content: string;

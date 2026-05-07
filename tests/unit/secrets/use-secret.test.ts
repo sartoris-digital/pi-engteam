@@ -16,6 +16,14 @@ function freshVault(): { vault: Vault; dir: string } {
   return { vault, dir };
 }
 
+function parseResult(result: { content: Array<{ type: string; text?: string }> }): any {
+  const textPart = result.content.find((c) => c.type === "text");
+  if (!textPart?.text) return {};
+  return JSON.parse(textPart.text);
+}
+
+const NOOP_CTX = {} as any;
+
 describe("SecretResolver.resolve", () => {
   let vault: Vault;
   let dir: string;
@@ -80,6 +88,27 @@ describe("SecretResolver.listNames", () => {
   });
 });
 
+describe("UseSecret tool shape", () => {
+  let vault: Vault;
+  let dir: string;
+
+  afterEach(() => {
+    try { vault.close(); } catch { /* ignore */ }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("matches Pi ToolDefinition contract (name, label, parameters, execute)", () => {
+    ({ vault, dir } = freshVault());
+    const resolver = createSecretResolver({ vault, emitEvent: vi.fn() });
+    const tool = createUseSecretTool({ resolver, spawnSubprocess: vi.fn() });
+    expect(tool.name).toBe("UseSecret");
+    expect(tool.label).toBe("Use Secret");
+    expect(typeof tool.description).toBe("string");
+    expect(tool.parameters).toBeDefined();
+    expect(typeof tool.execute).toBe("function");
+  });
+});
+
 describe("UseSecret input validation", () => {
   let vault: Vault;
   let dir: string;
@@ -98,25 +127,20 @@ describe("UseSecret input validation", () => {
     return { tool, spawnSubprocess, emitEvent };
   }
 
-  it("rejects missing name with structured error", async () => {
+  it("rejects empty name with structured error", async () => {
     const { tool } = makeTools();
-    const result = await tool.execute({ target: "bash", command: "echo $SECRET" }) as { error: string };
-    expect(result.error).toBeTruthy();
-    expect(result).toHaveProperty("hint");
+    const result = await tool.execute("call-1", { name: "", target: "bash", command: "echo $SECRET" } as any, undefined, undefined, NOOP_CTX);
+    const parsed = parseResult(result);
+    expect(parsed.error).toBeTruthy();
+    expect(parsed.hint).toBeTruthy();
   });
 
-  it("rejects missing command with structured error", async () => {
+  it("rejects empty command with structured error", async () => {
     const { tool } = makeTools();
-    const result = await tool.execute({ name: "KEY", target: "bash" }) as { error: string };
-    expect(result.error).toBeTruthy();
-    expect(result).toHaveProperty("hint");
-  });
-
-  it("rejects target other than bash with structured error", async () => {
-    const { tool } = makeTools();
-    const result = await tool.execute({ name: "KEY", target: "python", command: "print($SECRET)" }) as { error: string };
-    expect(result.error).toMatch(/python/);
-    expect(result).toHaveProperty("hint");
+    const result = await tool.execute("call-2", { name: "KEY", target: "bash", command: "" } as any, undefined, undefined, NOOP_CTX);
+    const parsed = parseResult(result);
+    expect(parsed.error).toBeTruthy();
+    expect(parsed.hint).toBeTruthy();
   });
 });
 
@@ -138,17 +162,16 @@ describe("UseSecret execution", () => {
     const spawnSubprocess = vi.fn().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0 });
     const tool = createUseSecretTool({ resolver, spawnSubprocess });
 
-    await tool.execute({ name: "MY_SECRET", target: "bash", command: "echo $SECRET" });
+    await tool.execute("call-3", { name: "MY_SECRET", target: "bash", command: "echo $SECRET" }, undefined, undefined, NOOP_CTX);
 
     expect(spawnSubprocess).toHaveBeenCalledOnce();
     const spawnArg = spawnSubprocess.mock.calls[0][0] as { cmd: string; env: Record<string, string> };
     expect(spawnArg.env["SECRET"]).toBe("supersecret");
     expect(spawnArg.cmd).toBe("echo $SECRET");
-    // cmd must contain literal $SECRET, not the resolved value
     expect(spawnArg.cmd).not.toContain("supersecret");
   });
 
-  it("returns spawn output unchanged", async () => {
+  it("returns spawn output when no secret leak", async () => {
     ({ vault, dir } = freshVault());
     vault.set("K", "v");
 
@@ -157,10 +180,11 @@ describe("UseSecret execution", () => {
     const spawnSubprocess = vi.fn().mockResolvedValue({ stdout: "hello\n", stderr: "warn\n", exitCode: 42 });
     const tool = createUseSecretTool({ resolver, spawnSubprocess });
 
-    const result = await tool.execute({ name: "K", target: "bash", command: "echo $SECRET" }) as { stdout: string; stderr: string; exitCode: number };
-    expect(result.stdout).toBe("hello\n");
-    expect(result.stderr).toBe("warn\n");
-    expect(result.exitCode).toBe(42);
+    const result = await tool.execute("call-4", { name: "K", target: "bash", command: "echo $SECRET" }, undefined, undefined, NOOP_CTX);
+    const parsed = parseResult(result);
+    expect(parsed.stdout).toBe("hello\n");
+    expect(parsed.stderr).toBe("warn\n");
+    expect(parsed.exitCode).toBe(42);
   });
 
   it("emits the safety event exactly once per execute call", async () => {
@@ -172,7 +196,7 @@ describe("UseSecret execution", () => {
     const spawnSubprocess = vi.fn().mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     const tool = createUseSecretTool({ resolver, spawnSubprocess });
 
-    await tool.execute({ name: "K", target: "bash", command: "true" });
+    await tool.execute("call-5", { name: "K", target: "bash", command: "true" }, undefined, undefined, NOOP_CTX);
     expect(emitEvent).toHaveBeenCalledOnce();
   });
 
@@ -185,10 +209,79 @@ describe("UseSecret execution", () => {
     const spawnSubprocess = vi.fn().mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
     const tool = createUseSecretTool({ resolver, spawnSubprocess });
 
-    await tool.execute({ name: "TOKEN", target: "bash", command: "curl -H 'Auth: $SECRET' https://example.com" });
+    await tool.execute("call-6", { name: "TOKEN", target: "bash", command: "curl -H 'Auth: $SECRET' https://example.com" }, undefined, undefined, NOOP_CTX);
 
     const spawnArg = spawnSubprocess.mock.calls[0][0] as { cmd: string; env: Record<string, string> };
     expect(spawnArg.cmd).not.toContain("abc123secret");
     expect(spawnArg.env["SECRET"]).toBe("abc123secret");
+  });
+});
+
+describe("UseSecret stdout/stderr scrubbing (CRITICAL #2 regression)", () => {
+  let vault: Vault;
+  let dir: string;
+
+  afterEach(() => {
+    try { vault.close(); } catch { /* ignore */ }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("scrubs plaintext secret from stdout, replacing with [REDACTED:NAME]", async () => {
+    ({ vault, dir } = freshVault());
+    vault.set("LEAK", "topsecretvalue123");
+
+    const emitEvent = vi.fn();
+    const resolver = createSecretResolver({ vault, emitEvent });
+    const spawnSubprocess = vi.fn().mockResolvedValue({
+      stdout: "the secret is topsecretvalue123\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const tool = createUseSecretTool({ resolver, spawnSubprocess });
+
+    const result = await tool.execute("call-7", { name: "LEAK", target: "bash", command: 'echo "the secret is $SECRET"' }, undefined, undefined, NOOP_CTX);
+    const parsed = parseResult(result);
+
+    expect(parsed.stdout).not.toContain("topsecretvalue123");
+    expect(parsed.stdout).toContain("[REDACTED:LEAK]");
+  });
+
+  it("scrubs plaintext secret from stderr, replacing with [REDACTED:NAME]", async () => {
+    ({ vault, dir } = freshVault());
+    vault.set("LEAK", "topsecretvalue123");
+
+    const emitEvent = vi.fn();
+    const resolver = createSecretResolver({ vault, emitEvent });
+    const spawnSubprocess = vi.fn().mockResolvedValue({
+      stdout: "",
+      stderr: "error happened with topsecretvalue123 in env",
+      exitCode: 1,
+    });
+    const tool = createUseSecretTool({ resolver, spawnSubprocess });
+
+    const result = await tool.execute("call-8", { name: "LEAK", target: "bash", command: "false" }, undefined, undefined, NOOP_CTX);
+    const parsed = parseResult(result);
+
+    expect(parsed.stderr).not.toContain("topsecretvalue123");
+    expect(parsed.stderr).toContain("[REDACTED:LEAK]");
+  });
+
+  it("scrubs multiple occurrences of the secret in stdout", async () => {
+    ({ vault, dir } = freshVault());
+    vault.set("DOUBLED", "abc");
+
+    const emitEvent = vi.fn();
+    const resolver = createSecretResolver({ vault, emitEvent });
+    const spawnSubprocess = vi.fn().mockResolvedValue({
+      stdout: "abc and abc and abc",
+      stderr: "",
+      exitCode: 0,
+    });
+    const tool = createUseSecretTool({ resolver, spawnSubprocess });
+
+    const result = await tool.execute("call-9", { name: "DOUBLED", target: "bash", command: "x" }, undefined, undefined, NOOP_CTX);
+    const parsed = parseResult(result);
+
+    expect(parsed.stdout).toBe("[REDACTED:DOUBLED] and [REDACTED:DOUBLED] and [REDACTED:DOUBLED]");
   });
 });

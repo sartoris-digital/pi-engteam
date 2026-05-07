@@ -124,20 +124,12 @@ export function registerWatcher(pi: ExtensionAPI, config: IntegrationConfig): vo
     const loadPatterns = config.loadPatterns ?? defaultLoadPatterns;
     const cfg: IntegrationConfig = { ...config, loadPatterns };
 
+    // v1: Pi's ctx.ui exposes no blocking multi-choice prompt to extensions, so
+    // both interactivePrompt modes auto-vault under the pattern's suggested
+    // name. interactivePrompt=true emits a post-hoc notify; the "real" prompt
+    // path returns when Pi adds a chooser API.
     const decision = await processInput(event.text, cfg, async (match) => {
-      if (!cfg.interactivePrompt) {
-        // Silent auto-vault using the pattern's suggested name.
-        return { choice: "vault", vaultName: match.pattern.suggestedName };
-      }
-      // Interactive prompt path. Pi's UI does not expose a generic blocking
-      // chooser to extensions today; surface a notify and treat as skip so the
-      // user can re-send with explicit ${SECRET:NAME} placeholders. Wave 3 may
-      // wire this to a richer overlay if Pi adds support.
-      ctx.ui.notify(
-        `Detected ${match.pattern.name} (${match.preview}). Suggested vault name: ${match.pattern.suggestedName}.`,
-        "warning",
-      );
-      return { choice: "skip" };
+      return { choice: "vault", vaultName: match.pattern.suggestedName };
     });
 
     if (decision.action === "pass-through") {
@@ -157,6 +149,13 @@ export function registerWatcher(pi: ExtensionAPI, config: IntegrationConfig): vo
       return { action: "continue" as const };
     }
     // vault-and-rewrite: transform the input text in place.
+    if (cfg.interactivePrompt) {
+      const names = decision.vaulted.map((v) => v.name).join(", ");
+      ctx.ui.notify(
+        `Auto-vaulted secret(s) as ${names}; message rewritten with \${SECRET:...} placeholders.`,
+        "info",
+      );
+    }
     return {
       action: "transform" as const,
       text: decision.rewritten,

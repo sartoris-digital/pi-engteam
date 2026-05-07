@@ -56,21 +56,34 @@ export function scan(
   const claimed: Array<[number, number]> = [];
 
   for (const pattern of patterns) {
-    const re = new RegExp(pattern.regex.source, pattern.regex.flags.includes("g")
-      ? pattern.regex.flags
-      : `${pattern.regex.flags}g`);
+    let flags = pattern.regex.flags.includes("g") ? pattern.regex.flags : `${pattern.regex.flags}g`;
+    if (pattern.captureGroup !== undefined && !flags.includes("d")) flags = `${flags}d`;
+    const re = new RegExp(pattern.regex.source, flags);
     let m: RegExpExecArray | null;
     while ((m = re.exec(input)) !== null) {
-      const start = m.index;
-      const end = start + m[0].length;
+      // guard against zero-length match infinite loop (defensive; loadUserPatterns should pre-reject)
+      if (m[0].length === 0) { re.lastIndex += 1; continue; }
+      let value: string;
+      let start: number;
+      let end: number;
+      if (pattern.captureGroup !== undefined) {
+        const groupIdx = m.indices?.[pattern.captureGroup];
+        if (!groupIdx || m[pattern.captureGroup] === undefined) continue;
+        [start, end] = groupIdx;
+        value = m[pattern.captureGroup];
+      } else {
+        start = m.index;
+        end = start + m[0].length;
+        value = m[0];
+      }
       if (overlaps(start, end, claimed)) continue;
       claimed.push([start, end]);
       found.push({
         pattern,
-        value: m[0],
+        value,
         start,
         end,
-        preview: makePreview(m[0]),
+        preview: makePreview(value),
       });
     }
   }

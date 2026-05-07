@@ -6,6 +6,7 @@ export type SecretPattern = {
   regex: RegExp;
   suggestedName: string;
   priority: number;
+  captureGroup?: number;
 };
 
 // Order matters: more-specific prefixes (sk-proj-, sk-ant-) MUST evaluate before
@@ -65,9 +66,10 @@ export const DEFAULT_PATTERNS: SecretPattern[] = [
   // from arbitrary base64.
   {
     name: "AWS secret access key",
-    regex: /aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+=]{40}/gi,
+    regex: /aws_secret_access_key\s*[=:]\s*([A-Za-z0-9/+=]{40})/gi,
     suggestedName: "AWS_SECRET_ACCESS_KEY",
     priority: 8,
+    captureGroup: 1,
   },
   {
     name: "JWT (3-part Base64URL)",
@@ -103,7 +105,25 @@ export function loadUserPatterns(path: string): SecretPattern[] {
     throw new Error("secret-patterns.json: expected an array of patterns");
   }
 
-  return parsed.map((entry, idx) => compileUserPattern(entry as RawUserPattern, idx));
+  const out: SecretPattern[] = [];
+  for (let idx = 0; idx < parsed.length; idx++) {
+    const compiled = compileUserPattern(parsed[idx] as RawUserPattern, idx);
+    if (matchesEmptyString(compiled.regex)) {
+      console.warn(
+        `secret-patterns.json[${idx}] '${compiled.name}': regex matches empty string; skipping (would cause infinite loop)`,
+      );
+      continue;
+    }
+    out.push(compiled);
+  }
+  return out;
+}
+
+function matchesEmptyString(re: RegExp): boolean {
+  const probe = new RegExp(re.source, re.flags);
+  probe.lastIndex = 0;
+  const m = probe.exec("");
+  return m !== null && m[0].length === 0;
 }
 
 function compileUserPattern(entry: RawUserPattern, idx: number): SecretPattern {

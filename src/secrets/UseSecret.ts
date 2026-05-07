@@ -1,64 +1,58 @@
+import { defineTool } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import type { SecretResolver } from "./SecretResolver.js";
 import { defaultSpawn } from "./spawn.js";
 
 type SpawnFn = (opts: { cmd: string; env: Record<string, string>; cwd?: string }) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
-interface UseSecretInput {
-  name: string;
-  target: "bash";
-  command: string;
-}
-
-function validateInput(raw: unknown): { ok: true; value: UseSecretInput } | { ok: false; error: string; hint: string } {
-  if (typeof raw !== "object" || raw === null) {
-    return { ok: false, error: "Input must be an object", hint: "Provide { name, target, command }" };
-  }
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj["name"] !== "string" || obj["name"].trim() === "") {
-    return { ok: false, error: "Missing or empty field: name", hint: "Provide the secret name as a non-empty string" };
-  }
-  if (typeof obj["command"] !== "string" || obj["command"].trim() === "") {
-    return { ok: false, error: "Missing or empty field: command", hint: "Provide the shell command as a non-empty string" };
-  }
-  if (obj["target"] !== "bash") {
-    return { ok: false, error: `Unsupported target: ${String(obj["target"])}`, hint: "Only target 'bash' is supported in v1" };
-  }
-  return { ok: true, value: { name: obj["name"] as string, target: "bash", command: obj["command"] as string } };
+function scrub(text: string, secret: string, name: string): string {
+  if (!secret) return text;
+  return text.split(secret).join(`[REDACTED:${name}]`);
 }
 
 export function createUseSecretTool(opts: {
   resolver: SecretResolver;
   spawnSubprocess?: SpawnFn;
-}): { name: "UseSecret"; description: string; inputSchema: object; execute: (input: unknown) => Promise<unknown> } {
+}) {
   const spawnFn: SpawnFn = opts.spawnSubprocess ?? defaultSpawn;
   const agentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "unknown";
 
-  return {
+  return defineTool({
     name: "UseSecret",
+    label: "Use Secret",
     description: "Run a shell command with a named secret injected as $SECRET in the subprocess environment. The secret value is never visible in agent context.",
-    inputSchema: {
-      type: "object",
-      required: ["name", "target", "command"],
-      properties: {
-        name: { type: "string", description: "Name of the secret to inject" },
-        target: { type: "string", enum: ["bash"], description: "Execution target (only 'bash' supported in v1)" },
-        command: { type: "string", description: "Shell command to run; use $SECRET to reference the injected value" },
-      },
-      additionalProperties: false,
-    },
-    async execute(input: unknown) {
-      const validation = validateInput(input);
-      if (!validation.ok) {
-        return { error: validation.error, hint: validation.hint };
+    parameters: Type.Object({
+      name: Type.String({ description: "Name of the secret to inject" }),
+      target: Type.Literal("bash", { description: "Execution target (only 'bash' supported in v1)" }),
+      command: Type.String({ description: "Shell command to run; use $SECRET to reference the injected value" }),
+    }),
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const { name, command } = params;
+      if (typeof name !== "string" || name.trim() === "") {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "Missing or empty field: name", hint: "Provide the secret name as a non-empty string" }) }],
+          isError: true,
+          details: {},
+        };
       }
-      const { name, command } = validation.value;
+      if (typeof command !== "string" || command.trim() === "") {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "Missing or empty field: command", hint: "Provide the shell command as a non-empty string" }) }],
+          isError: true,
+          details: {},
+        };
+      }
 
       let secretValue: string;
       try {
         secretValue = opts.resolver.resolve(name, { agent: agentName, target: "bash" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { error: msg, hint: `Ensure the secret '${name}' has been stored in the vault` };
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: msg, hint: `Ensure the secret '${name}' has been stored in the vault` }) }],
+          isError: true,
+          details: {},
+        };
       }
 
       const result = await spawnFn({
@@ -66,7 +60,14 @@ export function createUseSecretTool(opts: {
         env: { SECRET: secretValue },
       });
 
-      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+      // scrub plaintext from subprocess output before returning to agent
+      const stdout = scrub(result.stdout, secretValue, name);
+      const stderr = scrub(result.stderr, secretValue, name);
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ stdout, stderr, exitCode: result.exitCode }) }],
+        details: {},
+      };
     },
-  };
+  });
 }

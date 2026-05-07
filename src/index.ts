@@ -261,10 +261,15 @@ export default async function (pi: ExtensionAPI) {
     const subVaultPath = join(subVaultDir, "secrets.db");
     const subSaltPath = join(subVaultDir, "secrets.salt");
     const subKeyring = createKeyringBackend();
+    const { promptPassphrase: subPrompt, isTtyAvailable: subTtyAvailable } =
+      await import("./secrets/Passphrase.js");
     const subMasterMgr = new MasterKeyManager({
       keyringBackend: subKeyring,
       saltPath: subSaltPath,
       vaultDbPath: subVaultPath,
+      // Subprocess agents typically run headless; only attach the prompt when a
+      // TTY actually exists, otherwise a hung prompt would deadlock the run.
+      promptFn: subTtyAvailable() ? subPrompt : undefined,
     });
     try {
       const subKey = await subMasterMgr.ensureInitialized();
@@ -274,7 +279,7 @@ export default async function (pi: ExtensionAPI) {
         vault: subVault,
         emitEvent: () => { /* no-op in subprocess; controller-side observer not available */ },
       });
-      pi.registerTool(createUseSecretTool({ resolver: subResolver, spawnSubprocess: defaultSpawn }) as any);
+      pi.registerTool(createUseSecretTool({ resolver: subResolver, spawnSubprocess: defaultSpawn }));
     } catch (err) {
       // Vault unavailable in subprocess — UseSecret simply isn't registered. Agent will get a tool-not-found error if it tries to call it.
       console.warn("[pi-engineering] UseSecret unavailable in subprocess:", err instanceof Error ? err.message : String(err));
@@ -290,10 +295,12 @@ export default async function (pi: ExtensionAPI) {
   const VAULT_PATH = join(VAULT_DIR, "secrets.db");
   const VAULT_SALT_PATH = join(VAULT_DIR, "secrets.salt");
   const keyringBackend = createKeyringBackend();
+  const { promptPassphrase, isTtyAvailable } = await import("./secrets/Passphrase.js");
   const masterMgr = new MasterKeyManager({
     keyringBackend,
     saltPath: VAULT_SALT_PATH,
     vaultDbPath: VAULT_PATH,
+    promptFn: isTtyAvailable() ? promptPassphrase : undefined,
   });
 
   // Vault is lazy-initialized on first use — we don't force the user to type a passphrase at extension boot if they're not using secrets yet.

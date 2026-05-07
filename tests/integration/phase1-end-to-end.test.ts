@@ -29,7 +29,10 @@ function makeTmpDir(): string {
 function makeMockKeyring(): KeyringBackend {
   const store = new Map<string, string>();
   return {
-    get: (service, account) => store.get(`${service}:${account}`) ?? null,
+    get: (service, account) => {
+      const v = store.get(`${service}:${account}`);
+      return v === undefined ? { kind: "not-found" } : { kind: "value", value: v };
+    },
     set: (service, account, value) => { store.set(`${service}:${account}`, value); },
     delete: (service, account) => {
       const key = `${service}:${account}`;
@@ -143,14 +146,16 @@ describe("Phase 1 end-to-end: UseSecret tool env injection", () => {
     const spawnSubprocess = vi.fn().mockResolvedValue({ stdout: "done\n", stderr: "", exitCode: 0 });
     const tool = createUseSecretTool({ resolver, spawnSubprocess });
 
-    const result = await tool.execute({
+    const result = await tool.execute("call-1", {
       name: "MY_TOKEN",
       target: "bash",
       command: "curl -H 'Authorization: Bearer $SECRET' https://api.example.com",
-    }) as { stdout: string; stderr: string; exitCode: number };
+    }, undefined, undefined, {} as any);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("done\n");
+    const textPart = result.content.find((c: any) => c.type === "text") as { type: "text"; text: string } | undefined;
+    const parsed = JSON.parse(textPart?.text ?? "{}") as { stdout: string; stderr: string; exitCode: number };
+    expect(parsed.exitCode).toBe(0);
+    expect(parsed.stdout).toBe("done\n");
 
     const spawnArg = spawnSubprocess.mock.calls[0][0] as { cmd: string; env: Record<string, string> };
     expect(spawnArg.env["SECRET"]).toBe("plaintext-value");
