@@ -105,6 +105,34 @@ describe("RateLimitGuard — RPM", () => {
   });
 });
 
+describe("RateLimitGuard — sliding window boundary", () => {
+  it("reclaims slot exactly at the window boundary (half-open semantics)", () => {
+    let t = 0;
+    const clock = () => t;
+    const guard = new RateLimitGuard(
+      makeConfig({
+        maxConcurrent: 200,
+        providers: [{ provider: "anthropic", rpmCeiling: 1, tpmCeiling: 1_000_000, windowMs: 60_000 }],
+      }),
+      undefined,
+      clock,
+    );
+
+    // First acquire at t=0 fills the only slot.
+    const r1 = guard.acquire("anthropic");
+    expect(r1.ok).toBe(true);
+
+    // Still inside the window at t=windowMs - 1 → blocked.
+    t = 59_999;
+    expect(guard.acquire("anthropic").ok).toBe(false);
+
+    // Exactly at the boundary t=windowMs the t=0 entry must be evicted.
+    t = 60_000;
+    const r2 = guard.acquire("anthropic");
+    expect(r2.ok).toBe(true);
+  });
+});
+
 describe("RateLimitGuard — concurrent semaphore", () => {
   it("3rd acquire fails with 'concurrent', 4th succeeds after release", () => {
     let t = 0;

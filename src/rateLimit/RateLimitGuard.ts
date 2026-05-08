@@ -27,8 +27,11 @@ function providerKey(provider: string, account?: string): string {
 }
 
 function prune(window: WindowEntry[], now: number, windowMs: number): void {
+  // Half-open semantics: keep entries STRICTLY GREATER than (now - windowMs);
+  // entries timestamped exactly at the boundary are evicted, so a request at t=0
+  // no longer counts when re-checking at t=windowMs.
   const cutoff = now - windowMs;
-  while (window.length > 0 && window[0].ts < cutoff) {
+  while (window.length > 0 && window[0].ts <= cutoff) {
     window.shift();
   }
 }

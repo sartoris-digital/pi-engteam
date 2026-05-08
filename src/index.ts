@@ -418,9 +418,26 @@ export default async function (pi: ExtensionAPI) {
       const subKey = await subMasterMgr.ensureInitialized();
       const subVault = new Vault({ dbPath: subVaultPath, masterKey: subKey });
       subVault.init();
+      // Phase 1.5: forward subprocess audit events to a per-pid NDJSON file so the
+       // controller can ingest them after the subprocess exits. Synchronous append is a
+       // known trade-off — best-effort, O(N) file appends — but it guarantees the last
+       // events flush before the subprocess terminates.
+      const subRunsDirForEvents = process.env["PI_ENGINEERING_RUNS_DIR"] ?? RUNS_DIR;
+      const subRunIdForEvents = process.env["PI_ENGINEERING_RUN_ID"] ?? "_subprocess";
+      const { mkdirSync, appendFileSync } = await import("fs");
+      const { join: pathJoin } = await import("path");
+      const eventDir = pathJoin(subRunsDirForEvents, subRunIdForEvents);
+      try { mkdirSync(eventDir, { recursive: true }); } catch {}
+      const eventFile = pathJoin(eventDir, `events-subprocess-${process.pid}.jsonl`);
       const subResolver = createSecretResolver({
         vault: subVault,
-        emitEvent: () => { /* no-op in subprocess; controller-side observer not available */ },
+        emitEvent: (evt) => {
+          try {
+            appendFileSync(eventFile, JSON.stringify({ ...evt, ts: new Date().toISOString() }) + "\n");
+          } catch {
+            // best-effort; subprocess audit events are not durable across crashes
+          }
+        },
       });
       pi.registerTool(createUseSecretTool({ resolver: subResolver, spawnSubprocess: defaultSpawn }));
     } catch (err) {
@@ -502,12 +519,34 @@ export default async function (pi: ExtensionAPI) {
 
   let activeRunId = "none";
 
+  const rateLimitConfig = await loadRateLimitConfig();
+  const rateLimitGuard = new RateLimitGuard(rateLimitConfig, (evt) => {
+    observer.emit({
+      runId: activeRunId,
+      category: "budget" as const,
+      type: evt.kind === "warn" ? "rate_warn" as any : "rate_pause" as any,
+      payload: { provider: evt.provider, saturation_pct: evt.saturationPct },
+      summary: `rate ${evt.kind}: ${evt.provider} at ${evt.saturationPct}%`,
+    });
+  });
+
   const team = new TeamRuntime({
     cwd: process.cwd(),
     bus,
     observer,
     runsDir: RUNS_DIR,
     agentDefs: AGENT_DEFS,
+    rateLimit: rateLimitGuard,
+    onSubprocessEvent: (runId, agentName, line) => {
+      observer.emit({
+        runId,
+        agentName,
+        category: line.category as any,
+        type: line.type as any,
+        payload: line.payload,
+        summary: `${line.category}:${line.type}`,
+      });
+    },
     // H2: onVerdictReceived replaces the dead customToolsFor pattern.
     // TeamRuntime.deliver() calls this after reading the subprocess verdict file,
     // giving the host access to learnings/decisions/gotchas before they are stripped.
@@ -614,18 +653,6 @@ export default async function (pi: ExtensionAPI) {
   } catch (err) {
     console.warn("[pi-engineering] Watcher unavailable (vault init failed):", err instanceof Error ? err.message : String(err));
   }
-
-  const rateLimitConfig = await loadRateLimitConfig();
-  const rateLimitGuard = new RateLimitGuard(rateLimitConfig, (evt) => {
-    observer.emit({
-      runId: activeRunId,
-      category: "budget" as const,
-      type: evt.kind === "warn" ? "rate_warn" as any : "rate_pause" as any,
-      payload: { provider: evt.provider, saturation_pct: evt.saturationPct },
-      summary: `rate ${evt.kind}: ${evt.provider} at ${evt.saturationPct}%`,
-    });
-  });
-  void rateLimitGuard;
 
   pi.on("session_start", async (event: any, _ctx: any) => {
     if (event.reason === "startup") {

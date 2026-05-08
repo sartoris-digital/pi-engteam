@@ -32,7 +32,6 @@ function makeTeam(agentDefs: AgentDefinition[] = []) {
     observer: makeMockObserver(),
     runsDir: "/tmp",
     agentDefs,
-    customToolsFor: () => [],
   });
 }
 

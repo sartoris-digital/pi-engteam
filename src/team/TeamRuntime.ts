@@ -1,11 +1,20 @@
 import { spawn } from "child_process";
-import { mkdir, readFile, unlink, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { basename } from "path";
 import { join } from "path";
 import type { AgentDefinition, TeamMessage, VerdictPayload } from "../types.js";
 import type { MessageBus } from "./MessageBus.js";
 import type { Observer } from "../observer/Observer.js";
+import type { RateLimitGuard } from "../rateLimit/RateLimitGuard.js";
+import { modelToProvider } from "./modelProvider.js";
+
+export type SubprocessEventLine = {
+  category: string;
+  type: string;
+  payload: Record<string, unknown>;
+  ts: string;
+};
 
 type TeamRuntimeConfig = {
   cwd: string;
@@ -17,6 +26,10 @@ type TeamRuntimeConfig = {
   agentDefs?: AgentDefinition[];
   /** L2: per-subprocess kill timeout in ms (default 10 minutes) */
   agentTimeoutMs?: number;
+  /** Phase 1.5: rate-limit guard for outbound LLM dispatch */
+  rateLimit?: RateLimitGuard;
+  /** Phase 1.5: invoked once per subprocess audit event line ingested from disk */
+  onSubprocessEvent?: (runId: string, agentName: string, line: SubprocessEventLine) => void;
 };
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
@@ -71,6 +84,19 @@ export class TeamRuntime {
     const def = this.knownDefs.get(to);
     if (!def) throw new Error(`Teammate '${to}' is not registered. Add it to AGENT_DEFS.`);
 
+    const provider = modelToProvider(def.model);
+    let ticket: ReturnType<RateLimitGuard["acquire"]> | undefined;
+    if (this.config.rateLimit) {
+      ticket = this.config.rateLimit.acquire(provider);
+      if (!ticket.ok) {
+        await new Promise((r) => setTimeout(r, ticket!.ok ? 0 : ticket!.retryAfterMs));
+        ticket = this.config.rateLimit.acquire(provider);
+        if (!ticket.ok) {
+          throw new Error(`RateLimit blocked: provider=${provider}, reason=${ticket.reason}`);
+        }
+      }
+    }
+
     const tmpDir = join(this.config.runsDir, "_agent_tmp");
     await mkdir(tmpDir, { recursive: true });
 
@@ -88,57 +114,100 @@ export class TeamRuntime {
     const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
     const { command, args } = getPiInvocation(piArgs);
 
+    const runId = this.currentRunId ?? id;
+    const spawnStartMs = Date.now();
     let proc: ReturnType<typeof spawn> | undefined;
     const killTimeout = setTimeout(() => {
       proc?.kill();
     }, this.config.agentTimeoutMs ?? 10 * 60 * 1000); // L2: configurable, default 10 min
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        proc = spawn(command, args, {
-          cwd: this.config.cwd,
-          env: {
-            ...process.env,
-            PI_ENGINEERING_AGENT_MODE: "1",
-            PI_ENGINEERING_AGENT_NAME: to,   // H3: agent name so subprocess can gate GrantApproval
-            PI_ENGINEERING_VERDICT_FILE: verdictFile,
-            PI_ENGINEERING_RUN_ID: this.currentRunId ?? id,
-            PI_ENGINEERING_RUNS_DIR: this.config.runsDir,
-          },
-          stdio: ["inherit", "pipe", "inherit"],
-        });
-        // Forward each stdout line to the progress callback so the host UI can surface it
-        if (proc.stdout) {
-          proc.stdout.setEncoding("utf8");
-          proc.stdout.on("data", (chunk: string) => {
-            const lines = chunk.split("\n");
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (trimmed) this.agentLineCallback?.(to, trimmed);
-            }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          proc = spawn(command, args, {
+            cwd: this.config.cwd,
+            env: {
+              ...process.env,
+              PI_ENGINEERING_AGENT_MODE: "1",
+              PI_ENGINEERING_AGENT_NAME: to,   // H3: agent name so subprocess can gate GrantApproval
+              PI_ENGINEERING_VERDICT_FILE: verdictFile,
+              PI_ENGINEERING_RUN_ID: runId,
+              PI_ENGINEERING_RUNS_DIR: this.config.runsDir,
+            },
+            stdio: ["inherit", "pipe", "inherit"],
           });
-        }
-        proc.on("close", (code, signal) => {
-          if (code === 0 || code === null) resolve();
-          else reject(new Error(`Agent subprocess exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`));
+          // Forward each stdout line to the progress callback so the host UI can surface it
+          if (proc.stdout) {
+            proc.stdout.setEncoding("utf8");
+            proc.stdout.on("data", (chunk: string) => {
+              const lines = chunk.split("\n");
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed) this.agentLineCallback?.(to, trimmed);
+              }
+            });
+          }
+          proc.on("close", (code, signal) => {
+            if (code === 0 || code === null) resolve();
+            else reject(new Error(`Agent subprocess exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`));
+          });
+          proc.on("error", reject);
         });
-        proc.on("error", reject);
-      });
-    } finally {
-      clearTimeout(killTimeout);
-      try { await unlink(systemPromptFile); } catch {}
-    }
+      } finally {
+        clearTimeout(killTimeout);
+        try { await unlink(systemPromptFile); } catch {}
+        // Phase 1.5: drain subprocess audit events written to disk, then unlink.
+        await this.ingestSubprocessEvents(runId, to, spawnStartMs);
+      }
 
-    try {
-      const data = await readFile(verdictFile, "utf8");
-      await unlink(verdictFile).catch(() => {});
-      const payload = JSON.parse(data) as VerdictPayload;
-      // H2: fire callback so the host (index.ts) can update memory / emit observer events
-      this.config.onVerdictReceived?.(this.currentRunId ?? id, to, payload);
-      return payload;
-    } catch {
-      return undefined;
+      try {
+        const data = await readFile(verdictFile, "utf8");
+        await unlink(verdictFile).catch(() => {});
+        const payload = JSON.parse(data) as VerdictPayload;
+        // H2: fire callback so the host (index.ts) can update memory / emit observer events
+        this.config.onVerdictReceived?.(runId, to, payload);
+        return payload;
+      } catch {
+        return undefined;
+      }
+    } finally {
+      if (ticket?.ok && this.config.rateLimit) {
+        this.config.rateLimit.release(ticket.ticketId);
+      }
     }
+  }
+
+  private async ingestSubprocessEvents(runId: string, agentName: string, spawnStartMs: number): Promise<void> {
+    if (!this.config.onSubprocessEvent) return;
+    const runDir = join(this.config.runsDir, runId);
+    let entries: string[];
+    try {
+      entries = await readdir(runDir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (!name.startsWith("events-subprocess-") || !name.endsWith(".jsonl")) continue;
+      const path = join(runDir, name);
+      let raw: string;
+      try {
+        raw = await readFile(path, "utf8");
+      } catch {
+        continue;
+      }
+      for (const rawLine of raw.split("\n")) {
+        const trimmed = rawLine.trim();
+        if (!trimmed) continue;
+        try {
+          const line = JSON.parse(trimmed) as SubprocessEventLine;
+          this.config.onSubprocessEvent(runId, agentName, line);
+        } catch {
+          // skip malformed line
+        }
+      }
+      try { await unlink(path); } catch {}
+    }
+    void spawnStartMs;
   }
 
   async deliverAll(message: Omit<TeamMessage, "to">): Promise<void> {
