@@ -150,7 +150,12 @@ export class RateLimitGuard {
     }
 
     const state = this.states.get(ticket.key);
-    if (!state) return;
+    if (!state) {
+      // Provider config was removed between acquire and release — still drop
+      // the ticket so the Map doesn't accumulate ghosts.
+      this.tickets.delete(ticketId);
+      return;
+    }
 
     state.inflight = Math.max(0, state.inflight - 1);
     this.totalInflight = Math.max(0, this.totalInflight - 1);
