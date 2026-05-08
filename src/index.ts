@@ -570,6 +570,21 @@ export default async function (pi: ExtensionAPI) {
     agentDefs: AGENT_DEFS,
     rateLimit: rateLimitGuard,
     onSubprocessEvent: (runId, agentName, line) => {
+      // Phase 4.5 round-4 H2: a worker subprocess writes its own audit
+      // events into events-subprocess-<token>.jsonl. The host forwards
+      // those into the unified Observer stream, but a worker that
+      // declares category="verdict" or "lifecycle" would otherwise enter
+      // the projection's privileged paths (kind=correction, kind=note).
+      // Whitelist the categories subprocesses may legitimately emit;
+      // verdict/lifecycle remain host-only.
+      const SUBPROCESS_ALLOWED = new Set([
+        "tool_call",
+        "tool_result",
+        "message",
+        "error",
+        "budget",
+      ]);
+      if (!SUBPROCESS_ALLOWED.has(line.category)) return;
       observer.emit({
         runId,
         agentName,
@@ -588,15 +603,21 @@ export default async function (pi: ExtensionAPI) {
       // ConversationProjection's verdict path derives kind from a trusted
       // source. The summary still mentions verdict.step for human-readable
       // audit, but kind/section are driven by hostStep.
-      observer.emit({
-        runId,
-        agentName,
-        step: hostStep,
-        category: "verdict",
-        type: "emit",
-        payload: verdict,
-        summary: `${agentName}: ${verdict.verdict} on ${hostStep ?? verdict.step}`,
-      });
+      // Round-4 H2: pass {host: true} so the projection's gated verdict
+      // path accepts this emit. Worker-emitted verdict events arriving
+      // through onSubprocessEvent are now whitelisted out at that gate.
+      observer.emit(
+        {
+          runId,
+          agentName,
+          step: hostStep,
+          category: "verdict",
+          type: "emit",
+          payload: verdict,
+          summary: `${agentName}: ${verdict.verdict} on ${hostStep ?? verdict.step}`,
+        },
+        { host: true },
+      );
     },
   });
 

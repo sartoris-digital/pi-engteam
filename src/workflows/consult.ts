@@ -13,14 +13,21 @@ const LEAD_SHORT: Record<string, "eng" | "valid" | "invest"> = {
 };
 
 async function dispatch(ctx: StepContext, agentName: string, prompt: string, stepName: string): Promise<VerdictPayload> {
-  const verdict = await ctx.team.deliver(agentName, {
-    id: crypto.randomUUID(),
-    from: "system",
-    to: agentName,
-    summary: `Consult step: ${stepName}`,
-    message: prompt,
-    ts: new Date().toISOString(),
-  });
+  // Round-4 H1: pass stepName explicitly via opts.hostStep so parallel
+  // sibling deliveries (e.g. position-eng + position-valid + position-invest
+  // running concurrently) don't share a mutable currentStepName field.
+  const verdict = await ctx.team.deliver(
+    agentName,
+    {
+      id: crypto.randomUUID(),
+      from: "system",
+      to: agentName,
+      summary: `Consult step: ${stepName}`,
+      message: prompt,
+      ts: new Date().toISOString(),
+    },
+    { hostStep: stepName },
+  );
   if (!verdict) {
     throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName}`);
   }

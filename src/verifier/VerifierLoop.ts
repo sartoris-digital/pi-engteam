@@ -241,14 +241,18 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
         issues,
         reportPath,
       });
-      const correctiveVerdict = await cfg.team.deliver(cfg.workerAgentName, {
-        id: crypto.randomUUID(),
-        from: "verifier",
-        to: cfg.workerAgentName,
-        summary: `Re-iterate step: ${cfg.workerStep}`,
-        message: corrective,
-        ts: new Date().toISOString(),
-      });
+      const correctiveVerdict = await cfg.team.deliver(
+        cfg.workerAgentName,
+        {
+          id: crypto.randomUUID(),
+          from: "verifier",
+          to: cfg.workerAgentName,
+          summary: `Re-iterate step: ${cfg.workerStep}`,
+          message: corrective,
+          ts: new Date().toISOString(),
+        },
+        { hostStep: cfg.workerStep },
+      );
       // H-2: capture the worker's fresh verdict so the next verify pass checks
       // the corrected work, not the stale original verdict.
       if (correctiveVerdict) {

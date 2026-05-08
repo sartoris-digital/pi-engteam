@@ -129,13 +129,21 @@ export class TeamRuntime {
     this.knownDefs.set(name, def);
   }
 
-  async deliver(to: string, message: TeamMessage): Promise<VerdictPayload | undefined> {
+  async deliver(
+    to: string,
+    message: TeamMessage,
+    opts?: { hostStep?: string },
+  ): Promise<VerdictPayload | undefined> {
     const def = this.knownDefs.get(to);
     if (!def) throw new Error(`Teammate '${to}' is not registered. Add it to AGENT_DEFS.`);
 
-    // Round-3 H2: snapshot the host-set step at dispatch time so a later
-    // setStepContext call doesn't change which step this verdict belongs to.
-    const hostStepAtDispatch = this.currentStepName;
+    // Round-4 H1: prefer the caller-supplied hostStep over the shared
+    // currentStepName field. Parallel DAG fan-out (consult position-eng +
+    // position-valid + position-invest) sets currentStepName concurrently,
+    // so the shared field can leak one sibling's step into another's
+    // verdict emit. Passing hostStep through deliver() removes the shared
+    // mutable state from the per-call path.
+    const hostStepAtDispatch = opts?.hostStep ?? this.currentStepName;
 
     const provider = modelToProvider(def.model);
     const estimatedTokens = this.config.defaultEstimatedTokens ?? 4000;
