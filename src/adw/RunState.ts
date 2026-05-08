@@ -48,6 +48,32 @@ export async function saveRunState(runsDir: string, state: RunState): Promise<vo
   await rename(tmpFile, stateFile);
 }
 
+// Codex Phase 4 round-3 C-1: per-runId in-process mutex serializes all
+// load-modify-save cycles. Without this, a /run-cancel that lands between
+// ADWEngine's loadRunState() and saveRunState() at a level boundary still
+// gets clobbered by stale in-memory state. Both ADWEngine's terminal/level
+// saves and /run-cancel itself wrap their read-modify-write sequence in
+// withRunStateLock so writes are linearized within the process.
+const runStateLocks = new Map<string, Promise<unknown>>();
+export function withRunStateLock<T>(
+  runsDir: string,
+  runId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const key = `${runsDir}::${runId}`;
+  const prev = runStateLocks.get(key) ?? Promise.resolve();
+  // Chain onto the previous turn regardless of its outcome — a prior failure
+  // must not block subsequent saves.
+  const next = prev.then(fn, fn);
+  // Store a swallowed-error promise so unhandled rejections don't escape, but
+  // return the unswallowed promise so the caller still sees the real error.
+  runStateLocks.set(
+    key,
+    next.catch(() => undefined),
+  );
+  return next;
+}
+
 export async function loadRunState(runsDir: string, runId: string): Promise<RunState | null> {
   try {
     const stateFile = join(runsDir, runId, "state.json");

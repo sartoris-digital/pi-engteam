@@ -170,14 +170,29 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
       const run = await engine.startRun({ workflow: wf.name, goal: parsed.topic, budget: {} });
       await bootstrapConsultRun(join(runsDir, run.runId));
 
+      // Resolve selected short-names to long-form lead agent names for the
+      // dispatch step prompt and any future resume-time filtering.
+      const leadFor = (s: "eng" | "valid" | "invest"): string => {
+        if (s === "eng") return "engineering-lead";
+        if (s === "valid") return "validation-lead";
+        return "investigation-lead";
+      };
+      const consultTeams: string[] = parsed.teams && parsed.teams.length > 0
+        ? parsed.teams.map(leadFor)
+        : ["engineering-lead", "validation-lead", "investigation-lead"];
+
       // M1: persist round budget on the run state for autopilot/UI surfacing.
+      // Codex round-3 M: also persist consultTeams so the dispatch step's
+      // prompt + any resume-time workflow rebuild see the user-selected
+      // subset rather than defaulting to all three leads.
       const { loadRunState, saveRunState } = await import("../adw/RunState.js");
       const cur = await loadRunState(runsDir, run.runId);
       if (cur) {
         await saveRunState(runsDir, {
           ...cur,
           rounds: { current: 0, max: parsed.rounds },
-        });
+          consultTeams,
+        } as unknown as typeof cur);
       }
 
       engine.executeRun(run.runId).catch((err: unknown) => {

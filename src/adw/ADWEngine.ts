@@ -7,6 +7,7 @@ import {
   saveRunState,
   loadRunState,
   updateStep,
+  withRunStateLock,
 } from "./RunState.js";
 import { checkBudget, tickBudget } from "./BudgetGuard.js";
 import { writeActiveRun } from "./ActiveRun.js";
@@ -522,19 +523,27 @@ export class ADWEngine {
       if (aborted) break;
     }
 
-    if (!aborted) {
-      // Codex round-2 C-2: reload phase from disk one last time before the
-      // terminal save. A /run-cancel that lands after the final
-      // applyStepResult but before this save would otherwise be clobbered
-      // back to "done"/"failed".
-      const finalFresh = await loadRunState(this.config.runsDir, runId);
-      if (finalFresh?.phase === "cancelling" || finalFresh?.phase === "cancelled") {
-        state = { ...state, status: "aborted", phase: "cancelled" };
-      } else {
-        state = { ...state, status: anyFail ? "failed" : "succeeded", phase: anyFail ? "failed" : "done" };
+    // Codex round-2 C-2 + round-3 C-1: terminal save under per-runId mutex,
+    // re-reading phase from disk inside the critical section so a
+    // /run-cancel that landed after the last applyStepResult is honored
+    // and not overwritten back to "done"/"failed".
+    state = await withRunStateLock(this.config.runsDir, runId, async () => {
+      let terminal = state;
+      if (!aborted) {
+        const finalFresh = await loadRunState(this.config.runsDir, runId);
+        if (finalFresh?.phase === "cancelling" || finalFresh?.phase === "cancelled") {
+          terminal = { ...state, status: "aborted", phase: "cancelled" };
+        } else {
+          terminal = {
+            ...state,
+            status: anyFail ? "failed" : "succeeded",
+            phase: anyFail ? "failed" : "done",
+          };
+        }
       }
-    }
-    await saveRunState(this.config.runsDir, state);
+      await saveRunState(this.config.runsDir, terminal);
+      return terminal;
+    });
     this.clearUiStatus();
     this.config.observer.emit({
       runId,
@@ -611,11 +620,17 @@ export class ADWEngine {
       error: result.error,
     });
     next = { ...next, currentStep: stepDef.name };
-    // C2: pick up any concurrent phase mutation (e.g., /run-cancel) before saving,
-    // so we don't clobber a 'cancelling' write with stale in-memory phase.
-    const phaseFresh = await loadRunState(this.config.runsDir, runId);
-    if (phaseFresh?.phase) next = { ...next, phase: phaseFresh.phase };
-    await saveRunState(this.config.runsDir, next);
+    // C2 + round-3 C-1: pick up any concurrent phase mutation
+    // (e.g., /run-cancel) before saving, so we don't clobber a 'cancelling'
+    // write with stale in-memory phase. The reload+save is wrapped in
+    // withRunStateLock so /run-cancel cannot interleave between the load
+    // and the save within this process.
+    next = await withRunStateLock(this.config.runsDir, runId, async () => {
+      const phaseFresh = await loadRunState(this.config.runsDir, runId);
+      const merged = phaseFresh?.phase ? { ...next, phase: phaseFresh.phase } : next;
+      await saveRunState(this.config.runsDir, merged);
+      return merged;
+    });
     this.config.observer.emit({
       runId,
       step: stepDef.name,
