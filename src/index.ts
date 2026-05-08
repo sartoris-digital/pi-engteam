@@ -363,8 +363,12 @@ export default async function (pi: ExtensionAPI) {
       runDir: RUNS_DIR,
       expertiseDir: join(ENGINEERING_DIR, "expertise"),
     });
+    // Phase 5.5 round-3 M1: pass runsDir so the tasks.json hard-block
+    // works under non-standard runsDir layouts (e.g., a custom path
+    // that doesn't include /runs/ in its name).
     registerHardBlockers(pi, {
       hardBlockers: { enabled: true, alwaysOn: true },
+      runsDir: process.env["PI_ENGINEERING_RUNS_DIR"] ?? RUNS_DIR,
       domainLock: {
         policies: subTeamsCfg.domains,
         mode: subTeamsCfg.mode,

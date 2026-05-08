@@ -147,7 +147,7 @@ async function applyLayerD(
  */
 export function registerHardBlockers(
   pi: ExtensionAPI,
-  config: Pick<SafetyConfig, "hardBlockers"> & { domainLock?: DomainLockConfig },
+  config: Pick<SafetyConfig, "hardBlockers"> & { domainLock?: DomainLockConfig; runsDir?: string },
 ): void {
   if (!config.hardBlockers.enabled) return;
   pi.on("tool_call", async (event: any, _ctx: any) => {
@@ -185,12 +185,26 @@ export function registerHardBlockers(
           layer: "A",
         };
       }
+      // Phase 5.5 round-3 C1: same defense for tasks.json. classifier.ts
+      // treats redirects as 'destructive' (Judge-approvable), not
+      // 'blocked'. A worker could otherwise `echo '[]' >
+      // /runs/abc/tasks.json` or `tee >> .../tasks.json`, bypassing
+      // TaskUpdate's taskId validation. Match any Bash command that
+      // mentions a tasks.json under a /runs/ path.
+      if (/(?:\/runs\/|\/engineering-team\/runs\/)[^\s'"`]*\/tasks\.json/i.test(toolInput.command)
+          || /tasks\.json/i.test(toolInput.command) && /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(toolInput.command)) {
+        return {
+          block: true,
+          reason: "[Layer A] Bash command targets a run's tasks.json; only the TaskUpdate tool may modify it.",
+          layer: "A",
+        };
+      }
     }
 
     if (["Write", "Edit", "Read"].includes(toolName)) {
       const filePath = ((toolInput.file_path ?? toolInput.path ?? "") as string);
       if (filePath) {
-        const check = isProtectedPath(filePath);
+        const check = isProtectedPath(filePath, { runsDir: config.runsDir });
         if (check.blocked) {
           return { block: true, reason: `[Layer A] Protected path: ${check.reason}`, layer: "A" };
         }

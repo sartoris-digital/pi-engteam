@@ -87,14 +87,20 @@ function validateVerdictPayload(raw: unknown): VerdictPayload | undefined {
 // Phase 5.5 round-2 M1: pure helper extracted from deliver() so unit tests
 // can assert section ordering without driving a subprocess. Order:
 //   base persona → systemNotes → teamSuffix → expertise data block
+//
+// Round-3 M3: agent name shape is validated. An agent name containing
+// markdown headings or sentinels could otherwise corrupt the Team
+// Context section's framing.
+const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export function buildSystemPrompt(opts: {
   baseSystemPrompt: string;
   agentName: string;
   systemNotes: string;
   expertise: string;
 }): string {
+  const safeAgent = AGENT_NAME_RE.test(opts.agentName) ? opts.agentName : "agent";
   const teamSuffix =
-    `\n\n---\n## Team Context\nYour name in the team is: **${opts.agentName}**\n` +
+    `\n\n---\n## Team Context\nYour name in the team is: **${safeAgent}**\n` +
     `Use SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\n` +
     `Always end your turn with VerdictEmit when you have completed your assigned step.`;
   const notesBlock = opts.systemNotes

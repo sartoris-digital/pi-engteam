@@ -86,9 +86,13 @@ const SECRET_FILE_PATTERNS = [
   /\/credentials$/,
 ];
 
-export function isProtectedPath(filePath: string): { blocked: boolean; reason?: string } {
+export function isProtectedPath(filePath: string, opts?: { runsDir?: string }): { blocked: boolean; reason?: string } {
   const expanded = expandPath(filePath);
   const abs = resolve(expanded);
+  // Phase 5.5 round-3 M1: a configured runsDir lets the tasks.json rule
+  // protect non-standard layouts (e.g., a custom runsDir that doesn't
+  // contain "/runs/" in its path).
+  const runsDirAbs = opts?.runsDir ? resolve(expandPath(opts.runsDir)) : undefined;
   // Round-2 C2: also check the symlink-resolved variant so a worker can't
   // bypass the substring matches below by writing/reading through a
   // symlink whose lexical path looks innocent.
@@ -130,17 +134,24 @@ export function isProtectedPath(filePath: string): { blocked: boolean; reason?: 
       };
     }
 
-    // Phase 5.5 round-2 C2: tasks.json under a run directory must only
-    // be modified via TaskUpdate (which validates taskId shape). A
-    // direct Bash/Write/Edit to tasks.json would let a worker plant
+    // Phase 5.5 round-2 C2 + round-3 M1: tasks.json under a run directory
+    // must only be modified via TaskUpdate (which validates taskId shape).
+    // A direct Bash/Write/Edit to tasks.json would let a worker plant
     // unsafe records that orchestrator reminders later read back.
-    // Match `tasks.json` at the leaf under any path containing the run
-    // directory marker.
-    if (/\/tasks\.json$/i.test(cand) && /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(cand)) {
-      return {
-        blocked: true,
-        reason: "Run tasks.json is managed by the TaskUpdate tool only.",
-      };
+    //
+    // Round-3 M1: prefer a configured runsDir prefix check over the
+    // marker-based heuristic, so a custom runsDir layout (e.g.,
+    // /tmp/eng-state) is still protected. Fall through to the marker
+    // check when no runsDir is configured.
+    if (/\/tasks\.json$/i.test(cand)) {
+      const runsDirMatch = runsDirAbs && (cand === runsDirAbs || cand.startsWith(runsDirAbs + "/"));
+      const markerMatch = /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(cand);
+      if (runsDirMatch || markerMatch) {
+        return {
+          blocked: true,
+          reason: "Run tasks.json is managed by the TaskUpdate tool only.",
+        };
+      }
     }
   }
 

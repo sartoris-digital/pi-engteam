@@ -38,34 +38,39 @@ export type Task = {
   updatedAt: string;
 };
 
+// Round-3 M2: shared validator/normalizer used by both loadTasks and
+// saveTasks so the read and write paths agree. Returns null when the
+// record fails validation.
+function normalizeTask(item: unknown): Task | null {
+  if (!item || typeof item !== "object") return null;
+  const t = item as Record<string, unknown>;
+  if (typeof t.taskId !== "string" || !TASK_ID_RE.test(t.taskId)) return null;
+  const status = t.status;
+  if (status !== "pending" && status !== "in_progress" && status !== "completed" && status !== "blocked") return null;
+  const team = t.team;
+  const validTeam = !team || team === "engineering" || team === "validation" || team === "investigation" || team === "planning" || team === "cross-functional";
+  if (!validTeam) return null;
+  return {
+    taskId: t.taskId,
+    status: status as Task["status"],
+    notes: typeof t.notes === "string" ? t.notes : undefined,
+    owner: typeof t.owner === "string" ? t.owner : undefined,
+    team: team as Task["team"],
+    updatedAt: typeof t.updatedAt === "string" ? t.updatedAt : new Date().toISOString(),
+  };
+}
+
 export async function loadTasks(runsDir: string, runId: string): Promise<Task[]> {
   ensureSafeRunId(runId);
   const path = join(runsDir, runId, "tasks.json");
   try {
     const raw = JSON.parse(await readFile(path, "utf8"));
     if (!Array.isArray(raw)) return [];
-    // Round-2 C2 defense-in-depth: filter records that don't conform.
-    // A worker that bypassed TaskUpdate (e.g., direct file write before
-    // Layer A blocked it, or a stale file from before the validator
-    // shipped) could otherwise feed garbage downstream.
+    // Round-2 C2 defense-in-depth: drop records that don't conform.
     const out: Task[] = [];
     for (const item of raw) {
-      if (!item || typeof item !== "object") continue;
-      const t = item as Record<string, unknown>;
-      if (typeof t.taskId !== "string" || !TASK_ID_RE.test(t.taskId)) continue;
-      const status = t.status;
-      if (status !== "pending" && status !== "in_progress" && status !== "completed" && status !== "blocked") continue;
-      const team = t.team;
-      const validTeam = !team || team === "engineering" || team === "validation" || team === "investigation" || team === "planning" || team === "cross-functional";
-      if (!validTeam) continue;
-      out.push({
-        taskId: t.taskId,
-        status: t.status as Task["status"],
-        notes: typeof t.notes === "string" ? t.notes : undefined,
-        owner: typeof t.owner === "string" ? t.owner : undefined,
-        team: team as Task["team"],
-        updatedAt: typeof t.updatedAt === "string" ? t.updatedAt : new Date().toISOString(),
-      });
+      const normalized = normalizeTask(item);
+      if (normalized) out.push(normalized);
     }
     return out;
   } catch {
@@ -75,6 +80,14 @@ export async function loadTasks(runsDir: string, runId: string): Promise<Task[]>
 
 export async function saveTasks(runsDir: string, runId: string, tasks: Task[]): Promise<void> {
   ensureSafeRunId(runId);
+  // Round-3 M2: validate symmetrically with loadTasks. A caller that
+  // tries to persist a malformed record gets a hard error instead of
+  // silent state loss on the next read.
+  for (let i = 0; i < tasks.length; i++) {
+    if (normalizeTask(tasks[i]) === null) {
+      throw new Error(`saveTasks refused: tasks[${i}] failed validation (taskId/status/team must conform).`);
+    }
+  }
   const dir = join(runsDir, runId);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "tasks.json"), JSON.stringify(tasks, null, 2));
