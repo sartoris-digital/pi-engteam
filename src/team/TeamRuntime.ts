@@ -39,6 +39,13 @@ type TeamRuntimeConfig = {
    * only registered AGENT_DEFS pass through.
    */
   expertiseFor?: (agentName: string) => Promise<string>;
+  /**
+   * Phase 5.5 §9.2: optional resolver returning host-side system reminders
+   * to inject into the agent's prompt. Used by the Orchestrator coordination
+   * path to surface "N tasks pending team assignment" and "M tasks still
+   * in flight" messages. Returns an empty string when there's nothing.
+   */
+  systemNotesFor?: (agentName: string, runId: string) => Promise<string>;
   agentDefs?: AgentDefinition[];
   /** L2: per-subprocess kill timeout in ms (default 10 minutes) */
   agentTimeoutMs?: number;
@@ -248,12 +255,29 @@ export class TeamRuntime {
         );
       }
 
-      await writeFile(systemPromptFile, def.systemPrompt + teamSuffix + expertiseSuffix);
+      // Phase 5.5 §9.2: host-side system reminders (e.g., "N tasks pending
+      // team assignment"). Injected ABOVE the team suffix so the agent
+      // sees them as primary instructions. Best-effort.
+      const runId = this.currentRunId ?? message.id;
+      let systemNotes = "";
+      try {
+        if (this.config.systemNotesFor) {
+          const rendered = await this.config.systemNotesFor(to, runId);
+          if (rendered && rendered.length > 0) {
+            systemNotes = "\n\n---\n## System Reminders\n" + rendered + "\n";
+          }
+        }
+      } catch (err) {
+        console.error(
+          `[pi-team] systemNotesFor failed for ${to}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
+      await writeFile(systemPromptFile, def.systemPrompt + teamSuffix + systemNotes + expertiseSuffix);
 
       const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
       const { command, args } = getPiInvocation(piArgs);
-
-      const runId = this.currentRunId ?? id;
       let proc: ReturnType<typeof spawn> | undefined;
       const killTimeout = setTimeout(() => {
         proc?.kill();

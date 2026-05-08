@@ -32,7 +32,7 @@ import { loadSafetyConfig } from "./config.js";
 import { loadTeamsConfig } from "./safety/teams-config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
 import { createVerdictEmitTool } from "./team/tools/VerdictEmit.js";
-import { createTaskListTool, createTaskUpdateTool } from "./team/tools/TaskList.js";
+import { createTaskListTool, createTaskUpdateTool, loadTasks, unassignedTasks, liveTasks } from "./team/tools/TaskList.js";
 import { createRequestApprovalTool } from "./team/tools/RequestApproval.js";
 import { createGrantApprovalTool } from "./team/tools/GrantApproval.js";
 import { registerRunStartCommand } from "./commands/run-start.js";
@@ -593,6 +593,36 @@ export default async function (pi: ExtensionAPI) {
       const joined = [exp, ro].filter((s) => s.length > 0).join("\n");
       if (joined.length <= COMBINED_CAP) return joined;
       return joined.slice(0, COMBINED_CAP - 1) + "…";
+    },
+    // Phase 5.5 §9.2: orchestrator-only host reminders for TillDone team
+    // assignment + mark-on-complete nudge. Reads tasks.json, surfaces
+    // unassigned/live counts. Other agents see no reminders.
+    systemNotesFor: async (agentName: string, runId: string) => {
+      if (agentName !== "orchestrator") return "";
+      try {
+        const tasks = await loadTasks(RUNS_DIR, runId);
+        if (tasks.length === 0) return "";
+        const unassigned = unassignedTasks(tasks);
+        const live = liveTasks(tasks);
+        const lines: string[] = [];
+        if (unassigned.length > 0) {
+          const ids = unassigned.slice(0, 10).map((t) => t.taskId).join(", ");
+          const more = unassigned.length > 10 ? `, +${unassigned.length - 10} more` : "";
+          lines.push(
+            `- **${unassigned.length} task(s) pending team assignment**: [${ids}${more}]. ` +
+            `Issue TaskUpdate({taskId, status, team: "engineering"|"validation"|"investigation"|"planning"|"cross-functional"}) for each.`,
+          );
+        }
+        if (live.length > 0) {
+          lines.push(
+            `- **${live.length} task(s) still in flight** (pending or in_progress). ` +
+            `Decide whether to continue, escalate, or mark blocked before ending your turn.`,
+          );
+        }
+        return lines.join("\n");
+      } catch {
+        return "";
+      }
     },
     onSubprocessEvent: (runId, agentName, line) => {
       // Phase 4.5 round-4 H2: a worker subprocess writes its own audit
