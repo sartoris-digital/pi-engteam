@@ -357,7 +357,11 @@ export function registerDomainLock(
 
     if (result.allowed) return undefined;
 
-    if (opts.mode === "warn") {
+    // Use the result's mode, not the caller-supplied mode. checkDomain may
+    // have promoted to "block" via policy.force_block or bash_policy. Codex
+    // P3.5 round-2 NC-1: opts.mode-only branching silently downgraded force-
+    // block returns to warn.
+    if (result.mode === "warn") {
       opts.emitEvent({
         category: "safety",
         type: "domain_warn",

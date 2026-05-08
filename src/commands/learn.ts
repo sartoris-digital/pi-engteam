@@ -49,6 +49,7 @@ export function registerLearnCommand(
   pi: ExtensionAPI,
   team: TeamRuntime,
   runsDir: string,
+  emitEvent?: (evt: { category: "safety"; type: "verifier_script_updated"; payload: Record<string, unknown> }) => void,
 ): void {
   pi.registerCommand("learn", {
     description:
@@ -91,6 +92,14 @@ export function registerLearnCommand(
           changelogPath,
           gapsPaths,
           reportRunDir,
+          // Codex P3.5 round-1 LOW-15: emit observability event on each promote.
+          onPromote: (script, version) => {
+            emitEvent?.({
+              category: "safety",
+              type: "verifier_script_updated",
+              payload: { script, version, ts: new Date().toISOString() },
+            });
+          },
         });
         ctx.ui.notify(
           [

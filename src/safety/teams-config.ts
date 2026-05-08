@@ -191,6 +191,10 @@ function mergePolicy(a: DomainPolicy, b: DomainPolicy): DomainPolicy {
     upsert: unionStrings(a.upsert, b.upsert),
     delete: unionStrings(a.delete, b.delete),
     bash_policy: mostRestrictiveBashPolicy(a.bash_policy, b.bash_policy),
+    // force_block: any layer that asserts force_block wins. User config can
+    // promote an agent to force_block but cannot demote one that DEFAULT_DOMAINS
+    // declares (more-restrictive-wins).
+    force_block: a.force_block || b.force_block || undefined,
   };
 }
 
@@ -227,6 +231,7 @@ function substitutePolicy(
     read: p.read.map(sub),
     upsert: p.upsert.map(sub),
     delete: p.delete.map(sub),
+    force_block: p.force_block,
     bash_policy: p.bash_policy
       ? {
           mode: "script-only",
