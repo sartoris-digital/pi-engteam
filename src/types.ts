@@ -73,7 +73,7 @@ export type EngteamEvent = {
   summary?: string;
 };
 
-export type Verdict = "PASS" | "FAIL" | "NEEDS_MORE";
+export type Verdict = "PASS" | "FAIL" | "NEEDS_MORE" | "PARTIAL";
 
 export type ClassifierResult = {
   classification: "safe" | "destructive" | "blocked";

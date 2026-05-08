@@ -7,13 +7,14 @@ export function createVerdictEmitTool(onVerdict: (v: VerdictPayload) => void) {
   return defineTool({
     name: "VerdictEmit",
     label: "Emit Verdict",
-    description: "Emit a structured verdict for the current workflow step. Call this at the end of every turn. PASS = complete and correct. FAIL = issues found (list them in issues). NEEDS_MORE = need more information.",
+    description: "Emit a structured verdict for the current workflow step. Call this at the end of every turn. PASS = complete and correct. FAIL = issues found (list them in issues). NEEDS_MORE = need more information. PARTIAL = verifier-style result: some claims unverifiable but no failures (gaps logged for the Learner).",
     parameters: Type.Object({
       step: Type.String({ description: "Step name this verdict applies to, e.g. 'build', 'review'" }),
       verdict: Type.Union([
         Type.Literal("PASS"),
         Type.Literal("FAIL"),
         Type.Literal("NEEDS_MORE"),
+        Type.Literal("PARTIAL"),
       ], { description: "Verdict value" }),
       issues: Type.Optional(Type.Array(Type.String(), {
         description: "List of specific issues found (required when verdict is FAIL)",

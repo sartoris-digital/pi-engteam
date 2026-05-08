@@ -1,4 +1,4 @@
-import { mkdir, appendFile, readFile, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import type { TeamRuntime } from "../team/TeamRuntime.js";
 import type { VerdictPayload } from "../types.js";
@@ -48,26 +48,12 @@ function parseConfidenceFromReport(report: string): VerifyConfidence | undefined
   return m ? (m[1] as VerifyConfidence) : undefined;
 }
 
-async function readSessionSlice(runDir: string, agent: string): Promise<string> {
-  const path = join(runDir, `session-${agent}.jsonl`);
-  try {
-    const raw = await readFile(path, "utf8");
-    const lines = raw.split("\n").filter(Boolean);
-    const tail = lines.slice(Math.max(0, lines.length - 200));
-    return tail.join("\n");
-  } catch {
-    return "(no session slice available)";
-  }
-}
-
 function buildVerifierPrompt(opts: {
   cfg: VerifierLoopConfig;
   iter: number;
-  reportPath: string;
-  sessionSlice: string;
+  workerVerdict: VerdictPayload;
 }): string {
-  const { cfg, iter, reportPath, sessionSlice } = opts;
-  const v = cfg.workerVerdict;
+  const { cfg, iter, workerVerdict } = opts;
   return `You are the Verifier. Atomize the worker's claims and verify each one via deterministic scripts.
 
 WORKER: ${cfg.workerAgentName}
@@ -77,24 +63,18 @@ RUN_ID: ${cfg.runId}
 RUN_DIR: ${cfg.runDir}
 
 WORKER VERDICT:
-${JSON.stringify(v, null, 2)}
+${JSON.stringify(workerVerdict, null, 2)}
 
 WORKER ARTIFACTS:
-${(v.artifacts ?? []).map((a) => `- ${a}`).join("\n") || "(none)"}
-
-WORKER SESSION SLICE (last 200 lines):
-${sessionSlice}
+${(workerVerdict.artifacts ?? []).map((a) => `- ${a}`).join("\n") || "(none)"}
 
 INSTRUCTIONS:
 1. Atomize the worker's claims into discrete verifiable items.
 2. For each claim, invoke an appropriate script under ~/.pi/engineering-team/verifier-scripts/ via 'uv run --script <script> <args>'.
-3. Write your full report to: ${reportPath}
-   - Begin every report with a STATUS: line (PASS|FAIL|PARTIAL) and a CONFIDENCE: line (PERFECT|VERIFIED|PARTIAL|FEEDBACK|FAILED).
-4. Call VerdictEmit with:
+3. Call VerdictEmit with:
    - step: "verify:${cfg.workerStep}"
-   - verdict: PASS | FAIL | PARTIAL
-   - issues: one entry per failed claim with file:line and the script output
-   - artifacts: ["${reportPath}"]
+   - verdict: PASS | FAIL | PARTIAL (PASS = every claim verified; FAIL = at least one claim failed; PARTIAL = no failures but some claims unverifiable)
+   - issues: one entry per failed claim with file:line and the script output. The host writes a structured report file from your verdict + issues — you do NOT have Write access.
 `;
 }
 
@@ -113,23 +93,18 @@ REPORT: ${opts.reportPath}
 Re-execute step '${opts.workerStep}' addressing each issue. End your turn with a fresh VerdictEmit.`;
 }
 
-async function appendGap(runDir: string, entry: Record<string, unknown>): Promise<void> {
-  const dir = join(runDir, "learning");
-  await mkdir(dir, { recursive: true });
-  await appendFile(join(dir, "gaps.jsonl"), JSON.stringify(entry) + "\n");
-}
-
 export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResult> {
   const verificationDir = join(cfg.runDir, "verification");
   await mkdir(verificationDir, { recursive: true });
 
   let lastIssues: string[] = [];
-  let lastConfidence: VerifyConfidence = "FAILED";
+  // Track the worker verdict that the verifier should re-check. Updated when
+  // the worker re-iterates after a corrective message (Codex round-1 P3 H-2).
+  let currentWorkerVerdict: VerdictPayload = cfg.workerVerdict;
 
   for (let iter = 1; iter <= cfg.maxVerifyLoops; iter++) {
     const reportPath = join(verificationDir, `${cfg.workerStep}-${iter}.md`);
-    const sessionSlice = await readSessionSlice(cfg.runDir, cfg.workerAgentName);
-    const prompt = buildVerifierPrompt({ cfg, iter, reportPath, sessionSlice });
+    const prompt = buildVerifierPrompt({ cfg, iter, workerVerdict: currentWorkerVerdict });
 
     const verdict = await cfg.team.deliver(cfg.verifierAgentName, {
       id: crypto.randomUUID(),
@@ -146,26 +121,22 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
 
     const v = (verdict.verdict as "PASS" | "FAIL" | "PARTIAL") ?? "FAIL";
     const issues = verdict.issues ?? [];
-    let reportText = "";
-    try {
-      reportText = await readFile(reportPath, "utf8");
-    } catch {
-      reportText = `STATUS: ${v}\nCONFIDENCE: ${inferConfidence(v, issues)}\n(no report file written)`;
-      try { await writeFile(reportPath, reportText); } catch { /* best-effort */ }
-    }
-    const confidence = parseConfidenceFromReport(reportText) ?? inferConfidence(v, issues);
+    const confidence = inferConfidence(v, issues);
     lastIssues = issues;
-    lastConfidence = confidence;
+
+    // Host writes the structured report — verifier has no Write access (M-1).
+    const reportText = `STATUS: ${v}\nCONFIDENCE: ${confidence}\n\nWorker step: ${cfg.workerStep}\nIteration: ${iter}\n\nIssues:\n${issues.map((i, n) => `${n + 1}. ${i}`).join("\n") || "(none)"}\n`;
+    try { await writeFile(reportPath, reportText); } catch { /* best-effort */ }
 
     if (v === "PASS") {
       return { verdict: "PASS", issues, confidence, report: reportPath };
     }
 
     if (v === "PARTIAL") {
+      // L-1: ADWEngine's onPartialGap callback is the sole writer to gaps.jsonl.
+      // VerifierLoop only emits the gap entries through the callback.
       for (const claim of issues) {
-        const gapEntry = { step: cfg.workerStep, claim, reason: "verifier reported PARTIAL" };
-        await appendGap(cfg.runDir, { ...gapEntry, runId: cfg.runId, ts: new Date().toISOString() });
-        cfg.onPartialGap?.(gapEntry);
+        cfg.onPartialGap?.({ step: cfg.workerStep, claim, reason: "verifier reported PARTIAL" });
       }
       return { verdict: "PARTIAL", issues, confidence, report: reportPath };
     }
@@ -176,7 +147,7 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
         issues,
         reportPath,
       });
-      await cfg.team.deliver(cfg.workerAgentName, {
+      const correctiveVerdict = await cfg.team.deliver(cfg.workerAgentName, {
         id: crypto.randomUUID(),
         from: "verifier",
         to: cfg.workerAgentName,
@@ -184,6 +155,11 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
         message: corrective,
         ts: new Date().toISOString(),
       });
+      // H-2: capture the worker's fresh verdict so the next verify pass checks
+      // the corrected work, not the stale original verdict.
+      if (correctiveVerdict) {
+        currentWorkerVerdict = correctiveVerdict;
+      }
     }
   }
 

@@ -205,10 +205,15 @@ export function checkDomain(opts: {
 
   if (operation === "Bash") {
     if (!policy.bash_policy) return { allowed: true }; // Layer C handles
+    // Agents declaring bash_policy: script-only have a security model that
+    // depends on enforcement. We override the caller's "warn" mode here so
+    // these agents are ALWAYS blocked on policy violations, regardless of
+    // the global teams.yaml mode. (Codex round-1 P3 C-1.)
+    const enforcedMode = "block";
     if (!command) {
       return {
         allowed: false,
-        mode,
+        mode: enforcedMode,
         reason: "domain-lock",
         structured: {
           block: true,
@@ -229,7 +234,7 @@ export function checkDomain(opts: {
     if (!trimmed.startsWith(runner + " ")) {
       return {
         allowed: false,
-        mode,
+        mode: enforcedMode,
         reason: "domain-lock",
         structured: {
           block: true,
@@ -259,7 +264,7 @@ export function checkDomain(opts: {
     if (!matched) {
       return {
         allowed: false,
-        mode,
+        mode: enforcedMode,
         reason: "domain-lock",
         structured: {
           block: true,
@@ -282,7 +287,7 @@ export function checkDomain(opts: {
     if (hasCompoundOperators(tail)) {
       return {
         allowed: false,
-        mode,
+        mode: enforcedMode,
         reason: "domain-lock",
         structured: {
           block: true,

@@ -54,10 +54,7 @@ describe("VerifierLoop", () => {
 
   it("returns PASS on first verifier verdict", async () => {
     const { team, calls } = makeMockTeam([
-      async ({ message }) => {
-        await writeReport(runDir, "build", 1, "STATUS: PASS\nCONFIDENCE: VERIFIED\n");
-        return { step: "verify:build", verdict: "PASS", artifacts: [] };
-      },
+      async () => ({ step: "verify:build", verdict: "PASS", artifacts: [] }),
     ]);
     const res = await runVerifyLoop({
       team,
@@ -70,7 +67,8 @@ describe("VerifierLoop", () => {
       maxVerifyLoops: 3,
     });
     expect(res.verdict).toBe("PASS");
-    expect(res.confidence).toBe("VERIFIED");
+    // Empty issues → PERFECT confidence per inferConfidence rule.
+    expect(res.confidence).toBe("PERFECT");
     expect(calls.length).toBe(1);
     expect(calls[0].agent).toBe("verifier");
   });
@@ -105,13 +103,10 @@ describe("VerifierLoop", () => {
     expect(calls[2].agent).toBe("verifier");
   });
 
-  it("on PARTIAL, logs a gap to gaps.jsonl and returns PARTIAL", async () => {
+  it("on PARTIAL, invokes onPartialGap callback (single-writer policy) and returns PARTIAL", async () => {
     const onPartialGap = vi.fn();
     const { team } = makeMockTeam([
-      async () => {
-        await writeReport(runDir, "build", 1, "STATUS: PARTIAL\nCONFIDENCE: PARTIAL\n");
-        return { step: "verify:build", verdict: "PARTIAL", issues: ["claim Y unverifiable"] };
-      },
+      async () => ({ step: "verify:build", verdict: "PARTIAL", issues: ["claim Y unverifiable"] }),
     ]);
     const res = await runVerifyLoop({
       team,
@@ -130,8 +125,8 @@ describe("VerifierLoop", () => {
       claim: "claim Y unverifiable",
       reason: "verifier reported PARTIAL",
     });
-    const raw = await readFile(join(runDir, "learning", "gaps.jsonl"), "utf8");
-    expect(raw).toContain("claim Y unverifiable");
+    // Codex round-1 P3 L-1: VerifierLoop no longer writes gaps.jsonl directly.
+    // ADWEngine's onPartialGap callback is the sole writer.
   });
 
   it("throws VerifyExhaustedError when all loops produce FAIL", async () => {
@@ -264,14 +259,45 @@ describe("VerifierLoop", () => {
     expect(_testing.inferConfidence("FAIL", [])).toBe("FAILED");
   });
 
-  it("includes worker session slice in the verifier prompt when available", async () => {
-    await writeFile(
-      join(runDir, "session-implementer.jsonl"),
-      ['{"role":"assistant","text":"changed src/foo.ts"}', '{"role":"user","text":"ok"}'].join("\n"),
-    );
+  it("builds the verifier prompt from the worker verdict + artifacts (no session slice — TeamRuntime spawns with --no-session)", async () => {
     const { team, calls } = makeMockTeam([
-      async () => {
-        await writeReport(runDir, "build", 1, "STATUS: PASS\nCONFIDENCE: VERIFIED\n");
+      async () => ({ step: "verify:build", verdict: "PASS" }),
+    ]);
+    await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: "build",
+      workerVerdict: { ...baseVerdict, artifacts: ["src/foo.ts", "tests/foo.test.ts"] },
+      runId: "r9",
+      runDir,
+      maxVerifyLoops: 3,
+    });
+    const promptText = calls[0].message.message as string;
+    expect(promptText).toContain("WORKER ARTIFACTS:");
+    expect(promptText).toContain("src/foo.ts");
+    expect(promptText).toContain("tests/foo.test.ts");
+    // The session-slice scaffolding has been intentionally removed (Codex P3 H-3).
+    expect(promptText).not.toContain("session slice");
+  });
+
+  it("re-iteration uses the worker's fresh verdict, not the original stale one (Codex P3 H-2)", async () => {
+    const verifierCalls: any[] = [];
+    const { team } = makeMockTeam([
+      // First verifier pass — FAILs.
+      async ({ message }) => {
+        verifierCalls.push(message.message);
+        return { step: "verify:build", verdict: "FAIL", issues: ["original issue"] };
+      },
+      // Worker re-iter — emits a corrected verdict.
+      async () => ({
+        step: "build",
+        verdict: "PASS",
+        artifacts: ["src/foo.ts", "src/CORRECTED.ts"],
+      }),
+      // Second verifier pass — should see the corrected artifacts.
+      async ({ message }) => {
+        verifierCalls.push(message.message);
         return { step: "verify:build", verdict: "PASS" };
       },
     ]);
@@ -281,31 +307,13 @@ describe("VerifierLoop", () => {
       workerAgentName: "implementer",
       workerStep: "build",
       workerVerdict: baseVerdict,
-      runId: "r9",
+      runId: "r-h2",
       runDir,
       maxVerifyLoops: 3,
     });
-    expect((calls[0].message.message as string)).toContain("changed src/foo.ts");
-  });
-
-  it("falls back to a placeholder when no session slice file exists", async () => {
-    const { team, calls } = makeMockTeam([
-      async () => {
-        await writeReport(runDir, "build", 1, "STATUS: PASS\nCONFIDENCE: VERIFIED\n");
-        return { step: "verify:build", verdict: "PASS" };
-      },
-    ]);
-    await runVerifyLoop({
-      team,
-      verifierAgentName: "verifier",
-      workerAgentName: "ghost-agent",
-      workerStep: "build",
-      workerVerdict: baseVerdict,
-      runId: "r10",
-      runDir,
-      maxVerifyLoops: 3,
-    });
-    expect((calls[0].message.message as string)).toContain("(no session slice available)");
+    expect(verifierCalls.length).toBe(2);
+    expect(verifierCalls[0]).not.toContain("CORRECTED.ts");
+    expect(verifierCalls[1]).toContain("CORRECTED.ts");
   });
 
   it("corrective message references the verifier issues and report path", () => {
