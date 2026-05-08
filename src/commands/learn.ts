@@ -9,10 +9,21 @@ import { join } from "path";
 import type { TeamRuntime } from "../team/TeamRuntime.js";
 import { runLearner } from "../learner/LearnerOrchestrator.js";
 
+// runId must be a single safe segment (no path separators, no `..`, no
+// surrounding whitespace, alphanumeric+`-_` only). Codex P3.5 round-1 M-12:
+// previously a runId of `../../target` would join into runsDir paths.
+const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
 export function parseLearnArgs(raw: string): { runId?: string } {
   const trimmed = raw.trim();
   if (!trimmed) return {};
-  return { runId: trimmed.split(/\s+/)[0] };
+  const candidate = trimmed.split(/\s+/)[0];
+  if (!RUN_ID_RE.test(candidate)) {
+    throw new Error(
+      `Invalid runId '${candidate}': must match [A-Za-z0-9][A-Za-z0-9_-]{0,127}.`,
+    );
+  }
+  return { runId: candidate };
 }
 
 export async function discoverGapFiles(runsDir: string, runId?: string): Promise<string[]> {

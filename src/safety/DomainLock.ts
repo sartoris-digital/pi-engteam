@@ -180,16 +180,19 @@ export function checkDomain(opts: {
   if (operation === "Write" || operation === "Edit") {
     if (!path) return { allowed: true };
     if (containsParentTraversal(path)) {
-      return rejectTraversal(agent, operation, path, mode, { upsert: policy.upsert, delete: policy.delete });
+      return rejectTraversal(agent, operation, path, policy.force_block ? "block" : mode, { upsert: policy.upsert, delete: policy.delete });
     }
     // Only `upsert` grants write/edit. `delete` is a separate verb and
     // must NOT imply write permission (Codex round 1 MEDIUM #3).
     if (pathAllowed(path, policy.upsert)) {
       return { allowed: true };
     }
+    // force_block agents (verifier-style security model) always block on
+    // path-domain violations regardless of global mode. Codex P3.5 round-1 C-1.
+    const enforcedMode = policy.force_block ? "block" : mode;
     return {
       allowed: false,
-      mode,
+      mode: enforcedMode,
       reason: "domain-lock",
       structured: {
         block: true,

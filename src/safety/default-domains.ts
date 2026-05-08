@@ -14,6 +14,12 @@ export type DomainPolicy = {
   upsert: string[];
   delete: string[];
   bash_policy?: BashPolicy;
+  // When true, Layer D forces block mode on this agent's Write/Edit/Bash
+  // violations regardless of the global teams.yaml mode. Used for agents whose
+  // security model depends on enforcement (verifier, learner). bash_policy
+  // already implies force-block on its own narrow path; force_block applies
+  // the same guarantee to path-domain violations.
+  force_block?: boolean;
 };
 
 export type DomainPolicyMap = Record<string, DomainPolicy>;
@@ -144,7 +150,7 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
     },
   },
 
-  // --- Learner: staging-scoped writes, no custom bash policy ---
+  // --- Learner: staging-scoped writes; force_block + script-only bash ---
   learner: {
     read: ["."],
     upsert: [
@@ -152,5 +158,15 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
       "${RUN_DIR}/learning/",
     ],
     delete: [],
+    force_block: true,
+    bash_policy: {
+      mode: "script-only",
+      runner: "uv run --script",
+      // Learner can run any verifier-script (active or staged) for fixture validation.
+      allowed_scripts: [
+        "~/.pi/engineering-team/verifier-scripts/*.py",
+        "~/.pi/engineering-team/verifier-scripts/.staging/*.py",
+      ],
+    },
   },
 };

@@ -238,7 +238,21 @@ async function promote(opts: {
 
   // Atomic rename: same filesystem (both paths under scriptsDir).
   await mkdir(dirname(activePath), { recursive: true });
-  await rename(stagedPath, activePath);
+  try {
+    await rename(stagedPath, activePath);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "EXDEV") {
+      // Cross-filesystem move (rare; possible under bind-mounts). Fall back
+      // to copy + unlink. Both targets are under verifier-scripts so the
+      // copy contents are bounded.
+      const content = await readFile(stagedPath);
+      await writeFile(activePath, content);
+      await unlink(stagedPath);
+    } else {
+      throw err;
+    }
+  }
 
   // CHANGELOG entry — append-only.
   const entry =
@@ -277,6 +291,15 @@ async function dispatchLearnerForProposals(opts: {
   return parseProposalsFromVerdict(verdict, opts.gaps);
 }
 
+// Strict scriptName grammar: bare basename, [A-Za-z0-9_.-], 1..64 chars,
+// must end in .py (verifier scripts are Python). Rejects path separators,
+// `..`, dotfiles, leading dot, etc. Codex P3.5 round-1 C-5: prevent path
+// traversal in orchestrator's join(stagingDir, proposal.scriptName).
+const SCRIPT_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,62}\.py$/;
+function isSafeScriptName(name: unknown): name is string {
+  return typeof name === "string" && SCRIPT_NAME.test(name) && !name.includes("..");
+}
+
 export function parseProposalsFromVerdict(
   verdict: VerdictPayload | undefined,
   gaps: GapEntry[],
@@ -288,6 +311,10 @@ export function parseProposalsFromVerdict(
     const proposals: ProposedChange[] = [];
     for (const p of parsed) {
       if (!p.scriptName || !p.fixturePath) continue;
+      // Refuse any proposal whose scriptName isn't a safe basename. The
+      // orchestrator otherwise would join() an attacker-controlled path
+      // segment into stagingDir/scriptsDir.
+      if (!isSafeScriptName(p.scriptName)) continue;
       const gap = (p.gap as GapEntry | undefined) ??
         gaps.find((g) => g.claim === (p as any).gapClaim) ??
         gaps[0];
