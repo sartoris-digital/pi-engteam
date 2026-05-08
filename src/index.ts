@@ -358,14 +358,21 @@ export default async function (pi: ExtensionAPI) {
         }
         return undefined;
       });
-    } else if (!subAgentDef && subAgentName) {
-      // Subprocess started with an agent name we don't recognize. Fail closed.
+    } else if (!subAgentDef) {
+      // Subprocess started with an empty or unrecognized agent name. Fail closed
+      // for any tool that mutates state or accesses secrets — including custom
+      // tools like UseSecret that an unknown agent shouldn't be able to invoke.
+      // Empty string is treated the same as unknown: better-safe-than-sorry.
+      const FAIL_CLOSED_TOOLS = new Set([
+        "bash", "write", "edit", "find", // built-ins; "find" because it can -delete
+        "UseSecret", "RequestApproval", "GrantApproval", // custom tools that affect state
+      ]);
       pi.on("tool_call", async (event: any) => {
         const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
-        if (["bash", "write", "edit"].includes(rawName.toLowerCase())) {
+        if (FAIL_CLOSED_TOOLS.has(rawName) || FAIL_CLOSED_TOOLS.has(rawName.toLowerCase())) {
           return {
             block: true,
-            reason: `[Layer D] Subprocess agent '${subAgentName}' has no AGENT_DEFS entry; mutating tools (${rawName}) blocked by default.`,
+            reason: `[Layer D] Subprocess agent '${subAgentName || "<unset>"}' has no AGENT_DEFS entry; tool '${rawName}' blocked by default.`,
           };
         }
         return undefined;

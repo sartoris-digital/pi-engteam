@@ -108,24 +108,26 @@ function buildHint(operation: DomainOperation, target: string, agent: string): s
 // they actually function as shell operators.
 function hasCompoundOperators(remainder: string): boolean {
   if (remainder.trim() === "") return false;
+  // Newline is a shell command separator that shell-quote does NOT tokenize as
+  // an op. Bare newlines, CR, or process-substitution `<(...)` / `>(...)` after
+  // the allowed script must be rejected before we even hand to shell-quote.
+  if (/[\n\r]/.test(remainder)) return true;
+  if (/<\(|>\(/.test(remainder)) return true;
+  // Here-strings and here-docs.
+  if (/<<</.test(remainder) || /<<-?/.test(remainder)) return true;
   let parsed: ReturnType<typeof shellParse>;
   try {
     parsed = shellParse(remainder);
   } catch {
-    // Parse failed → assume malformed/dangerous. Reject.
     return true;
   }
   for (const tok of parsed) {
     if (typeof tok === "object" && tok !== null && "op" in tok) {
-      // Any operator (`;`, `&&`, `||`, `|`, `&`, `>`, `>>`, `<`, etc.) is rejected.
       return true;
     }
   }
-  // shell-quote returns command-substitution forms ($(...) and backticks) as
-  // plain string tokens rather than ops. Scan the joined string-tokens for
-  // these forms after stripping shell-quote-recognized quoting.
   const joined = parsed.filter((t): t is string => typeof t === "string").join(" ");
-  if (/\$\(|`/.test(joined)) return true;
+  if (/\$\(|`|\$\{[^}]*[?:][^}]*\}/.test(joined)) return true;
   return false;
 }
 
