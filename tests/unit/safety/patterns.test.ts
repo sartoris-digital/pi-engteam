@@ -35,6 +35,13 @@ describe("isProtectedPath", () => {
     expect(isProtectedPath(expandPath("~/.aws/credentials")).blocked).toBe(true));
   it("allows a normal project path", () =>
     expect(isProtectedPath("/home/user/projects/myapp/src/index.ts").blocked).toBe(false));
+  // Phase 5 round-1 C1: single-writer policy enforcement on expertise files.
+  it("blocks user-global expertise file writes (Phase 5 §8.3)", () =>
+    expect(isProtectedPath(expandPath("~/.pi/engineering-team/expertise/engineer.md")).blocked).toBe(true));
+  it("blocks project-local expertise file writes (Phase 5 §8.3)", () =>
+    expect(isProtectedPath("/home/user/proj/.pi/engineering-team/expertise/eng.md").blocked).toBe(true));
+  it("blocks _readonly subdir writes (Phase 5 §8.5)", () =>
+    expect(isProtectedPath("/home/user/proj/.pi/engineering-team/expertise/_readonly/billing.md").blocked).toBe(true));
 });
 
 describe("isForcePush", () => {

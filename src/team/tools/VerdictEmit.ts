@@ -25,6 +25,21 @@ export function createVerdictEmitTool(onVerdict: (v: VerdictPayload) => void) {
       handoffHint: Type.Optional(Type.String({
         description: "Routing hint for failure escalation: 'security'|'perf'|'re-plan'",
       })),
+      // Phase 5 §8.3 wisdom fields — fed into per-agent expertise files
+      // by Memory Core's flushExpertise. Workers emit these to compound
+      // expertise across runs; agents never edit expertise files directly.
+      learnings: Type.Optional(Type.Array(Type.String(), {
+        description: "Concrete lessons learned. One short statement per item.",
+      })),
+      decisions: Type.Optional(Type.Array(Type.String(), {
+        description: "Decisions made during this step (and why) worth remembering.",
+      })),
+      issues_found: Type.Optional(Type.Array(Type.String(), {
+        description: "Issues observed but not necessarily blocking — useful for future runs.",
+      })),
+      gotchas: Type.Optional(Type.Array(Type.String(), {
+        description: "Surprising behaviors / sharp edges future agents should watch for.",
+      })),
     }),
     execute: async (_id, params) => {
       // Write verdict to file for subprocess mode (PI_ENGINEERING_VERDICT_FILE)

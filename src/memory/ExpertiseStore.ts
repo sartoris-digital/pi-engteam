@@ -16,6 +16,15 @@ import { mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
+// Phase 5 round-1 H3: expand a leading "~/" or bare "~" to homedir() so
+// users following the spec's "~/.pi/engineering-team/expertise" example
+// don't end up writing to a literal "~" directory.
+function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  return p;
+}
+
 export type ExpertiseConfig = {
   enabled: boolean;
   maxLinesPerFile: number;
@@ -49,7 +58,7 @@ export function resolveDirs(
   projectCwd: string,
 ): ExpertiseDirs {
   return {
-    globalDir: cfg.globalDir,
+    globalDir: expandTilde(cfg.globalDir),
     projectDir: join(projectCwd, cfg.projectDirSubpath),
   };
 }
@@ -98,6 +107,13 @@ export async function readExpertise(
 
 type ReadonlyFrontmatter = {
   agents?: string[];
+  /**
+   * Round-1 M1: when an `agents:` key is present but its value cannot be
+   * parsed (malformed YAML, missing brackets, etc.), we fail closed. This
+   * flag tells the caller to exclude the file from ALL agents instead of
+   * defaulting to "no agents key, all agents see it".
+   */
+  agentsMalformed?: boolean;
   loadOrder?: number;
 };
 
@@ -113,11 +129,22 @@ function parseFrontmatter(raw: string): { meta: ReadonlyFrontmatter; body: strin
     if (!m) continue;
     const [, key, val] = m;
     if (key === "agents") {
-      const arr = val.match(/\[(.*)\]/)?.[1] ?? "";
-      meta.agents = arr
-        .split(",")
-        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-        .filter((s) => s.length > 0);
+      // Require an explicit [a, b, c] shape; a missing bracket pair is
+      // treated as malformed and the file is excluded from all agents.
+      const bracketMatch = val.match(/^\[(.*)\]$/);
+      if (!bracketMatch) {
+        meta.agentsMalformed = true;
+        meta.agents = [];
+        continue;
+      }
+      const inner = bracketMatch[1].trim();
+      const items = inner.length === 0
+        ? []
+        : inner
+            .split(",")
+            .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+            .filter((s) => s.length > 0);
+      meta.agents = items;
     } else if (key === "loadOrder") {
       const n = parseInt(val.trim(), 10);
       if (Number.isFinite(n)) meta.loadOrder = n;
@@ -156,6 +183,13 @@ export async function readReadonly(
       continue;
     }
     const { meta, body } = parseFrontmatter(raw);
+    // Round-1 M1: fail closed when the agents key is present but malformed,
+    // OR when the parsed list is empty (treats `agents: []` as "no agents
+    // see it" — a deliberate blacklist, not an oversight).
+    if (meta.agentsMalformed) continue;
+    if (Array.isArray(meta.agents) && meta.agents.length === 0 && raw.includes("agents:")) {
+      continue;
+    }
     if (Array.isArray(meta.agents) && meta.agents.length > 0 && !meta.agents.includes(agentName)) {
       continue;
     }
@@ -226,8 +260,10 @@ export async function trackAndMaybePromote(
   entries: WisdomEntry[],
 ): Promise<WisdomEntry[]> {
   if (!cfg.enabled || entries.length === 0) return [];
-  await mkdir(cfg.globalDir, { recursive: true });
-  const countsPath = join(cfg.globalDir, ".counts.json");
+  // H3: honor ~ in globalDir consistently across read and write paths.
+  const globalDir = expandTilde(cfg.globalDir);
+  await mkdir(globalDir, { recursive: true });
+  const countsPath = join(globalDir, ".counts.json");
   let counts: Record<string, Record<string, string[]>> = {};
   try {
     counts = JSON.parse(await readFile(countsPath, "utf8"));
@@ -253,7 +289,7 @@ export async function trackAndMaybePromote(
   await writeFile(countsPath, JSON.stringify(counts, null, 2));
   if (promoted.length === 0) return [];
   // Dedupe + append to global file.
-  const globalDirs: ExpertiseDirs = { globalDir: cfg.globalDir, projectDir: cfg.globalDir };
+  const globalDirs: ExpertiseDirs = { globalDir, projectDir: globalDir };
   await appendExpertise(agentName, globalDirs, promoted, cfg);
   return promoted;
 }

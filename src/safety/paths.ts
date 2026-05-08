@@ -70,5 +70,19 @@ export function isProtectedPath(filePath: string): { blocked: boolean; reason?: 
     return { blocked: true, reason: ".env file access blocked (except .env.sample/.env.example)" };
   }
 
+  // Phase 5 §8.3 single-writer policy: only Memory Core writes expertise files.
+  // Block worker subprocess writes to either layer (user-global or
+  // project-local). The match is a substring on the canonical absolute path
+  // so it catches both ~/.pi/engineering-team/expertise/* and
+  // <cwd>/.pi/engineering-team/expertise/*. Reads are NOT blocked — agents
+  // legitimately read their own curated expertise via the boot-time injection
+  // path inside the controller.
+  if (abs.includes("/.pi/engineering-team/expertise")) {
+    return {
+      blocked: true,
+      reason: "Expertise files are curated by Memory Core only (single-writer policy).",
+    };
+  }
+
   return { blocked: false };
 }

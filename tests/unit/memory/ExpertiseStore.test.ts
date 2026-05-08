@@ -160,4 +160,40 @@ describe("ExpertiseStore — Phase 5 §8", () => {
     expect(globalRaw).toContain("fast track");
     expect(globalRaw).not.toContain("[promote]");
   });
+
+  it("readReadonly fails closed on malformed agents frontmatter (round-1 M1)", async () => {
+    const ro = join(dirs.projectDir, "_readonly");
+    await mkdir(ro, { recursive: true });
+    // Missing brackets — malformed list. Without fail-closed, this would
+    // incorrectly include the file for ALL agents.
+    await writeFile(
+      join(ro, "broken.md"),
+      `---\nagents: implementer, devops\n---\n# Broken\nbody`,
+    );
+    const out = await readReadonly("implementer", dirs);
+    expect(out).not.toContain("Broken");
+  });
+
+  it("readReadonly treats `agents: []` as empty whitelist (round-1 M1)", async () => {
+    const ro = join(dirs.projectDir, "_readonly");
+    await mkdir(ro, { recursive: true });
+    await writeFile(
+      join(ro, "off.md"),
+      `---\nagents: []\n---\n# Off Limits\nbody`,
+    );
+    const out = await readReadonly("implementer", dirs);
+    expect(out).not.toContain("Off Limits");
+  });
+
+  it("expands ~ in cfg.globalDir (round-1 H3)", async () => {
+    const tildeCfg: ExpertiseConfig = {
+      ...cfg,
+      globalDir: "~/__expertise_test_should_not_exist__",
+    };
+    // resolveDirs must produce an absolute path that doesn't start with "~".
+    const { resolveDirs } = await import("../../../src/memory/ExpertiseStore.js");
+    const resolved = resolveDirs(tildeCfg, "/tmp/proj");
+    expect(resolved.globalDir.startsWith("~")).toBe(false);
+    expect(resolved.globalDir.includes("__expertise_test_should_not_exist__")).toBe(true);
+  });
 });

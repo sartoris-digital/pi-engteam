@@ -316,6 +316,20 @@ export class MemoryCore {
       this.deps.clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
+    // Phase 5 round-1 H1: drain any buffered expertise before shutdown.
+    // Without this, wisdom captured during the final session window is lost
+    // because flushExpertise only runs inside doFlush (and only doFlush runs
+    // on session_before_compact / heartbeat).
+    if (this.expertiseBuffer.size > 0) {
+      try {
+        await this.flush();
+      } catch (err) {
+        console.error(
+          "[pi-memory] shutdown flush failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
     // Await any flush that started before shutdown so the snapshot is written cleanly
     if (this.flushInFlight) {
       await this.flushInFlight;
