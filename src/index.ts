@@ -239,6 +239,18 @@ export const AGENT_DEFS: AgentDefinition[] = [
       "Always call VerdictEmit at the end of your turn.",
     team: "investigation",
   },
+  {
+    name: "performance-analyst",
+    description: "Latency, N+1, memory, and concurrency review",
+    model: "claude-sonnet-4.6",
+    systemPrompt:
+      "You are the Performance Analyst agent for the pi-engineering engineering team. " +
+      "Analyze code paths for latency hot spots, N+1 query patterns, memory pressure, and concurrency hazards. " +
+      "Profile when tooling is available; otherwise read the code carefully and report bounded reasoning. " +
+      "Write performance-report.md with concrete file:line references and remediation suggestions. " +
+      "Always call VerdictEmit at the end of your turn.",
+    team: "engineering",
+  },
   // --- Lead tier ---
   {
     name: "planning-lead",
@@ -318,6 +330,30 @@ export default async function (pi: ExtensionAPI) {
         emitEvent: () => { /* no observer in subprocess; event is a no-op */ },
       },
     });
+
+    // Enforce per-agent tool allowlist at the tool_call boundary. Pi's runtime
+    // exposes the same tool registry to every agent; without this hook,
+    // declaring tools: [...] on an AgentDefinition is metadata-only. Leads MUST
+    // NOT execute Write/Edit/Bash; this is the runtime gate that enforces it.
+    const subAgentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
+    const subAgentDef = AGENT_DEFS.find((a) => a.name === subAgentName);
+    if (subAgentDef?.tools && subAgentDef.tools.length > 0) {
+      const allowed = new Set(subAgentDef.tools);
+      pi.on("tool_call", async (event: any) => {
+        const tool: string = event.tool?.name ?? "";
+        if (!allowed.has(tool)) {
+          return {
+            block: true,
+            reason: `[Layer D] Agent '${subAgentName}' is not allowed to call tool '${tool}'. Allowed: ${[...allowed].join(", ")}.`,
+            layer: "D",
+            agent: subAgentName,
+            tool,
+            allowed_tools: [...allowed],
+          };
+        }
+        return undefined;
+      });
+    }
 
     // VerdictEmit — writes verdict to PI_ENGINEERING_VERDICT_FILE before exiting.
     pi.registerTool(createVerdictEmitTool((_v) => {}));

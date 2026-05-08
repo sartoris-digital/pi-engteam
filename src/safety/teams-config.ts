@@ -16,6 +16,9 @@ import {
 export type TeamsConfig = {
   mode: "warn" | "block";
   domains: DomainPolicyMap;
+  // Non-empty when an existing yaml file failed to parse. Doctor surfaces these
+  // so users notice corrupt config instead of silently falling back to defaults.
+  parseErrors: Array<{ path: string; error: string }>;
 };
 
 type RawValue = string | string[] | RawObject;
@@ -256,16 +259,27 @@ function rawToMap(raw: RawObject): DomainPolicyMap {
   return out;
 }
 
-async function readYamlFile(path: string): Promise<{ raw: RawObject; mode?: "warn" | "block" } | null> {
+type YamlReadResult =
+  | { kind: "missing" }
+  | { kind: "parsed"; raw: RawObject; mode?: "warn" | "block" }
+  | { kind: "error"; error: string };
+
+async function readYamlFile(path: string): Promise<YamlReadResult> {
+  let text: string;
   try {
     const realPath = await realpath(path).catch(() => path);
-    const text = await readFile(realPath, "utf8");
+    text = await readFile(realPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+    return { kind: "error", error: (err as Error).message };
+  }
+  try {
     const raw = parseMinimalYaml(text);
     let mode: "warn" | "block" | undefined;
     if (raw.mode === "warn" || raw.mode === "block") mode = raw.mode;
-    return { raw, mode };
-  } catch {
-    return null;
+    return { kind: "parsed", raw, mode };
+  } catch (err) {
+    return { kind: "error", error: `parse failed: ${(err as Error).message}` };
   }
 }
 
@@ -282,9 +296,11 @@ export async function loadTeamsConfig(opts: {
   }
   let mode: "warn" | "block" = "warn";
 
+  const parseErrors: Array<{ path: string; error: string }> = [];
+
   // Layer 2: user yaml.
   const user = await readYamlFile(opts.userPath);
-  if (user) {
+  if (user.kind === "parsed") {
     const userMap = rawToMap(user.raw);
     const subbed: DomainPolicyMap = {};
     for (const [k, v] of Object.entries(userMap)) {
@@ -292,11 +308,13 @@ export async function loadTeamsConfig(opts: {
     }
     merged = mergeMaps(merged, subbed);
     if (user.mode) mode = user.mode;
+  } else if (user.kind === "error") {
+    parseErrors.push({ path: opts.userPath, error: user.error });
   }
 
   // Layer 3: project yaml.
   const project = await readYamlFile(opts.projectPath);
-  if (project) {
+  if (project.kind === "parsed") {
     const projMap = rawToMap(project.raw);
     const subbed: DomainPolicyMap = {};
     for (const [k, v] of Object.entries(projMap)) {
@@ -304,7 +322,9 @@ export async function loadTeamsConfig(opts: {
     }
     merged = mergeMaps(merged, subbed);
     if (project.mode) mode = project.mode;
+  } else if (project.kind === "error") {
+    parseErrors.push({ path: opts.projectPath, error: project.error });
   }
 
-  return { mode, domains: merged };
+  return { mode, domains: merged, parseErrors };
 }

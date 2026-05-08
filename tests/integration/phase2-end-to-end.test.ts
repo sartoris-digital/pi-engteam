@@ -41,6 +41,7 @@ const WORKER_NAMES = [
   "security-auditor",
   "codebase-cartographer",
   "observability-archivist",
+  "performance-analyst",
 ];
 
 const FORBIDDEN_LEAD_TOOLS = ["Write", "Edit", "Bash"];
@@ -64,8 +65,8 @@ describe("AGENT_DEFS — completeness", () => {
     }
   });
 
-  it("has exactly 20 entries (15 workers + 5 leads)", () => {
-    expect(AGENT_DEFS).toHaveLength(20);
+  it("has exactly 21 entries (16 workers including performance-analyst + 5 leads)", () => {
+    expect(AGENT_DEFS).toHaveLength(21);
   });
 
   it("every agent has a non-empty name, description, model, systemPrompt, and team", () => {

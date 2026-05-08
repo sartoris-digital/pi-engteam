@@ -75,13 +75,22 @@ async function applyLayerD(
   toolInput: Record<string, unknown>,
   domainLock: DomainLockConfig,
 ): Promise<{ block: true; reason: string; layer: string; [k: string]: unknown } | undefined> {
-  if (!["Write", "Edit", "Bash", "Read"].includes(toolName)) return undefined;
+  if (!["Write", "Edit", "Bash", "Read", "Grep", "Glob"].includes(toolName)) return undefined;
   const agentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
   const policy = agentName ? domainLock.policies[agentName] : undefined;
-  const filePath = (toolInput.file_path ?? toolInput.path ?? "") as string;
+  // Surface missing-policy as a warn so misspelled or new agents are visible to operators.
+  if (!policy) {
+    domainLock.emitEvent({
+      category: "safety",
+      type: "domain_warn",
+      payload: { agent: agentName || "unknown", reason: "no-policy", tool: toolName },
+    });
+    return undefined;
+  }
+  const filePath = (toolInput.file_path ?? toolInput.path ?? toolInput.pattern_path ?? "") as string;
   const result = checkDomain({
     agent: agentName,
-    operation: toolName as "Read" | "Write" | "Edit" | "Bash",
+    operation: toolName as "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob",
     path: filePath || undefined,
     command: typeof toolInput.command === "string" ? toolInput.command : undefined,
     policy,

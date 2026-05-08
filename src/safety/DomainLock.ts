@@ -4,12 +4,12 @@
 // agent's policy declares `bash_policy: script-only`.
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { realpathSync } from "fs";
+import { realpathSync, existsSync } from "fs";
 import { homedir } from "os";
-import { resolve } from "path";
+import { resolve, dirname, sep } from "path";
 import type { DomainPolicy } from "./default-domains.js";
 
-export type DomainOperation = "Read" | "Write" | "Edit" | "Bash";
+export type DomainOperation = "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob";
 
 export type DomainLockResult =
   | { allowed: true }
@@ -26,20 +26,37 @@ function expandHome(p: string): string {
   return p;
 }
 
+// Resolves symlinks via the nearest existing ancestor, then re-appends the
+// non-existent remainder. Defends against (1) symlinked parents that escape the
+// declared root, and (2) writes to files that don't exist yet (realpathSync
+// would fail for those and a naive fallback to the unresolved abs path could
+// allow ../escape sequences after a symlinked dir).
 function realResolve(p: string): string {
-  const abs = resolve(expandHome(p));
-  try {
-    return realpathSync(abs);
-  } catch {
-    return abs;
+  let abs = resolve(expandHome(p));
+  // Walk up to the nearest existing ancestor.
+  let cursor = abs;
+  const segments: string[] = [];
+  while (!existsSync(cursor)) {
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    segments.unshift(cursor.slice(parent.length + 1));
+    cursor = parent;
   }
+  let resolved: string;
+  try {
+    resolved = realpathSync(cursor);
+  } catch {
+    resolved = cursor;
+  }
+  for (const seg of segments) resolved = resolved + sep + seg;
+  return resolved;
 }
 
 function isUnderRoot(target: string, root: string): boolean {
   const realTarget = realResolve(target);
   const realRoot = realResolve(root);
   if (realTarget === realRoot) return true;
-  return realTarget.startsWith(realRoot.endsWith("/") ? realRoot : realRoot + "/");
+  return realTarget.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep);
 }
 
 function pathAllowed(target: string, roots: string[]): boolean {
@@ -58,6 +75,29 @@ function buildHint(operation: DomainOperation, target: string, agent: string): s
   );
 }
 
+// Compound-command operators that, if present after the allowed script, would
+// let an agent chain arbitrary commands ("uv run --script foo.py; rm -rf /").
+// Detection is conservative: any unquoted occurrence of these tokens means
+// reject. We do not attempt full shell parsing — just refuse anything that
+// looks compound.
+const COMPOUND_PATTERN = /(?:^|[^\\])(?:[;&|]|\$\(|`|>{1,2}|<)/;
+
+function hasCompoundOperators(remainder: string): boolean {
+  // Strip simple quoted regions before checking. This is intentionally loose:
+  // any quoting we can't cleanly handle counts as a compound and is rejected.
+  let stripped = remainder;
+  // Repeatedly remove balanced single- or double-quoted regions.
+  for (let i = 0; i < 20; i++) {
+    const before = stripped;
+    stripped = stripped.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+    if (stripped === before) break;
+  }
+  // Reject if any unclosed quote remains.
+  if ((stripped.match(/'/g) ?? []).length % 2 !== 0) return true;
+  if ((stripped.match(/"/g) ?? []).length % 2 !== 0) return true;
+  return COMPOUND_PATTERN.test(stripped);
+}
+
 export function checkDomain(opts: {
   agent: string;
   operation: DomainOperation;
@@ -71,7 +111,7 @@ export function checkDomain(opts: {
   // Agent has no policy entry: caller is responsible for emitting a warn event.
   if (!policy) return { allowed: true };
 
-  if (operation === "Read") {
+  if (operation === "Read" || operation === "Grep" || operation === "Glob") {
     if (!path) return { allowed: true };
     if (pathAllowed(path, policy.read)) return { allowed: true };
     return {
@@ -92,7 +132,9 @@ export function checkDomain(opts: {
 
   if (operation === "Write" || operation === "Edit") {
     if (!path) return { allowed: true };
-    if (pathAllowed(path, policy.upsert) || pathAllowed(path, policy.delete)) {
+    // Only `upsert` grants write/edit. `delete` is a separate verb and
+    // must NOT imply write permission (Codex round 1 MEDIUM #3).
+    if (pathAllowed(path, policy.upsert)) {
       return { allowed: true };
     }
     return {
@@ -156,7 +198,7 @@ export function checkDomain(opts: {
     const remainder = trimmed.slice(runner.length + 1).trim();
     const scriptToken = remainder.split(/\s+/)[0] ?? "";
     const matched = policy.bash_policy.allowed_scripts.some((allowed) => {
-      // Glob support: only trailing `*` matched as a prefix; otherwise exact path equality.
+      // Glob support: only trailing `*.py` matched as a prefix; otherwise exact equality.
       if (allowed.endsWith("/*.py")) {
         const prefix = expandHome(allowed.slice(0, -"*.py".length));
         const realScript = realResolve(scriptToken);
@@ -164,24 +206,49 @@ export function checkDomain(opts: {
       }
       return realResolve(scriptToken) === realResolve(allowed);
     });
-    if (matched) return { allowed: true };
-    return {
-      allowed: false,
-      mode,
-      reason: "domain-lock",
-      structured: {
-        block: true,
+    if (!matched) {
+      return {
+        allowed: false,
+        mode,
         reason: "domain-lock",
-        agent,
-        operation,
-        command,
-        allowed_paths: {
-          bash_runner: runner,
-          allowed_scripts: policy.bash_policy.allowed_scripts,
+        structured: {
+          block: true,
+          reason: "domain-lock",
+          agent,
+          operation,
+          command,
+          allowed_paths: {
+            bash_runner: runner,
+            allowed_scripts: policy.bash_policy.allowed_scripts,
+          },
+          hint: `${agent} may only run scripts in ${policy.bash_policy.allowed_scripts.join(", ")}.`,
         },
-        hint: `${agent} may only run scripts in ${policy.bash_policy.allowed_scripts.join(", ")}.`,
-      },
-    };
+      };
+    }
+    // Reject compound commands and shell-metacharacter chaining after the
+    // allowed script (Codex round 1 CRITICAL #2). Anything that looks like
+    // ;, &&, ||, |, $(, backtick, or a redirect is grounds for rejection.
+    const tail = remainder.slice(scriptToken.length);
+    if (hasCompoundOperators(tail)) {
+      return {
+        allowed: false,
+        mode,
+        reason: "domain-lock",
+        structured: {
+          block: true,
+          reason: "domain-lock",
+          agent,
+          operation,
+          command,
+          allowed_paths: {
+            bash_runner: runner,
+            allowed_scripts: policy.bash_policy.allowed_scripts,
+          },
+          hint: `${agent} bash rejects compound commands. Allowed shape: '${runner} <script> [args...]' with no ';', '&&', '|', '$()', backticks, or redirects.`,
+        },
+      };
+    }
+    return { allowed: true };
   }
 
   return { allowed: true };
@@ -204,7 +271,7 @@ export function registerDomainLock(
 ): void {
   pi.on("tool_call", async (event: any, _ctx: any) => {
     const toolName: string = event.tool?.name ?? "";
-    if (!["Read", "Write", "Edit", "Bash"].includes(toolName)) return undefined;
+    if (!["Read", "Write", "Edit", "Bash", "Grep", "Glob"].includes(toolName)) return undefined;
 
     const toolInput: Record<string, unknown> = event.toolInput ?? {};
     const agent = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "unknown";
@@ -219,7 +286,7 @@ export function registerDomainLock(
       return undefined;
     }
 
-    const filePath = (toolInput.file_path ?? toolInput.path ?? "") as string;
+    const filePath = (toolInput.file_path ?? toolInput.path ?? toolInput.pattern_path ?? "") as string;
     const command = (toolInput.command ?? "") as string;
 
     const result = checkDomain({

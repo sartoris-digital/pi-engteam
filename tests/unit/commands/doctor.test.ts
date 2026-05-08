@@ -57,7 +57,10 @@ describe("registerDoctorCommand", () => {
     vi.mocked(readFile).mockImplementation((p: any) => {
       if (String(p).endsWith(".json")) return Promise.resolve('{"hardBlockers":{"enabled":true,"alwaysOn":true}}') as any;
       // yaml files → empty (no user/project overrides)
-      if (String(p).endsWith(".yaml")) return Promise.reject(new Error("ENOENT")) as any;
+      if (String(p).endsWith(".yaml")) {
+        const err = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return Promise.reject(err) as any;
+      }
       // agent .md files → content with team: field
       return Promise.resolve("---\nteam: planning\n---\n") as any;
     });
@@ -78,9 +81,10 @@ describe("registerDoctorCommand", () => {
 
   it("reports failures when extension file is missing", async () => {
     const registerDoctorCommand = await loadDoctor();
-    vi.mocked(stat).mockRejectedValue(new Error("ENOENT"));
-    vi.mocked(readFile).mockRejectedValue(new Error("ENOENT"));
-    vi.mocked(readdir).mockRejectedValue(new Error("ENOENT"));
+    const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    vi.mocked(stat).mockRejectedValue(enoent);
+    vi.mocked(readFile).mockRejectedValue(enoent);
+    vi.mocked(readdir).mockRejectedValue(enoent);
     vi.mocked(realpath).mockImplementation((p: any) => Promise.resolve(String(p)));
 
     const mock = buildMockPi();
@@ -118,7 +122,10 @@ describe("registerDoctorCommand", () => {
   it("reports safety.json issue but does not fail hard when safety.json is absent", async () => {
     const registerDoctorCommand = await loadDoctor();
     vi.mocked(stat).mockResolvedValue({} as any);
-    vi.mocked(readFile).mockRejectedValue(new Error("ENOENT"));
+    {
+      const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      vi.mocked(readFile).mockRejectedValue(enoent);
+    }
     vi.mocked(readdir).mockResolvedValue([] as any);
     vi.mocked(realpath).mockImplementation((p: any) => Promise.resolve(String(p)));
 

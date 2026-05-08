@@ -114,7 +114,17 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
           runDir: RUNS_DIR,
           expertiseDir: join(ENGINEERING_DIR, "expertise"),
         });
-        checks.push({ name: "loadTeamsConfig", ok: true, message: `Loaded; mode=${teamsCfg.mode}` });
+        // Distinguish "loaded clean" from "loaded with parse errors" — corrupt
+        // existing yaml must NOT silently fall back to defaults.
+        if (teamsCfg.parseErrors.length > 0) {
+          checks.push({
+            name: "loadTeamsConfig",
+            ok: false,
+            message: `Parse errors: ${teamsCfg.parseErrors.map((e) => `${e.path}: ${e.error}`).join("; ")}`,
+          });
+        } else {
+          checks.push({ name: "loadTeamsConfig", ok: true, message: `Loaded; mode=${teamsCfg.mode}` });
+        }
       } catch (err) {
         checks.push({ name: "loadTeamsConfig", ok: false, message: `Error: ${err instanceof Error ? err.message : String(err)}` });
       }
