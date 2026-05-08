@@ -259,7 +259,16 @@ function rawToPolicy(raw: RawValue | undefined): DomainPolicy | undefined {
       };
     }
   }
-  return { read, upsert, delete: del, bash_policy: bash };
+  // Parse force_block from yaml. Codex P3.5 round-3 NEW-CRITICAL: previously
+  // stripped here, making mergePolicy's most-restrictive-wins comment a lie —
+  // user yaml could not promote an agent to force_block.
+  let force_block: boolean | undefined;
+  if (typeof r.force_block === "string") {
+    force_block = r.force_block === "true";
+  } else if (typeof r.force_block === "boolean") {
+    force_block = r.force_block;
+  }
+  return { read, upsert, delete: del, bash_policy: bash, force_block };
 }
 
 function rawToMap(raw: RawObject): DomainPolicyMap {

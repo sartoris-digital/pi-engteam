@@ -346,6 +346,100 @@ describe("registerDomainLock — wrapper behavior", () => {
 // Codex round-1 regression tests for Phase 2
 // ---------------------------------------------------------------------------
 
+describe("checkDomain — force_block override (Codex P3.5 round-1 + round-3 regressions)", () => {
+  it("force_block: true forces block mode on Write/Edit even when caller mode is warn", () => {
+    const policy: DomainPolicy = {
+      read: ["."],
+      upsert: ["/allowed/staging"],
+      delete: [],
+      force_block: true,
+    };
+    const result = checkDomain({
+      agent: "learner",
+      operation: "Write",
+      path: "/somewhere/else",
+      policy,
+      mode: "warn",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.mode).toBe("block");
+    }
+  });
+
+  it("force_block: true forces block mode for parent-traversal too", () => {
+    const policy: DomainPolicy = {
+      read: ["."],
+      upsert: ["/allowed/staging"],
+      delete: [],
+      force_block: true,
+    };
+    const result = checkDomain({
+      agent: "learner",
+      operation: "Write",
+      path: "/allowed/staging/../escape",
+      policy,
+      mode: "warn",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.mode).toBe("block");
+    }
+  });
+
+  it("without force_block, caller's warn mode is preserved", () => {
+    const policy: DomainPolicy = {
+      read: ["."],
+      upsert: ["/allowed/staging"],
+      delete: [],
+    };
+    const result = checkDomain({
+      agent: "implementer",
+      operation: "Write",
+      path: "/somewhere/else",
+      policy,
+      mode: "warn",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.mode).toBe("warn");
+    }
+  });
+
+  it("loadTeamsConfig parses force_block from user yaml (round-3 NEW-CRITICAL)", async () => {
+    const userPath = join(workDir, "teams.yaml");
+    writeFileSync(
+      userPath,
+      "myagent:\n  read: [.]\n  upsert: [/foo]\n  delete: []\n  force_block: true\n",
+    );
+    const cfg = await loadTeamsConfig({
+      userPath,
+      projectPath: join(workDir, "missing-project.yaml"),
+      runDir: workDir,
+      expertiseDir: workDir,
+    });
+    expect(cfg.parseErrors).toEqual([]);
+    expect(cfg.domains.myagent?.force_block).toBe(true);
+  });
+
+  it("mergePolicy preserves force_block: defaults force_block + user yaml without it = true", async () => {
+    // Write user yaml that overrides learner's read/upsert but doesn't mention force_block.
+    // The default-domains learner has force_block: true. Merge should preserve it.
+    const userPath = join(workDir, "teams.yaml");
+    writeFileSync(
+      userPath,
+      "learner:\n  read: [.]\n  upsert: [/extra]\n  delete: []\n",
+    );
+    const cfg = await loadTeamsConfig({
+      userPath,
+      projectPath: join(workDir, "missing-project.yaml"),
+      runDir: workDir,
+      expertiseDir: workDir,
+    });
+    expect(cfg.domains.learner?.force_block).toBe(true);
+  });
+});
+
 describe("checkDomain — bash compound-command bypass (CRITICAL #2 regression)", () => {
   const policy: DomainPolicy = {
     read: ["."],
