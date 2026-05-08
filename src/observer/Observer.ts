@@ -91,6 +91,9 @@ export class Observer {
 
   subscribeToBus(bus: MessageBus, runId: string): () => void {
     return bus.subscribeAll((msg: TeamMessage) => {
+      // Phase 4.5 round-1 H-2: include msg.message in the payload so the
+      // dialogue projection can render full body content (capped) rather
+      // than only the summary.
       this.emit({
         runId,
         category: "message",
@@ -99,6 +102,7 @@ export class Observer {
           from: msg.from,
           to: msg.to,
           summary: msg.summary,
+          message: msg.message,
           requestId: msg.requestId,
         },
         summary: `${msg.from} → ${msg.to}: ${msg.summary}`,

@@ -47,49 +47,64 @@ describe("withRunStateLock — Phase 4.5 M-3 concurrency", () => {
     expect(final?.iteration).toBe(2);
   });
 
-  it("a /run-cancel-style write inside the lock is not clobbered by a parallel terminal save", async () => {
+  it("forces stale-read → cancel write → terminal re-read; terminal save honors cancel", async () => {
+    // Round-1 M-2 fix: this test now drives the failure mode rather than
+    // accepting it. The terminal save reads state, then we make it WAIT
+    // until /run-cancel has written phase=cancelling, then it re-reads
+    // INSIDE its critical section. Without the round-3 mutex + the
+    // round-2 reload-before-save pattern, the terminal save would write
+    // "done" using the stale snapshot. With both pieces in place, the
+    // re-read sees "cancelling" and final phase is "cancelled".
     const runId = "r2";
     await bootstrap(runId);
 
-    // Worker A models the engine's terminal save: read, decide status,
-    // write. We make it slow on purpose between read and write.
-    const terminalSave = withRunStateLock(runsDir, runId, async () => {
-      const s = await loadRunState(runsDir, runId);
-      if (!s) throw new Error("missing");
-      // Simulate work happening between read and decision.
-      await new Promise((res) => setTimeout(res, 30));
-      // Re-read inside the critical section, then write.
-      const fresh = await loadRunState(runsDir, runId);
-      const phase = fresh?.phase;
-      const next = phase === "cancelling" || phase === "cancelled"
-        ? { ...s, status: "aborted" as const, phase: "cancelled" as const }
-        : { ...s, status: "succeeded" as const, phase: "done" as const };
-      await saveRunState(runsDir, next);
+    // Barrier coordination.
+    let terminalReadDone!: () => void;
+    const terminalReadGate = new Promise<void>((res) => {
+      terminalReadDone = res;
+    });
+    let cancelWriteDone!: () => void;
+    const cancelWriteGate = new Promise<void>((res) => {
+      cancelWriteDone = res;
     });
 
-    // Worker B models /run-cancel arriving partway through.
+    // Terminal-save worker: reads stale state, signals it has read,
+    // waits for cancel to write, then enters the critical section,
+    // re-reads inside the lock, and saves.
+    const terminalSave = (async () => {
+      const stale = await loadRunState(runsDir, runId);
+      if (!stale) throw new Error("missing");
+      terminalReadDone();
+      await cancelWriteGate;
+      // Now enter the lock and re-read on the inside.
+      await withRunStateLock(runsDir, runId, async () => {
+        const fresh = await loadRunState(runsDir, runId);
+        const next = fresh?.phase === "cancelling" || fresh?.phase === "cancelled"
+          ? { ...stale, status: "aborted" as const, phase: "cancelled" as const }
+          : { ...stale, status: "succeeded" as const, phase: "done" as const };
+        await saveRunState(runsDir, next);
+      });
+    })();
+
+    // Cancel worker: waits for terminal to read, then takes the lock,
+    // writes phase=cancelling, signals.
     const cancel = (async () => {
-      await new Promise((res) => setTimeout(res, 5));
+      await terminalReadGate;
       await withRunStateLock(runsDir, runId, async () => {
         const s = await loadRunState(runsDir, runId);
         if (!s) throw new Error("missing");
         await saveRunState(runsDir, { ...s, phase: "cancelling" });
       });
+      cancelWriteDone();
     })();
 
     await Promise.all([terminalSave, cancel]);
     const final = await loadRunState(runsDir, runId);
-    // The terminal save took the lock first and re-read inside the
-    // critical section — its result must be visible. The cancel must
-    // also have completed (it took the lock after terminal save). The
-    // final on-disk phase is "cancelling" because cancel ran second,
-    // OR "cancelled"/"done" depending on which order won. Regardless,
-    // no save was lost: we can prove that by counting writes via
-    // updatedAt sequence. Here we just check that one of the two
-    // expected outcomes holds.
-    expect(final).not.toBeNull();
-    const phase = final?.phase;
-    expect(["cancelling", "cancelled", "done"]).toContain(phase ?? "");
+    // The terminal save MUST have honored the cancel — the round-2
+    // reload-before-save pattern requires final phase=cancelled and
+    // status=aborted, never "done"/"succeeded".
+    expect(final?.phase).toBe("cancelled");
+    expect(final?.status).toBe("aborted");
   });
 
   it("propagates errors from the protected callback to the caller", async () => {

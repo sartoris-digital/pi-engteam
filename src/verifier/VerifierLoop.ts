@@ -31,6 +31,19 @@ export interface VerifierLoopConfig {
   runDir: string;
   maxVerifyLoops: number;
   onPartialGap?: (gapEntry: { step: string; claim: string; reason: string }) => void;
+  /**
+   * Phase 4.5 round-1 H-3: host-supplied callback emitted before each
+   * corrective re-iteration prompt is delivered to the worker. ADWEngine
+   * wires this to a host-flagged projection event so the corrective turn
+   * appears in conversation.jsonl with kind=correction.
+   */
+  onCorrection?: (entry: {
+    workerAgentName: string;
+    workerStep: string;
+    iteration: number;
+    issues: string[];
+    reportPath: string;
+  }) => void;
 }
 
 export class VerifyExhaustedError extends Error {
@@ -212,6 +225,17 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
     if (iter < cfg.maxVerifyLoops) {
       const corrective = buildCorrectiveMessage({
         workerStep: cfg.workerStep,
+        issues,
+        reportPath,
+      });
+      // Phase 4.5 round-1 H-3: surface the corrective turn in the dialogue
+      // projection so future agent prompts see it as kind=correction. The
+      // host-flagged emit happens before delivery so the entry is ordered
+      // correctly relative to the worker's response.
+      cfg.onCorrection?.({
+        workerAgentName: cfg.workerAgentName,
+        workerStep: cfg.workerStep,
+        iteration: iter,
         issues,
         reportPath,
       });

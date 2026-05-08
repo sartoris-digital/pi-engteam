@@ -28,11 +28,11 @@ function evt(p: Partial<EngteamEvent>): EngteamEvent {
 }
 
 describe("ConversationProjection — spec §9.1 schema", () => {
-  it("appends a kind-typed event with from/to/text", async () => {
+  it("appends a host-flagged kind-typed event with from/to/text", async () => {
     await appendProjection(runDir, evt({
       type: "request",
       category: "message",
-      payload: { from: "user", to: "orchestrator", text: "consult on X" },
+      payload: { __host: true, from: "user", to: "orchestrator", text: "consult on X" },
     }));
     const entries = await readRecentEntries(runDir, 50);
     expect(entries).toHaveLength(1);
@@ -43,7 +43,7 @@ describe("ConversationProjection — spec §9.1 schema", () => {
     expect(e.text).toBe("consult on X");
   });
 
-  it("maps verdict.emit to kind=verdict with artifact ref", async () => {
+  it("maps verdict.emit on a position-* step to kind=position (round-1 H1)", async () => {
     await appendProjection(runDir, evt({
       category: "verdict",
       type: "emit",
@@ -54,10 +54,52 @@ describe("ConversationProjection — spec §9.1 schema", () => {
     const [e] = await readRecentEntries(runDir, 10);
     expect(e.from).toBe("engineering-lead");
     expect(e.to).toBe("*");
-    expect(e.kind).toBe("verdict");
+    expect(e.kind).toBe("position");
     expect(e.text).toContain("PASS");
     expect(e.text).toContain("position-eng");
     expect(e.ref).toBe("positions/engineering-lead.md");
+  });
+
+  it("maps verdict.emit on adversarial-* and synthesis steps to matching kinds", async () => {
+    await appendProjection(runDir, evt({
+      category: "verdict",
+      type: "emit",
+      step: "adversarial-valid",
+      agentName: "validation-lead",
+      payload: { verdict: "PASS", artifacts: ["adversarial/validation-lead.md"] },
+    }));
+    await appendProjection(runDir, evt({
+      category: "verdict",
+      type: "emit",
+      step: "synthesis",
+      agentName: "orchestrator",
+      payload: { verdict: "PASS", artifacts: ["synthesis.md"] },
+    }));
+    const entries = await readRecentEntries(runDir, 10);
+    expect(entries.map((e) => e.kind)).toEqual(["adversarial", "synthesis"]);
+  });
+
+  it("rejects worker impersonation of reserved senders (round-1 C1)", async () => {
+    // Untrusted (no __host flag) event claims from='user' — must be
+    // downgraded to the trusted agentName, never honored as 'user'.
+    await appendProjection(runDir, evt({
+      type: "note",
+      category: "message",
+      agentName: "engineering-lead",
+      payload: { from: "user", to: "orchestrator", text: "evil text" },
+    }));
+    const [e] = await readRecentEntries(runDir, 10);
+    expect(e.from).toBe("engineering-lead");
+    // 'to' targeting a reserved label is downgraded to '*' for the
+    // same reason: no private worker-to-user channel.
+    await appendProjection(runDir, evt({
+      type: "note",
+      category: "message",
+      agentName: "engineering-lead",
+      payload: { from: "engineering-lead", to: "user", text: "private msg" },
+    }));
+    const [, e2] = await readRecentEntries(runDir, 10);
+    expect(e2.to).toBe("*");
   });
 
   it("maps category=verdict type=verify into kind=correction", async () => {
@@ -76,17 +118,38 @@ describe("ConversationProjection — spec §9.1 schema", () => {
     expect(e.ref).toBe("/runs/r1/verify-report.md");
   });
 
-  it("maps message.sent to dispatch with from/to", async () => {
+  it("maps message.sent to dispatch with full body when present (round-1 H2)", async () => {
     await appendProjection(runDir, evt({
       category: "message",
       type: "sent",
-      payload: { from: "orchestrator", to: "engineering-lead", summary: "go" },
+      payload: {
+        from: "orchestrator",
+        to: "engineering-lead",
+        summary: "go",
+        message: "Please write your engineering position on the dark mode rollout.",
+      },
     }));
     const [e] = await readRecentEntries(runDir, 10);
     expect(e.kind).toBe("dispatch");
     expect(e.from).toBe("orchestrator");
     expect(e.to).toBe("engineering-lead");
-    expect(e.text).toBe("go");
+    expect(e.text).toBe("Please write your engineering position on the dark mode rollout.");
+  });
+
+  it("falls through to summary when message body exceeds the cap", async () => {
+    const huge = "x".repeat(1000);
+    await appendProjection(runDir, evt({
+      category: "message",
+      type: "sent",
+      payload: {
+        from: "orchestrator",
+        to: "engineering-lead",
+        summary: "long dispatch",
+        message: huge,
+      },
+    }));
+    const [e] = await readRecentEntries(runDir, 10);
+    expect(e.text).toBe("long dispatch");
   });
 
   it("projects only run-level lifecycle, skips step-level", async () => {
@@ -122,11 +185,34 @@ describe("ConversationProjection — spec §9.1 schema", () => {
     await appendProjection(runDir, evt({
       type: "note",
       category: "message",
-      payload: { from: "system", to: "*", text: huge },
+      payload: { __host: true, from: "system", to: "*", text: huge },
     }));
     const [e] = await readRecentEntries(runDir, 10);
     expect(e.text.length).toBeLessThanOrEqual(500);
     expect(e.text.endsWith("…")).toBe(true);
+  });
+
+  it("projects a host-flagged correction event from the verifier (round-1 H3)", async () => {
+    await appendProjection(runDir, evt({
+      type: "correction",
+      category: "message",
+      step: "build",
+      agentName: "verifier",
+      summary: "verifier requests re-iteration on build",
+      payload: {
+        __host: true,
+        from: "verifier",
+        to: "engineer",
+        text: "Re-iterate build (attempt 2). Issues: missing import; failing test",
+        ref: "/runs/r1/verify-report.md",
+      },
+    }));
+    const [e] = await readRecentEntries(runDir, 10);
+    expect(e.kind).toBe("correction");
+    expect(e.from).toBe("verifier");
+    expect(e.to).toBe("engineer");
+    expect(e.ref).toBe("/runs/r1/verify-report.md");
+    expect(e.text).toContain("Re-iterate build");
   });
 
   it("skips malformed legacy lines instead of throwing", async () => {

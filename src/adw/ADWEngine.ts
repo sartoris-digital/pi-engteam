@@ -111,6 +111,23 @@ export class ADWEngine {
       summary: `Run ${runId} started: ${params.goal}`,
     });
 
+    // Phase 4.5 round-1 M-1: spec §9.1 includes user requests in the
+    // projection. Emit a host-flagged kind=request entry capturing the
+    // user-supplied goal so consult Leads / synthesis read it as the
+    // first dialogue turn.
+    this.config.observer.emit({
+      runId,
+      category: "message",
+      type: "request",
+      payload: {
+        __host: true,
+        from: "user",
+        to: "orchestrator",
+        text: params.goal,
+      },
+      summary: params.goal,
+    });
+
     return state;
   }
 
@@ -304,6 +321,27 @@ export class ADWEngine {
                 );
               } catch { /* best-effort */ }
             },
+            // Phase 4.5 round-1 H-3: surface the verifier's corrective turn
+            // in the dialogue projection. Host-flagged so the projection
+            // accepts "verifier" as a trusted sender.
+            onCorrection: ((iter) => (entry) => {
+              this.config.observer.emit({
+                runId: verifyRunId,
+                step: entry.workerStep,
+                iteration: iter,
+                agentName: "verifier",
+                category: "message",
+                type: "correction",
+                payload: {
+                  __host: true,
+                  from: "verifier",
+                  to: entry.workerAgentName,
+                  text: `Re-iterate ${entry.workerStep} (attempt ${entry.iteration + 1}). Issues: ${entry.issues.join("; ") || "(none)"}`,
+                  ref: entry.reportPath,
+                },
+                summary: `verifier requests re-iteration on ${entry.workerStep}`,
+              });
+            })(state.iteration),
           });
 
           this.config.observer.emit({
