@@ -89,6 +89,20 @@ export class ADWEngine {
   }
 
   /**
+   * Phase 5.6 round-2 H2: public hook for triggering a footer refresh
+   * outside of step boundaries. Loads the run state itself so external
+   * callers (e.g., src/index.ts onSubprocessEvent for TaskUpdate) don't
+   * need to know how to assemble a RunState. Best-effort — silently
+   * no-ops on missing state, missing tasks, or missing callbacks.
+   */
+  async refreshTillDoneFooterForRun(runId: string): Promise<void> {
+    if (!this.uiCallbacks) return;
+    const state = await loadRunState(this.config.runsDir, runId).catch(() => null);
+    if (!state) return;
+    return this.refreshTillDoneFooter(state);
+  }
+
+  /**
    * Phase 5.6 §9.2: refresh the Pi TUI footer widget showing TillDone
    * task progress alongside agent activity. Best-effort — a missing
    * tasks.json or callback is silently a no-op.

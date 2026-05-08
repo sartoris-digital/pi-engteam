@@ -101,9 +101,15 @@ describe("formatTillDoneFooter — Phase 5.6 §9.2 single-line", () => {
   });
 
   it("caps the rendered single-line at MAX_STATUS_LINE (round-1 L2)", () => {
-    const tasks = Array.from({ length: 200 }, (_, i) => task({ taskId: `t${i}`, status: "pending", team: "engineering" }));
-    const out = formatTillDoneFooter({ workflow: "wf", goal: "g", tasks });
+    // Construct an input that WOULD produce > 200 chars without the cap:
+    // a 5000-char workflow name guarantees overflow.
+    const longWorkflow = "w".repeat(5000);
+    const tasks = Array.from({ length: 50 }, (_, i) => task({ taskId: `t${i}`, status: "pending", team: "engineering" }));
+    const out = formatTillDoneFooter({ workflow: longWorkflow, goal: "g", tasks });
     expect(out.length).toBeLessThanOrEqual(200);
+    // And the empty-tasks branch must also cap.
+    const out2 = formatTillDoneFooter({ workflow: longWorkflow, goal: "g", tasks: [] });
+    expect(out2.length).toBeLessThanOrEqual(200);
   });
 });
 
@@ -156,6 +162,25 @@ describe("formatTillDoneDetailed — multi-line variant", () => {
     expect(evilLine).toBeDefined();
     expect(evilLine).not.toContain("\x1b");
     expect(evilLine).not.toContain("\r");
+  });
+
+  it("sanitizes taskId control bytes too (round-2 L2)", () => {
+    // taskId is normally validated at TaskUpdate write time, but a
+    // legacy tasks.json with control bytes shouldn't corrupt rendered
+    // output. Force an unsafe id past the validator (test-only).
+    const out = formatTillDoneDetailed({
+      workflow: "wf",
+      goal: "g",
+      tasks: [task({
+        taskId: "ok-id\nINJECT\x1bsneaky",
+        status: "pending",
+        team: "engineering",
+      })],
+    });
+    const evilLine = out.split("\n").find((l) => l.includes("INJECT"));
+    expect(evilLine).toBeDefined();
+    expect(evilLine).not.toContain("\x1b");
+    expect(evilLine).not.toContain("\n");
   });
 
   it("renders pending tasks with ○ marker", () => {

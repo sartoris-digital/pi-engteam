@@ -584,6 +584,11 @@ export default async function (pi: ExtensionAPI) {
   const expertiseCfg = { ...DEFAULT_EXPERTISE_CONFIG, ...(memoryConfig.expertise ?? {}) };
   const expertiseDirs = resolveDirs(expertiseCfg, process.cwd());
 
+  // Phase 5.6 round-2 H2: forward declaration so onSubprocessEvent can
+  // call engine.refreshTillDoneFooterForRun on TaskUpdate. Engine is
+  // constructed below after team; we patch this ref after construction.
+  let engineRef: ADWEngine | undefined;
+
   const team = new TeamRuntime({
     cwd: process.cwd(),
     bus,
@@ -671,6 +676,18 @@ export default async function (pi: ExtensionAPI) {
         payload: line.payload,
         summary: `${line.category}:${line.type}`,
       });
+      // Phase 5.6 round-2 H2: trigger a footer refresh whenever a
+      // TaskUpdate fires inside the subprocess so mid-step task ledger
+      // changes are reflected in the Pi TUI without waiting for the
+      // next step boundary. The refresh is fire-and-forget and seq-
+      // guarded so a stale completion can't overwrite a newer one.
+      if (
+        line.category === "tool_call" &&
+        typeof line.payload?.toolName === "string" &&
+        line.payload.toolName === "TaskUpdate"
+      ) {
+        void engineRef?.refreshTillDoneFooterForRun(runId);
+      }
     },
     // H2: onVerdictReceived replaces the dead customToolsFor pattern.
     // TeamRuntime.deliver() calls this after reading the subprocess verdict file,
@@ -715,6 +732,9 @@ export default async function (pi: ExtensionAPI) {
     ["consult", consult],
   ]);
   const engine = new ADWEngine({ runsDir: RUNS_DIR, workflows, team, observer });
+  // Phase 5.6 round-2 H2: bind the forward-declared ref so the TeamRuntime's
+  // onSubprocessEvent hook can trigger TillDone footer refreshes mid-step.
+  engineRef = engine;
 
   const originalStartRun = engine.startRun.bind(engine);
   // M5: track the live bus subscription so we can re-subscribe with the correct
