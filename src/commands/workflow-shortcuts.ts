@@ -187,6 +187,9 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
         );
       });
 
+      if (parsed.warning) {
+        ctx.ui.notify(parsed.warning, "warning");
+      }
       ctx.ui.notify(
         [
           `▶ consult started (run ${run.runId.slice(0, 8)})`,
@@ -208,29 +211,44 @@ type ConsultArgs = {
   topic: string;
   teams?: Array<"eng" | "valid" | "invest">;
   rounds: number;
+  warning?: string;
 };
 
 export function parseConsultArgs(raw: string): ConsultArgs {
   let s = raw.trim();
   let rounds = 1;
   let teams: Array<"eng" | "valid" | "invest"> | undefined;
+  let warning: string | undefined;
 
   const roundsMatch = s.match(/--rounds\s+(\d+)/);
   if (roundsMatch) {
-    rounds = Math.max(1, parseInt(roundsMatch[1], 10));
+    const requested = parseInt(roundsMatch[1], 10);
+    // H1: rounds>1 is reserved for Phase 4.5 multi-round revision — accept the
+    // budget so /run-status can surface intent, but warn that v1 only runs
+    // round 1 (positions + adversarials + synthesis).
+    if (Number.isFinite(requested) && requested > 1) {
+      rounds = requested;
+      warning = `--rounds ${requested} accepted as round budget; multi-round revision ships in Phase 4.5. v1 runs round 1 only.`;
+    } else {
+      rounds = Math.max(1, requested || 1);
+    }
     s = s.replace(roundsMatch[0], "").trim();
   }
 
   const teamsMatch = s.match(/teams=([a-z,]+)/i);
   if (teamsMatch) {
     const parts = teamsMatch[1].split(",").map((p) => p.trim().toLowerCase());
+    const seen = new Set<string>();
     const valid: Array<"eng" | "valid" | "invest"> = [];
     for (const p of parts) {
-      if (p === "eng" || p === "valid" || p === "invest") valid.push(p);
+      if ((p === "eng" || p === "valid" || p === "invest") && !seen.has(p)) {
+        valid.push(p);
+        seen.add(p);
+      }
     }
     teams = valid.length > 0 ? valid : undefined;
     s = s.replace(teamsMatch[0], "").trim();
   }
 
-  return { topic: s.trim(), teams, rounds };
+  return { topic: s.trim(), teams, rounds, warning };
 }

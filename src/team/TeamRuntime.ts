@@ -39,6 +39,29 @@ type TeamRuntimeConfig = {
   onSubprocessEvent?: (runId: string, agentName: string, line: SubprocessEventLine) => void;
 };
 
+// H2: validate verdict payload shape before propagating to the engine. A
+// malformed/empty/wrong-shape verdictFile from a buggy or compromised
+// subprocess otherwise polluted RunState steps[] with `verdict: undefined`
+// and downstream PASS-vs-FAIL decisions.
+const VALID_VERDICTS = new Set(["PASS", "FAIL", "NEEDS_MORE", "PARTIAL"]);
+function validateVerdictPayload(raw: unknown): VerdictPayload | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.step !== "string" || r.step.length === 0) return undefined;
+  if (typeof r.verdict !== "string" || !VALID_VERDICTS.has(r.verdict)) return undefined;
+  const isStringArr = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (r.issues !== undefined && !isStringArr(r.issues)) return undefined;
+  if (r.artifacts !== undefined && !isStringArr(r.artifacts)) return undefined;
+  if (r.handoffHint !== undefined && typeof r.handoffHint !== "string") return undefined;
+  if (r.learnings !== undefined && !isStringArr(r.learnings)) return undefined;
+  if (r.decisions !== undefined && !isStringArr(r.decisions)) return undefined;
+  if (r.issues_found !== undefined && !isStringArr(r.issues_found)) return undefined;
+  if (r.gotchas !== undefined && !isStringArr(r.gotchas)) return undefined;
+  if (r.runId !== undefined && typeof r.runId !== "string") return undefined;
+  return r as unknown as VerdictPayload;
+}
+
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
   const currentScript = process.argv[1];
   const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
@@ -182,7 +205,9 @@ export class TeamRuntime {
       try {
         const data = await readFile(verdictFile, "utf8");
         await unlink(verdictFile).catch(() => {});
-        const payload = JSON.parse(data) as VerdictPayload;
+        const raw = JSON.parse(data);
+        const payload = validateVerdictPayload(raw);
+        if (!payload) return undefined;
         this.config.onVerdictReceived?.(runId, to, payload);
         return payload;
       } catch {

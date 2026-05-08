@@ -12,6 +12,16 @@ type SessionEvent = {
   toolResult?: { id: string; content: unknown; isError?: boolean };
 };
 
+// H3: a real run id matches the RUN_ID_RE shape used across /learn,
+// /run-rollback, /run-cancel. Placeholders like "boot" or "none" are
+// emitted before any run exists and must not create projection files.
+const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const PLACEHOLDER_RUN_IDS = new Set(["boot", "none", "n/a", "unknown"]);
+function isProjectableRunId(runId: string): boolean {
+  if (PLACEHOLDER_RUN_IDS.has(runId)) return false;
+  return RUN_ID_RE.test(runId);
+}
+
 export class Observer {
   constructor(
     private writer: EventWriter,
@@ -26,7 +36,10 @@ export class Observer {
     };
     void this.writer.write(partial.runId, event);
     this.sink?.enqueue(event);
-    if (this.runsDir && partial.runId) {
+    // H3: skip placeholder/non-runId emissions ("boot", "none") and any
+    // value that doesn't look like a real run id, otherwise we'd create
+    // stray <runsDir>/boot/conversation.jsonl files on every startup.
+    if (this.runsDir && partial.runId && isProjectableRunId(partial.runId)) {
       void appendProjection(join(this.runsDir, partial.runId), event);
     }
   }

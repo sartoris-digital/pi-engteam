@@ -454,6 +454,25 @@ export class ADWEngine {
         aborted = true;
         break;
       }
+      // H5: enforce budget at every DAG level boundary, mirroring linear semantics.
+      const { maxIterations } = state.budget;
+      const zeroIterBudget = maxIterations === 0;
+      const budgetStatus = zeroIterBudget
+        ? { ok: false, warnings: [] as BudgetStatus["warnings"], exhausted: ["iterations" as const] as BudgetStatus["exhausted"] }
+        : checkBudget(state);
+      if (!budgetStatus.ok) {
+        state = { ...state, status: "failed", phase: "failed" };
+        await saveRunState(this.config.runsDir, state);
+        this.config.observer.emit({
+          runId,
+          category: "budget",
+          type: "exhausted",
+          payload: { exhausted: budgetStatus.exhausted },
+          summary: `Budget exhausted: ${budgetStatus.exhausted.join(", ")}`,
+        });
+        aborted = true;
+        break;
+      }
 
       const parallelResults = await Promise.allSettled(
         level.parallel.map((s) => this.runDagStep(runId, state, workflow, s)),
@@ -464,7 +483,9 @@ export class ADWEngine {
         const result: StepResult = r.status === "fulfilled"
           ? r.value.result
           : { success: false, verdict: "FAIL", error: r.reason instanceof Error ? r.reason.message : String(r.reason) };
-        state = await this.applyStepResult(runId, state, step, result, r.status === "fulfilled" ? r.value.elapsed : 0);
+        const elapsed = r.status === "fulfilled" ? r.value.elapsed : 0;
+        const startedAt = r.status === "fulfilled" ? r.value.startedAt : undefined;
+        state = await this.applyStepResult(runId, state, step, result, elapsed, startedAt);
         if (result.verdict !== "PASS") anyFail = true;
       }
 
@@ -478,10 +499,12 @@ export class ADWEngine {
         }
         let result: StepResult;
         let elapsed = 0;
+        let startedAt: string | undefined;
         try {
           const out = await this.runDagStep(runId, state, workflow, step);
           result = out.result;
           elapsed = out.elapsed;
+          startedAt = out.startedAt;
         } catch (err) {
           result = {
             success: false,
@@ -489,7 +512,7 @@ export class ADWEngine {
             error: err instanceof Error ? err.message : String(err),
           };
         }
-        state = await this.applyStepResult(runId, state, step, result, elapsed);
+        state = await this.applyStepResult(runId, state, step, result, elapsed, startedAt);
         if (result.verdict !== "PASS") anyFail = true;
       }
       if (aborted) break;
@@ -515,7 +538,7 @@ export class ADWEngine {
     state: RunState,
     workflow: Workflow,
     stepDef: Step,
-  ): Promise<{ result: StepResult; elapsed: number }> {
+  ): Promise<{ result: StepResult; elapsed: number; startedAt: string }> {
     this.config.observer.emit({
       runId,
       step: stepDef.name,
@@ -526,6 +549,7 @@ export class ADWEngine {
     });
     this.uiCallbacks?.setStatus("engineering", `▶ ${stepDef.name}`);
     this.config.team.setStepContext(stepDef.name, workflow.steps.map((s) => s.name));
+    const startedAt = new Date().toISOString();
     const stepStart = Date.now();
     let result: StepResult;
     try {
@@ -546,7 +570,7 @@ export class ADWEngine {
       this.config.team.markStepComplete(stepDef.name);
     }
     const elapsed = (Date.now() - stepStart) / 1000;
-    return { result, elapsed };
+    return { result, elapsed, startedAt };
   }
 
   private async applyStepResult(
@@ -555,6 +579,7 @@ export class ADWEngine {
     stepDef: Step,
     result: StepResult,
     elapsed: number,
+    startedAt?: string,
   ): Promise<RunState> {
     let next = tickBudget(state, elapsed, {
       costUsd: (result as any).costUsd,
@@ -564,6 +589,7 @@ export class ADWEngine {
       next = { ...next, artifacts: { ...next.artifacts, ...result.artifacts } };
     }
     next = updateStep(next, stepDef.name, {
+      ...(startedAt ? { startedAt } : {}),
       verdict: result.verdict,
       issues: result.issues,
       handoffHint: result.handoffHint,
@@ -572,6 +598,10 @@ export class ADWEngine {
       error: result.error,
     });
     next = { ...next, currentStep: stepDef.name };
+    // C2: pick up any concurrent phase mutation (e.g., /run-cancel) before saving,
+    // so we don't clobber a 'cancelling' write with stale in-memory phase.
+    const phaseFresh = await loadRunState(this.config.runsDir, runId);
+    if (phaseFresh?.phase) next = { ...next, phase: phaseFresh.phase };
     await saveRunState(this.config.runsDir, next);
     this.config.observer.emit({
       runId,

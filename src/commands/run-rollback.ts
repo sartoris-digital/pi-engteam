@@ -1,7 +1,12 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { mkdir, readdir, rm, stat, writeFile } from "fs/promises";
-import { join } from "path";
+import { mkdir, readdir, rm, stat, writeFile, realpath } from "fs/promises";
+import { join, resolve } from "path";
 import { loadRunState } from "../adw/RunState.js";
+
+// Same shape as /learn's runId guard. Codex P4 round-1 C-1: previously
+// /run-rollback `../../target` would operate outside runsDir if the path
+// existed.
+const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 export function registerRunRollbackCommand(pi: ExtensionAPI, runsDir: string): void {
   pi.registerCommand("run-rollback", {
@@ -13,13 +18,27 @@ export function registerRunRollbackCommand(pi: ExtensionAPI, runsDir: string): v
         ctx.ui.notify("Usage: /run-rollback <runId>", "error");
         return;
       }
+      if (!RUN_ID_RE.test(runId)) {
+        ctx.ui.notify(
+          `Invalid runId '${runId}': must match [A-Za-z0-9][A-Za-z0-9_-]{0,127}.`,
+          "error",
+        );
+        return;
+      }
       const runDir = join(runsDir, runId);
       try {
+        const realRunsDir = await realpath(runsDir);
+        const realRunDir = await realpath(runDir);
+        if (!realRunDir.startsWith(realRunsDir + "/") && realRunDir !== realRunsDir) {
+          ctx.ui.notify(`Run dir resolves outside runsDir; refusing rollback.`, "error");
+          return;
+        }
         await stat(runDir);
       } catch {
         ctx.ui.notify(`Run dir ${runDir} does not exist`, "error");
         return;
       }
+      void resolve;
       const state = await loadRunState(runsDir, runId);
       const record = {
         runId,
