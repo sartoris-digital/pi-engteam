@@ -1,5 +1,5 @@
 import { mkdir, readFile, realpath, writeFile } from "fs/promises";
-import { join, basename, resolve } from "path";
+import { join, basename } from "path";
 import type { TeamRuntime } from "../team/TeamRuntime.js";
 import type { VerdictPayload } from "../types.js";
 
@@ -110,10 +110,6 @@ async function readOptionalContext(runDir: string): Promise<string> {
   }
   return parts.join("\n\n");
 }
-
-// Used by the validity check above so that runDir paths without a trailing
-// slash still resolve correctly. (resolve normalizes, no trailing slash.)
-void resolve;
 
 function buildVerifierPrompt(opts: {
   cfg: VerifierLoopConfig;
