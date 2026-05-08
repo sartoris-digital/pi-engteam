@@ -274,7 +274,11 @@ export class TeamRuntime {
         );
       }
 
-      await writeFile(systemPromptFile, def.systemPrompt + teamSuffix + systemNotes + expertiseSuffix);
+      // Round-1 L1: order system reminders ABOVE team suffix so they
+      // present as primary instructions, not as a postscript to team
+      // context. Final order: base prompt → reminders → team context →
+      // expertise (which is fenced as data, not instructions).
+      await writeFile(systemPromptFile, def.systemPrompt + systemNotes + teamSuffix + expertiseSuffix);
 
       const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
       const { command, args } = getPiInvocation(piArgs);

@@ -32,7 +32,14 @@ import { loadSafetyConfig } from "./config.js";
 import { loadTeamsConfig } from "./safety/teams-config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
 import { createVerdictEmitTool } from "./team/tools/VerdictEmit.js";
-import { createTaskListTool, createTaskUpdateTool, loadTasks, unassignedTasks, liveTasks } from "./team/tools/TaskList.js";
+import {
+  createTaskListTool,
+  createTaskUpdateTool,
+  loadTasks,
+  unassignedTasks,
+  liveTasks,
+  TASK_ID_RE,
+} from "./team/tools/TaskList.js";
 import { createRequestApprovalTool } from "./team/tools/RequestApproval.js";
 import { createGrantApprovalTool } from "./team/tools/GrantApproval.js";
 import { registerRunStartCommand } from "./commands/run-start.js";
@@ -597,6 +604,12 @@ export default async function (pi: ExtensionAPI) {
     // Phase 5.5 §9.2: orchestrator-only host reminders for TillDone team
     // assignment + mark-on-complete nudge. Reads tasks.json, surfaces
     // unassigned/live counts. Other agents see no reminders.
+    //
+    // Round-1 C1 defense-in-depth: TaskUpdate now validates taskId at
+    // write time, but a legacy tasks.json file from before the validator
+    // could still contain unsafe ids. Filter ids through the same
+    // pattern before injecting into the prompt and elide unsafe ids
+    // (replace with a count placeholder).
     systemNotesFor: async (agentName: string, runId: string) => {
       if (agentName !== "orchestrator") return "";
       try {
@@ -606,8 +619,14 @@ export default async function (pi: ExtensionAPI) {
         const live = liveTasks(tasks);
         const lines: string[] = [];
         if (unassigned.length > 0) {
-          const ids = unassigned.slice(0, 10).map((t) => t.taskId).join(", ");
-          const more = unassigned.length > 10 ? `, +${unassigned.length - 10} more` : "";
+          const safeIds = unassigned
+            .map((t) => (TASK_ID_RE.test(t.taskId) ? t.taskId : null))
+            .filter((id): id is string => id !== null);
+          const ids = safeIds.slice(0, 10).join(", ");
+          const elided = unassigned.length - safeIds.length;
+          const more =
+            (safeIds.length > 10 ? `, +${safeIds.length - 10} more` : "") +
+            (elided > 0 ? ` (${elided} unsafe id(s) elided)` : "");
           lines.push(
             `- **${unassigned.length} task(s) pending team assignment**: [${ids}${more}]. ` +
             `Issue TaskUpdate({taskId, status, team: "engineering"|"validation"|"investigation"|"planning"|"cross-functional"}) for each.`,

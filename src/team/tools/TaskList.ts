@@ -11,6 +11,24 @@ import { join } from "path";
 // per task.
 export type Team = "engineering" | "validation" | "investigation" | "planning" | "cross-functional";
 
+// Round-1 C1: taskId enters the Orchestrator's system prompt verbatim via
+// the unassigned-tasks reminder. Constrain to a safe identifier pattern
+// at write time so a worker can't smuggle a prompt-injection payload as
+// the taskId. Same shape as runId / agentName.
+export const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+export function isValidTaskId(id: string): boolean {
+  return typeof id === "string" && TASK_ID_RE.test(id);
+}
+
+// Round-1 C2: runId is path-joined into runsDir for tasks.json access.
+// Reject anything that could escape runsDir.
+export const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+function ensureSafeRunId(runId: string): void {
+  if (!RUN_ID_RE.test(runId)) {
+    throw new Error(`Refusing tasks.json access for unsafe runId: ${runId}`);
+  }
+}
+
 export type Task = {
   taskId: string;
   status: "pending" | "in_progress" | "completed" | "blocked";
@@ -21,6 +39,7 @@ export type Task = {
 };
 
 export async function loadTasks(runsDir: string, runId: string): Promise<Task[]> {
+  ensureSafeRunId(runId);
   const path = join(runsDir, runId, "tasks.json");
   try {
     return JSON.parse(await readFile(path, "utf8")) as Task[];
@@ -30,6 +49,7 @@ export async function loadTasks(runsDir: string, runId: string): Promise<Task[]>
 }
 
 export async function saveTasks(runsDir: string, runId: string, tasks: Task[]): Promise<void> {
+  ensureSafeRunId(runId);
   const dir = join(runsDir, runId);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "tasks.json"), JSON.stringify(tasks, null, 2));
@@ -124,6 +144,16 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
       ], { description: "Owning team. Orchestrator assigns; Leads/workers may emit without team and let Orchestrator backfill." })),
     }),
     execute: async (_id, params) => {
+      // Round-1 C1: validate taskId at write boundary.
+      if (!isValidTaskId(params.taskId)) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `TaskUpdate refused: taskId must match ${TASK_ID_RE.source}.`,
+          }],
+          details: {},
+        };
+      }
       const tasks = await loadTasks(runsDir, runId);
       const existing = tasks.find(t => t.taskId === params.taskId);
       if (existing) {
