@@ -185,6 +185,42 @@ describe("ExpertiseStore — Phase 5 §8", () => {
     expect(out).not.toContain("Off Limits");
   });
 
+  it("caps per-entry text at 500 chars (round-2 M2)", async () => {
+    const huge = "x".repeat(10_000);
+    const out = await appendExpertise(
+      "engineer",
+      dirs,
+      [{ kind: "learning", text: huge }],
+      cfg,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text.length).toBeLessThanOrEqual(500);
+    expect(out[0].text.endsWith("…")).toBe(true);
+  });
+
+  it("caps batch size to 50 entries (round-2 M2)", async () => {
+    const flood = Array.from({ length: 200 }, (_, i) => ({
+      kind: "learning" as const,
+      text: `entry-${i}`,
+    }));
+    const out = await appendExpertise("engineer", dirs, flood, cfg);
+    expect(out.length).toBeLessThanOrEqual(50);
+    // First 50 should win on overflow.
+    expect(out[0].text).toBe("entry-0");
+  });
+
+  it("readReadonly fails closed on empty agents value (round-2 M1)", async () => {
+    const ro = join(dirs.projectDir, "_readonly");
+    await mkdir(ro, { recursive: true });
+    // Empty value — neither bracket form nor a list. Must NOT default to "all agents".
+    await writeFile(
+      join(ro, "empty.md"),
+      `---\nagents:\nloadOrder: 5\n---\n# Empty Value\nbody`,
+    );
+    const out = await readReadonly("implementer", dirs);
+    expect(out).not.toContain("Empty Value");
+  });
+
   it("expands ~ in cfg.globalDir (round-1 H3)", async () => {
     const tildeCfg: ExpertiseConfig = {
       ...cfg,

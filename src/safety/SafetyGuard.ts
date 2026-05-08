@@ -162,6 +162,20 @@ export function registerHardBlockers(
           layer: "A",
         };
       }
+      // Phase 5 round-2 C1: Bash bypass of the expertise single-writer
+      // policy. A worker could otherwise `mv /tmp/forged.md
+      // ./.pi/engineering-team/expertise/eng.md`, `cp ... > expertise/...`,
+      // `tee >> expertise/...`, etc. We block any Bash command that
+      // mentions the expertise path substring. False positives (e.g. a
+      // legitimate read of an unrelated dir whose name contains the
+      // substring) are acceptable cost — the dir name is namespaced.
+      if (/\.pi\/engineering-team\/expertise/.test(toolInput.command)) {
+        return {
+          block: true,
+          reason: "[Layer A] Bash command targets expertise files; only Memory Core may write them.",
+          layer: "A",
+        };
+      }
     }
 
     if (["Write", "Edit", "Read"].includes(toolName)) {

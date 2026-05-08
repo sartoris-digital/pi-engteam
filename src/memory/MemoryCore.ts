@@ -459,6 +459,11 @@ export class MemoryCore {
    * expertise files, dedupe against existing content, enforce line cap,
    * and promote entries seen across N≥threshold projects to user-global.
    * Best-effort — failures log but don't crash the flush pipeline.
+   *
+   * Round-2 H1: snapshot-and-clear the buffer BEFORE awaiting any I/O so
+   * concurrent onVerdict() calls during the flush don't have their
+   * entries silently dropped. Failed appends are requeued so we never
+   * lose entries on transient I/O errors.
    */
   async flushExpertise(): Promise<void> {
     const cfg: ExpertiseConfig = {
@@ -471,7 +476,11 @@ export class MemoryCore {
     }
     const projectCwd = process.cwd();
     const dirs = resolveDirs(cfg, projectCwd);
-    for (const [agentName, wisdom] of this.expertiseBuffer.entries()) {
+    // Atomic snapshot+clear: any onVerdict landing after this point goes
+    // into a fresh buffer and is picked up by the next flush.
+    const snapshot = new Map(this.expertiseBuffer);
+    this.expertiseBuffer.clear();
+    for (const [agentName, wisdom] of snapshot.entries()) {
       try {
         const added = await appendExpertise(agentName, dirs, wisdom, cfg);
         if (added.length > 0) {
@@ -482,9 +491,13 @@ export class MemoryCore {
           `[pi-memory] flushExpertise failed for ${agentName}:`,
           err instanceof Error ? err.message : String(err),
         );
+        // Requeue on failure so a transient error doesn't drop wisdom.
+        if (!this.expertiseBuffer.has(agentName)) {
+          this.expertiseBuffer.set(agentName, []);
+        }
+        this.expertiseBuffer.get(agentName)!.push(...wisdom);
       }
     }
-    this.expertiseBuffer.clear();
   }
 
   private async readLastFlushTimestamp(): Promise<string> {

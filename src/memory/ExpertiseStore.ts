@@ -125,13 +125,22 @@ function parseFrontmatter(raw: string): { meta: ReadonlyFrontmatter; body: strin
   const body = raw.slice(end + 4).replace(/^\n/, "");
   const meta: ReadonlyFrontmatter = {};
   for (const line of yaml.split("\n")) {
-    const m = line.match(/^(\w+):\s*(.+)$/);
-    if (!m) continue;
-    const [, key, val] = m;
+    // Round-2 M1: match the key first, value optional. An `agents:` line
+    // with empty value previously fell through entirely (the prior regex
+    // required `(.+)` after the colon) — silently treating "agents:" as
+    // "no key" and projecting the file to all agents. Now an empty value
+    // is detected and treated as malformed (fail-closed).
+    const keyMatch = line.match(/^(\w+):\s*(.*)$/);
+    if (!keyMatch) continue;
+    const [, key, val] = keyMatch;
     if (key === "agents") {
-      // Require an explicit [a, b, c] shape; a missing bracket pair is
-      // treated as malformed and the file is excluded from all agents.
-      const bracketMatch = val.match(/^\[(.*)\]$/);
+      const trimmed = val.trim();
+      if (trimmed.length === 0) {
+        meta.agentsMalformed = true;
+        meta.agents = [];
+        continue;
+      }
+      const bracketMatch = trimmed.match(/^\[(.*)\]$/);
       if (!bracketMatch) {
         meta.agentsMalformed = true;
         meta.agents = [];
@@ -206,10 +215,16 @@ export async function readReadonly(
   return sections.join("\n");
 }
 
+// Round-2 M2: per-entry text cap and per-batch item cap. Without these,
+// a worker that floods VerdictEmit.learnings with megabytes of text could
+// blow up future agent system prompts and memory snapshots.
+const MAX_WISDOM_TEXT_CHARS = 500;
+const MAX_WISDOM_ENTRIES_PER_BATCH = 50;
+
 /**
  * Append new wisdom entries to project-local expertise file, dedupe
  * against existing content, enforce line cap (oldest entries pruned).
- * Returns the entries actually added (after dedup).
+ * Returns the entries actually added (after dedup + length/count cap).
  */
 export async function appendExpertise(
   agentName: string,
@@ -218,25 +233,33 @@ export async function appendExpertise(
   cfg: ExpertiseConfig = DEFAULT_EXPERTISE_CONFIG,
 ): Promise<WisdomEntry[]> {
   if (!cfg.enabled || entries.length === 0) return [];
+  // Cap incoming batch size — drop the tail rather than truncate prefix
+  // so the earliest emitted wisdom wins on overflow.
+  const limited = entries.slice(0, MAX_WISDOM_ENTRIES_PER_BATCH);
   await mkdir(dirs.projectDir, { recursive: true });
   const path = expertiseFilePath(dirs.projectDir, agentName);
   const existingRaw = await readFileOrEmpty(path);
   const existingLines = existingRaw.split("\n").map((l) => l.trim()).filter(Boolean);
   const existingSet = new Set(existingLines.map(stripBullet));
   const toAdd: WisdomEntry[] = [];
-  for (const e of entries) {
-    const norm = stripBullet(e.text).toLowerCase();
+  for (const e of limited) {
+    // Truncate per-entry text to keep prompt-injection blast radius bounded.
+    const cappedText = e.text.length > MAX_WISDOM_TEXT_CHARS
+      ? e.text.slice(0, MAX_WISDOM_TEXT_CHARS - 1) + "…"
+      : e.text;
+    const capped: WisdomEntry = { ...e, text: cappedText };
+    const norm = stripBullet(capped.text).toLowerCase();
     if (norm.length === 0) continue;
     if (existingSet.has(norm)) continue;
     existingSet.add(norm);
-    toAdd.push(e);
+    toAdd.push(capped);
   }
   if (toAdd.length === 0) return [];
   const newLines = toAdd.map((e) => formatBullet(e));
   const merged = [...existingLines, ...newLines];
-  // Enforce cap by pruning oldest.
-  const capped = merged.slice(Math.max(0, merged.length - cfg.maxLinesPerFile));
-  await writeFile(path, capped.join("\n") + "\n");
+  // Enforce file line cap by pruning oldest.
+  const finalLines = merged.slice(Math.max(0, merged.length - cfg.maxLinesPerFile));
+  await writeFile(path, finalLines.join("\n") + "\n");
   return toAdd;
 }
 
