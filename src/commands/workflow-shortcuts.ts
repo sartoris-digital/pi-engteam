@@ -118,10 +118,13 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
         const run = await engine.startRun({ workflow, goal, budget: {} });
         // Phase 5.6 round-2 H1: wire UI callbacks so the TillDone footer
         // refreshes during shortcut-triggered runs (matching /run-start).
-        engine.setUiCallbacks({
-          notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
-          setStatus: (key, text) => ctx.ui.setStatus(key, text),
-        });
+        engine.setUiCallbacks(
+          {
+            notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
+            setStatus: (key, text) => ctx.ui.setStatus(key, text),
+          },
+          run.runId,
+        );
         // H1: attach rejection handler so workflow errors surface to the user
         engine.executeRun(run.runId).catch((err: unknown) => {
           ctx.ui.notify(
@@ -222,10 +225,13 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
       }
 
       // Phase 5.6 round-2 H1: wire UI callbacks for TillDone footer.
-      engine.setUiCallbacks({
-        notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
-        setStatus: (key, text) => ctx.ui.setStatus(key, text),
-      });
+      engine.setUiCallbacks(
+        {
+          notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
+          setStatus: (key, text) => ctx.ui.setStatus(key, text),
+        },
+        run.runId,
+      );
       engine.executeRun(run.runId).catch((err: unknown) => {
         ctx.ui.notify(
           `Consult ${run.runId.slice(0, 8)} failed: ${err instanceof Error ? err.message : String(err)}`,

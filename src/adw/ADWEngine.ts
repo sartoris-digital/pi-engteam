@@ -39,6 +39,12 @@ type UiCallbacks = {
 
 export class ADWEngine {
   private uiCallbacks?: UiCallbacks;
+  // Phase 5.6 round-3 M1: track which runId owns the current callbacks so
+  // a finishing run doesn't clear another concurrently-active run's
+  // status. Callbacks are scoped to a single run; the most recent
+  // setUiCallbacks wins, but clearUiStatus only clears when the current
+  // run is the owner.
+  private uiCallbacksOwner?: string;
 
   constructor(private config: ADWConfig) {
     for (const wf of config.workflows.values()) {
@@ -61,14 +67,22 @@ export class ADWEngine {
     return wf.steps.some((s) => Array.isArray(s.dependsOn));
   }
 
-  /** Attach Pi UI callbacks so the engine can surface step progress in the TUI. */
-  setUiCallbacks(cbs: UiCallbacks): void {
+  /**
+   * Attach Pi UI callbacks so the engine can surface step progress in the TUI.
+   * Round-3 M1: the optional runId binds these callbacks to a specific run
+   * so concurrent shortcut-triggered runs don't clear each other's status.
+   * If no runId is supplied, the previous behavior (last-write-wins, no
+   * ownership tracking) is preserved.
+   */
+  setUiCallbacks(cbs: UiCallbacks, runId?: string): void {
     this.uiCallbacks = cbs;
+    this.uiCallbacksOwner = runId;
   }
 
   /** Detach UI callbacks (called at run end or when context is no longer valid). */
   clearUiCallbacks(): void {
     this.uiCallbacks = undefined;
+    this.uiCallbacksOwner = undefined;
   }
 
   // Phase 5.6 round-1 H1: monotonic sequence so a stale async footer
@@ -79,7 +93,18 @@ export class ADWEngine {
   // setStatus is skipped.
   private footerRefreshSeq = 0;
 
-  private clearUiStatus(): void {
+  private clearUiStatus(runId?: string): void {
+    // Round-3 M1: only clear if the current callback owner matches the
+    // ending run, OR if no owner is recorded (legacy behavior). When
+    // shortcut-triggered runs A and B race, B's setUiCallbacks replaces
+    // A's; A's clearUiStatus call must NOT erase B's status.
+    if (runId && this.uiCallbacksOwner && runId !== this.uiCallbacksOwner) {
+      // Still bump seq so an in-flight refresh from this run's
+      // refreshTillDoneFooter doesn't write a stale value, but don't
+      // touch the new owner's status keys.
+      this.footerRefreshSeq++;
+      return;
+    }
     this.uiCallbacks?.setStatus("engineering", undefined);
     this.uiCallbacks?.setStatus("engineering_out", undefined);
     this.uiCallbacks?.setStatus("tilldone", undefined);
@@ -522,7 +547,7 @@ export class ADWEngine {
       return terminal;
     });
 
-    this.clearUiStatus();
+    this.clearUiStatus(runId);
 
     this.config.observer.emit({
       runId,
@@ -667,7 +692,7 @@ export class ADWEngine {
         return terminal;
       });
     }
-    this.clearUiStatus();
+    this.clearUiStatus(runId);
     this.config.observer.emit({
       runId,
       category: "lifecycle",

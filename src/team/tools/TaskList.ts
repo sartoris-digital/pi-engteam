@@ -216,6 +216,32 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
         });
       }
       await saveTasks(runsDir, runId, tasks);
+      // Phase 5.6 round-3 H1: emit a subprocess audit line so the
+      // controller's onSubprocessEvent hook can refresh the TillDone
+      // footer mid-step. SecretResolver is not the only writer to this
+      // audit file — TaskUpdate writes its own tool_call entry. Best-
+      // effort: failures don't block the tool's primary effect.
+      try {
+        const subRunsDir = process.env["PI_ENGINEERING_RUNS_DIR"];
+        const subRunId = process.env["PI_ENGINEERING_RUN_ID"];
+        const eventToken = process.env["PI_ENGINEERING_SUBPROC_EVENT_TOKEN"];
+        if (subRunsDir && subRunId && eventToken) {
+          const { appendFileSync } = await import("fs");
+          const { join: pathJoin } = await import("path");
+          const eventFile = pathJoin(subRunsDir, subRunId, `events-subprocess-${eventToken}.jsonl`);
+          appendFileSync(
+            eventFile,
+            JSON.stringify({
+              category: "tool_call",
+              type: "task_update",
+              payload: { toolName: "TaskUpdate", taskId: params.taskId, status: params.status, team: params.team },
+              ts: new Date().toISOString(),
+            }) + "\n",
+          );
+        }
+      } catch {
+        // best-effort; controller will catch up at the next step boundary
+      }
       return {
         content: [{ type: "text" as const, text: `Task ${params.taskId} updated: ${params.status}${params.team ? ` (team=${params.team})` : ""}` }],
         details: {},

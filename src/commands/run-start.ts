@@ -25,11 +25,16 @@ export function registerRunStartCommand(pi: ExtensionAPI, engine: ADWEngine): vo
           maxCostUsd: maxCostStr ? parseFloat(maxCostStr) : undefined,
         },
       });
-      // Wire Pi TUI callbacks so the engine surfaces step progress in the footer/notifications
-      engine.setUiCallbacks({
-        notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
-        setStatus: (key, text) => ctx.ui.setStatus(key, text),
-      });
+      // Wire Pi TUI callbacks so the engine surfaces step progress in the footer/notifications.
+      // Phase 5.6 round-3 M1: bind callbacks to this run so concurrent
+      // shortcut-triggered runs don't clear each other's status.
+      engine.setUiCallbacks(
+        {
+          notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
+          setStatus: (key, text) => ctx.ui.setStatus(key, text),
+        },
+        run.runId,
+      );
       // H1: attach rejection handler so workflow errors surface to the user
       engine.executeRun(run.runId).catch((err: unknown) => {
         ctx.ui.notify(

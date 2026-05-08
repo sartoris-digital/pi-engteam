@@ -27,12 +27,29 @@ function clip(s: string, n: number): string {
 const MAX_STATUS_LINE = 200;
 const GOAL_CLIP = 40;
 
-// Round-1 M1 + round-2 L1: scrub ASCII control chars (0x00-0x1F + 0x7F
-// DEL) from worker-controlled fields. The regex previously inlined the
-// literal bytes, which made git classify the file as binary and hide
-// future diffs. Escape-form keeps the file text-clean.
-// eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\x00-\x1F\x7F]/g;
+// Round-1 M1 + round-2 L1 + round-3 L1: scrub ASCII control chars
+// (0x00-0x1F + 0x7F DEL) AND Unicode visual controls (line/paragraph
+// separators, BiDi controls, zero-width chars) from worker-controlled
+// fields.
+//
+// Built with `new RegExp(...)` because U+2028/U+2029 (LINE/PARAGRAPH
+// SEPARATOR) cannot appear inside a JS regex literal — they terminate
+// the literal and break parsing. The string-based constructor with the
+// `u` flag accepts \u{XXXX} escapes for arbitrary code points.
+//
+// Coverage rationale:
+//   - 0x00-0x1F + 0x7F      — ASCII control + DEL
+//   - U+200B / U+FEFF       — ZERO-WIDTH SPACE / BOM (invisible padding)
+//   - U+200E / U+200F       — LRM / RLM
+//   - U+202A-U+202E         — embedding overrides
+//   - U+2028 / U+2029       — LINE / PARAGRAPH SEPARATOR (split lines)
+//   - U+2066-U+2069         — isolate controls (BiDi reorder attacks)
+const CONTROL_RE = new RegExp(
+  "[\\x00-\\x1F\\x7F" +
+    "\\u{200B}\\u{200E}\\u{200F}\\u{202A}-\\u{202E}" +
+    "\\u{2028}\\u{2029}\\u{2066}-\\u{2069}\\u{FEFF}]",
+  "gu",
+);
 function sanitize(s: string): string {
   return s.replace(CONTROL_RE, " ");
 }

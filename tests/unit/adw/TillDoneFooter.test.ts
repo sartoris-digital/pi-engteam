@@ -183,6 +183,26 @@ describe("formatTillDoneDetailed — multi-line variant", () => {
     expect(evilLine).not.toContain("\n");
   });
 
+  it("sanitizes Unicode visual controls (round-3 L1)", () => {
+    // U+2028 (line sep), U+200B (zero-width), U+202E (BiDi RTL override)
+    // would otherwise distort /run-status rendering.
+    const out = formatTillDoneDetailed({
+      workflow: "wf",
+      goal: "g",
+      tasks: [task({
+        taskId: "t-1",
+        status: "pending",
+        team: "engineering",
+        notes: "before AFTER​zero‮BIDI",
+      })],
+    });
+    const evilLine = out.split("\n").find((l) => l.includes("AFTER"));
+    expect(evilLine).toBeDefined();
+    expect(evilLine).not.toContain(" ");
+    expect(evilLine).not.toContain("​");
+    expect(evilLine).not.toContain("‮");
+  });
+
   it("renders pending tasks with ○ marker", () => {
     const out = formatTillDoneDetailed({
       workflow: "wf",
