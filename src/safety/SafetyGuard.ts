@@ -162,14 +162,23 @@ export function registerHardBlockers(
           layer: "A",
         };
       }
-      // Phase 5 round-2 C1: Bash bypass of the expertise single-writer
-      // policy. A worker could otherwise `mv /tmp/forged.md
-      // ./.pi/engineering-team/expertise/eng.md`, `cp ... > expertise/...`,
-      // `tee >> expertise/...`, etc. We block any Bash command that
-      // mentions the expertise path substring. False positives (e.g. a
-      // legitimate read of an unrelated dir whose name contains the
-      // substring) are acceptable cost — the dir name is namespaced.
-      if (/\.pi\/engineering-team\/expertise/.test(toolInput.command)) {
+      // Phase 5 round-2 C1 + round-3 C1: Bash bypass of the expertise
+      // single-writer policy. The match is now case-insensitive (defense
+      // against macOS HFS+ case-folded paths) and matches both forward
+      // slashes and the unlikely-but-possible double-slash variant. This
+      // catches `mv ... ./.pi/engineering-team/expertise/eng.md`,
+      // `cp .../EXPERTISE/...`, `tee >> .pi/engineering-team/expertise/foo`,
+      // and similar.
+      //
+      // Round-3 C1 caveat: this guard cannot catch shell-variable
+      // indirection (`mv "$tmp/forged.md" "$EXP/eng.md"` where EXP is
+      // set in a prior call), command substitution, or other dynamic
+      // expansion. The defense-in-depth is the per-agent DomainLock
+      // policy at Layer D — every worker agent's default force_block list
+      // includes the expertise dir, so even a Write/Edit/Bash that does
+      // reach disk is rejected by Pi's tool-call boundary if the worker's
+      // domain lock is enforced.
+      if (/\.pi\/engineering-team\/expertise/i.test(toolInput.command)) {
         return {
           block: true,
           reason: "[Layer A] Bash command targets expertise files; only Memory Core may write them.",

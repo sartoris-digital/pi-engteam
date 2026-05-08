@@ -79,10 +79,23 @@ async function readFileOrEmpty(path: string): Promise<string> {
   }
 }
 
+// Round-3 M2: cap the total rendered expertise output regardless of
+// what's on disk. Old oversized files (predating round-2 caps) and
+// user-authored _readonly bodies must not blow up the system prompt.
+const MAX_RENDERED_EXPERTISE_CHARS = 8000;
+const MAX_RENDERED_READONLY_CHARS = 12000;
+
+function clipRender(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max - 1) + "…";
+}
+
 /**
  * Read user-global + project-local expertise for an agent, return rendered
  * `## Expertise` section text suitable for system prompt injection. Empty
- * when both files are missing/empty.
+ * when both files are missing/empty. Output is capped to
+ * MAX_RENDERED_EXPERTISE_CHARS so historical file sizes can't amplify
+ * future system prompts.
  */
 export async function readExpertise(
   agentName: string,
@@ -102,7 +115,8 @@ export async function readExpertise(
     sections.push("### Global", globalRaw.trim());
   }
   if (sections.length === 0) return "";
-  return ["## Expertise", "Curated from your prior runs across this project and globally.", ...sections, ""].join("\n");
+  const out = ["## Expertise", "Curated from your prior runs across this project and globally.", ...sections, ""].join("\n");
+  return clipRender(out, MAX_RENDERED_EXPERTISE_CHARS);
 }
 
 type ReadonlyFrontmatter = {
@@ -212,7 +226,9 @@ export async function readReadonly(
     sections.push(m.body);
   }
   sections.push("");
-  return sections.join("\n");
+  // Round-3 M2: cap the rendered _readonly content too. User-authored
+  // docs can be arbitrarily large.
+  return clipRender(sections.join("\n"), MAX_RENDERED_READONLY_CHARS);
 }
 
 // Round-2 M2: per-entry text cap and per-batch item cap. Without these,

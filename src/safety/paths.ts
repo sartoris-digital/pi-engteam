@@ -5,27 +5,46 @@ import { dirname, resolve } from "path";
 import { isEnvFileAccess } from "./patterns.js";
 
 /**
- * Phase 5 round-2 C2: resolve symlinks at the leaf or its immediate
- * parent so a worker can't bypass protected-path matching by writing
- * through a symlink. Walking further up (e.g. all the way to /) creates
- * false positives on macOS firmlinks like /home → /System/Volumes/Data/home,
- * which would otherwise flag every /home/* path as protected (matches
- * /System prefix). Returns the lexical path unchanged when neither leaf
- * nor parent can be resolved.
+ * Phase 5 round-2 C2 + round-3 M1: resolve symlinks at the leaf or any
+ * existing ancestor so a worker can't bypass protected-path matching by
+ * writing through a deep chain like `alias/missing/file.md` where only
+ * `alias` exists and is a symlink to expertise/.
+ *
+ * macOS firmlink defense: `/home → /System/Volumes/Data/home` and similar
+ * Apple firmlinks are transparent indirections, NOT user content under
+ * /System for protected-path purposes. We strip a leading
+ * `/System/Volumes/Data` prefix from the resolved path so the protected
+ * /System prefix doesn't false-positive on every /home/* path.
+ *
+ * Returns the lexical path unchanged when no ancestor can be resolved.
  */
 function resolveAncestorRealpath(abs: string): string {
+  let resolved: string | undefined;
   try {
-    return realpathSync(abs);
+    resolved = realpathSync(abs);
   } catch {
-    const parent = dirname(abs);
-    const tail = abs.slice(parent.length);
-    try {
-      const real = realpathSync(parent);
-      return real + tail;
-    } catch {
-      return abs;
+    let cur = abs;
+    let suffix = "";
+    while (cur !== dirname(cur)) {
+      const parent = dirname(cur);
+      const tail = cur.slice(parent.length);
+      try {
+        const real = realpathSync(parent);
+        resolved = real + tail + suffix;
+        break;
+      } catch {
+        suffix = tail + suffix;
+        cur = parent;
+      }
     }
   }
+  if (!resolved) return abs;
+  // Strip macOS firmlink prefix so /home/* isn't false-flagged as /System.
+  const FIRMLINK = "/System/Volumes/Data";
+  if (resolved.startsWith(FIRMLINK + "/")) {
+    return resolved.slice(FIRMLINK.length);
+  }
+  return resolved;
 }
 
 export function expandPath(p: string): string {
