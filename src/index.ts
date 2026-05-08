@@ -21,6 +21,7 @@ import { refactorCampaign } from "./workflows/refactor-campaign.js";
 import { docBackfill } from "./workflows/doc-backfill.js";
 import { specPlanBuildReview } from "./workflows/spec-plan-build-review.js";
 import { issueAnalyze } from "./workflows/issue-analyze.js";
+import { consult } from "./workflows/consult.js";
 import { registerIssueCommand } from "./commands/issue.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
@@ -37,6 +38,8 @@ import { createGrantApprovalTool } from "./team/tools/GrantApproval.js";
 import { registerRunStartCommand } from "./commands/run-start.js";
 import { registerRunResumeCommand } from "./commands/run-resume.js";
 import { registerRunAbortCommand } from "./commands/run-abort.js";
+import { registerRunCancelCommand } from "./commands/run-cancel.js";
+import { registerRunRollbackCommand } from "./commands/run-rollback.js";
 import { registerRunPlanModeCommand } from "./commands/run-plan-mode.js";
 import { registerRunStatusCommand } from "./commands/run-status.js";
 import { loadMemoryConfig } from "./memory/config.js";
@@ -529,7 +532,7 @@ export default async function (pi: ExtensionAPI) {
   const writer = new EventWriter(RUNS_DIR);
   const sinkUrl = process.env.PI_ENGINEERING_EVENT_URL;
   const sink = sinkUrl ? new HttpSink(sinkUrl, "global", RUNS_DIR) : undefined;
-  const observer = new Observer(writer, sink);
+  const observer = new Observer(writer, sink, RUNS_DIR);
 
   // Surface teams.yaml parse errors to operators at boot. Without this, corrupt
   // config silently falls back to defaults and is only visible via /engineering-doctor.
@@ -605,6 +608,7 @@ export default async function (pi: ExtensionAPI) {
     ["doc-backfill", docBackfill],
     ["spec-plan-build-review", specPlanBuildReview],
     ["issue-analyze", issueAnalyze],
+    ["consult", consult],
   ]);
   const engine = new ADWEngine({ runsDir: RUNS_DIR, workflows, team, observer });
 
@@ -630,13 +634,15 @@ export default async function (pi: ExtensionAPI) {
 
   registerDoctorCommand(pi);
   registerObserveCommand(pi);
-  registerWorkflowShortcuts(pi, engine);
+  registerWorkflowShortcuts(pi, engine, RUNS_DIR);
   registerSpecCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
   registerIssueCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
   registerLearnCommand(pi, team, RUNS_DIR);
   registerRunStartCommand(pi, engine);
   registerRunResumeCommand(pi, engine);
-  registerRunAbortCommand(pi, engine);
+  registerRunAbortCommand(pi, RUNS_DIR);
+  registerRunCancelCommand(pi, RUNS_DIR);
+  registerRunRollbackCommand(pi, RUNS_DIR);
   registerRunPlanModeCommand(pi, RUNS_DIR);
   registerRunStatusCommand(pi, RUNS_DIR);
   await memoryCore.register(pi);

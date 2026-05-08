@@ -32,6 +32,10 @@ export type Step = {
   maxVerifyLoops?: number;
   /** Phase 3: name of the worker agent that owns this step (used by the verifier loop to address corrective messages). If omitted, no verifier loop runs. */
   agent?: string;
+  /** Phase 4: when false, force sequential execution after siblings sharing the same dependsOn set. Default true. */
+  parallel?: boolean;
+  /** Phase 4: step names that must complete (any verdict) before this step is eligible. */
+  dependsOn?: string[];
   run: (ctx: StepContext) => Promise<StepResult>;
 };
 

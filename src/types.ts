@@ -12,6 +12,8 @@ export type TeamMessage = {
 
 export type RunStatus = "pending" | "running" | "paused" | "waiting_user" | "succeeded" | "failed" | "aborted";
 
+export type RunPhase = "active" | "cancelling" | "cancelled" | "rolled-back" | "done" | "failed";
+
 export type Budget = {
   maxIterations: number;
   maxCostUsd: number;
@@ -53,6 +55,10 @@ export type RunState = {
   planMode: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Phase 4: cancel/rollback state machine; absent on legacy state files = "active". */
+  phase?: RunPhase;
+  /** Phase 4: workflow-defined round budget; absent = no rounds. */
+  rounds?: { current: number; max: number };
 };
 
 export type EventCategory =

@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { ADWEngine } from "../adw/ADWEngine.js";
+import { buildConsultWorkflow, bootstrapConsultRun } from "../workflows/consult.js";
+import { join } from "path";
 
 type ShortcutDef = {
   command: string;
@@ -98,7 +100,7 @@ function formatWorkflowHelp(): string {
   ].join("\n");
 }
 
-export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine): void {
+export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, runsDir: string): void {
   for (const { command, workflow, description, example } of SHORTCUTS) {
     pi.registerCommand(command, {
       description,
@@ -145,4 +147,90 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine): 
       ctx.ui.notify(formatWorkflowHelp(), "info");
     },
   });
+
+  // /consult — cross-team adversarial review (parallel Leads + synthesis)
+  pi.registerCommand("consult", {
+    description:
+      "Cross-team adversarial review on a topic. Usage: /consult <topic> [teams=eng,valid,invest] [--rounds 1]",
+    handler: async (args, ctx) => {
+      const parsed = parseConsultArgs(args);
+      if (!parsed.topic) {
+        ctx.ui.notify(
+          [
+            'Usage: /consult <topic> [teams=eng,valid,invest] [--rounds 1]',
+            'Example: /consult "Should we adopt Drizzle ORM?" teams=eng,valid --rounds 2',
+          ].join("\n"),
+          "error",
+        );
+        return;
+      }
+      const wf = buildConsultWorkflow(parsed.teams);
+      engine.registerWorkflow(wf);
+
+      const run = await engine.startRun({ workflow: wf.name, goal: parsed.topic, budget: {} });
+      await bootstrapConsultRun(join(runsDir, run.runId));
+
+      // M1: persist round budget on the run state for autopilot/UI surfacing.
+      const { loadRunState, saveRunState } = await import("../adw/RunState.js");
+      const cur = await loadRunState(runsDir, run.runId);
+      if (cur) {
+        await saveRunState(runsDir, {
+          ...cur,
+          rounds: { current: 0, max: parsed.rounds },
+        });
+      }
+
+      engine.executeRun(run.runId).catch((err: unknown) => {
+        ctx.ui.notify(
+          `Consult ${run.runId.slice(0, 8)} failed: ${err instanceof Error ? err.message : String(err)}`,
+          "error",
+        );
+      });
+
+      ctx.ui.notify(
+        [
+          `▶ consult started (run ${run.runId.slice(0, 8)})`,
+          `Topic: ${parsed.topic}`,
+          `Teams: ${(parsed.teams ?? ["eng", "valid", "invest"]).join(", ")}`,
+          `Rounds: ${parsed.rounds}`,
+          ``,
+          `Watch progress:`,
+          `  /run-status ${run.runId}`,
+          `  tail -f ~/.pi/engineering-team/runs/${run.runId}/conversation.jsonl`,
+        ].join("\n"),
+        "info",
+      );
+    },
+  });
+}
+
+type ConsultArgs = {
+  topic: string;
+  teams?: Array<"eng" | "valid" | "invest">;
+  rounds: number;
+};
+
+export function parseConsultArgs(raw: string): ConsultArgs {
+  let s = raw.trim();
+  let rounds = 1;
+  let teams: Array<"eng" | "valid" | "invest"> | undefined;
+
+  const roundsMatch = s.match(/--rounds\s+(\d+)/);
+  if (roundsMatch) {
+    rounds = Math.max(1, parseInt(roundsMatch[1], 10));
+    s = s.replace(roundsMatch[0], "").trim();
+  }
+
+  const teamsMatch = s.match(/teams=([a-z,]+)/i);
+  if (teamsMatch) {
+    const parts = teamsMatch[1].split(",").map((p) => p.trim().toLowerCase());
+    const valid: Array<"eng" | "valid" | "invest"> = [];
+    for (const p of parts) {
+      if (p === "eng" || p === "valid" || p === "invest") valid.push(p);
+    }
+    teams = valid.length > 0 ? valid : undefined;
+    s = s.replace(teamsMatch[0], "").trim();
+  }
+
+  return { topic: s.trim(), teams, rounds };
 }

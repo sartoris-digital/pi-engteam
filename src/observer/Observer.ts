@@ -2,6 +2,8 @@ import type { EngteamEvent, TeamMessage } from "../types.js";
 import type { EventWriter } from "./writer.js";
 import type { HttpSink } from "./httpSink.js";
 import type { MessageBus } from "../team/MessageBus.js";
+import { appendProjection } from "../adw/ConversationProjection.js";
+import { join } from "path";
 
 type SessionEvent = {
   type: string;
@@ -14,6 +16,7 @@ export class Observer {
   constructor(
     private writer: EventWriter,
     private sink?: HttpSink,
+    private runsDir?: string,
   ) {}
 
   emit(partial: Omit<EngteamEvent, "ts">): void {
@@ -23,6 +26,9 @@ export class Observer {
     };
     void this.writer.write(partial.runId, event);
     this.sink?.enqueue(event);
+    if (this.runsDir && partial.runId) {
+      void appendProjection(join(this.runsDir, partial.runId), event);
+    }
   }
 
   subscribeToSession(

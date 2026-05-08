@@ -1,18 +1,14 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { loadRunState, saveRunState } from "../adw/RunState.js";
 
-/**
- * Deprecated in v1: kept as an alias for /run-cancel. Will be removed in the
- * next major. New code and docs should reference /run-cancel.
- */
-export function registerRunAbortCommand(pi: ExtensionAPI, runsDir: string): void {
-  pi.registerCommand("run-abort", {
+export function registerRunCancelCommand(pi: ExtensionAPI, runsDir: string): void {
+  pi.registerCommand("run-cancel", {
     description:
-      "[deprecated] Alias for /run-cancel. Marks the run for graceful cancellation. Usage: /run-abort <runId>",
+      "Request graceful cancellation of a running workflow at the next step boundary. State is preserved. Usage: /run-cancel <runId>",
     handler: async (args, ctx) => {
       const runId = args.trim();
       if (!runId) {
-        ctx.ui.notify("Usage: /run-abort <runId>", "error");
+        ctx.ui.notify("Usage: /run-cancel <runId>", "error");
         return;
       }
       const state = await loadRunState(runsDir, runId);
@@ -27,7 +23,7 @@ export function registerRunAbortCommand(pi: ExtensionAPI, runsDir: string): void
       }
       await saveRunState(runsDir, { ...state, phase: "cancelling" });
       ctx.ui.notify(
-        `Run ${runId} marked phase=cancelling (alias of /run-cancel). The engine will stop at the next step boundary.`,
+        `Run ${runId} marked phase=cancelling. The engine will stop at the next step boundary and preserve all state.`,
         "info",
       );
     },
