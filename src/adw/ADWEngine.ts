@@ -15,6 +15,8 @@ import { runVerifyLoop, VerifyExhaustedError } from "../verifier/VerifierLoop.js
 import { resolveDag, validateWorkflow } from "./DagResolver.js";
 import { mkdir, appendFile } from "fs/promises";
 import { join as joinPath } from "path";
+import { loadTasks } from "../team/tools/TaskList.js";
+import { formatTillDoneFooter } from "./TillDoneFooter.js";
 
 type ADWConfig = {
   runsDir: string;
@@ -72,7 +74,28 @@ export class ADWEngine {
   private clearUiStatus(): void {
     this.uiCallbacks?.setStatus("engineering", undefined);
     this.uiCallbacks?.setStatus("engineering_out", undefined);
+    this.uiCallbacks?.setStatus("tilldone", undefined);
     this.config.team.setAgentLineCallback?.(undefined);
+  }
+
+  /**
+   * Phase 5.6 §9.2: refresh the Pi TUI footer widget showing TillDone
+   * task progress alongside agent activity. Best-effort — a missing
+   * tasks.json or callback is silently a no-op.
+   */
+  private async refreshTillDoneFooter(state: RunState): Promise<void> {
+    if (!this.uiCallbacks) return;
+    try {
+      const tasks = await loadTasks(this.config.runsDir, state.runId);
+      const text = formatTillDoneFooter({
+        workflow: state.workflow,
+        goal: state.goal,
+        tasks,
+      });
+      this.uiCallbacks.setStatus("tilldone", text);
+    } catch {
+      /* best-effort */
+    }
   }
 
   async startRun(params: StartRunParams): Promise<RunState> {
@@ -208,6 +231,9 @@ export class ADWEngine {
       const totalSteps = workflow.steps.length;
       this.uiCallbacks?.notify(`▶ Step ${stepIndex + 1}/${totalSteps} — ${currentStep}`, "info");
       this.uiCallbacks?.setStatus("engineering", `▶ ${currentStep} (${stepIndex + 1}/${totalSteps})`);
+      // Phase 5.6 §9.2: refresh TillDone footer at each step boundary so
+      // task progress (per team) is visible alongside agent activity.
+      void this.refreshTillDoneFooter(state);
       this.config.team.setAgentLineCallback?.((agent, line) => {
         this.uiCallbacks?.setStatus("engineering_out", `${agent}: ${line.slice(0, 120)}`);
       });
@@ -638,6 +664,8 @@ export class ADWEngine {
       payload: { step: stepDef.name },
     });
     this.uiCallbacks?.setStatus("engineering", `▶ ${stepDef.name}`);
+    // Phase 5.6 §9.2: refresh TillDone footer alongside DAG step labels.
+    void this.refreshTillDoneFooter(state);
     this.config.team.setStepContext(stepDef.name, workflow.steps.map((s) => s.name));
     const startedAt = new Date().toISOString();
     const stepStart = Date.now();
