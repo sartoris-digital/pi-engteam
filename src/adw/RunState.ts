@@ -48,12 +48,15 @@ export async function saveRunState(runsDir: string, state: RunState): Promise<vo
   await rename(tmpFile, stateFile);
 }
 
-// Codex Phase 4 round-3 C-1: per-runId in-process mutex serializes all
-// load-modify-save cycles. Without this, a /run-cancel that lands between
-// ADWEngine's loadRunState() and saveRunState() at a level boundary still
-// gets clobbered by stale in-memory state. Both ADWEngine's terminal/level
-// saves and /run-cancel itself wrap their read-modify-write sequence in
-// withRunStateLock so writes are linearized within the process.
+// Codex Phase 4 round-3 C-1 / round-4 M-1: per-runId in-process mutex
+// serializes all load-modify-save cycles. Without this, a /run-cancel that
+// lands between ADWEngine's loadRunState() and saveRunState() at a level
+// boundary still gets clobbered by stale in-memory state. Both ADWEngine's
+// terminal/level saves and /run-cancel itself wrap their read-modify-write
+// sequence in withRunStateLock so writes are linearized within the process.
+//
+// M-1: settled locks are dropped from the map so a long-running pi process
+// doesn't accumulate one entry per runId forever.
 const runStateLocks = new Map<string, Promise<unknown>>();
 export function withRunStateLock<T>(
   runsDir: string,
@@ -67,10 +70,15 @@ export function withRunStateLock<T>(
   const next = prev.then(fn, fn);
   // Store a swallowed-error promise so unhandled rejections don't escape, but
   // return the unswallowed promise so the caller still sees the real error.
-  runStateLocks.set(
-    key,
-    next.catch(() => undefined),
-  );
+  const tracked = next.catch(() => undefined);
+  runStateLocks.set(key, tracked);
+  // After this turn settles, drop the map entry IF no later waiter has
+  // chained on top of us. Compare-and-delete via identity check.
+  void tracked.finally(() => {
+    if (runStateLocks.get(key) === tracked) {
+      runStateLocks.delete(key);
+    }
+  });
   return next;
 }
 

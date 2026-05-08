@@ -208,9 +208,18 @@ export const consult: Workflow = {
 
 /**
  * Build a customized consult workflow filtered by selected lead short-names.
- * Falls back to the default 3-team layout when teams is undefined or empty.
+ * Defaults to the full 3-team layout when teams is undefined or empty.
+ *
+ * Codex round-4 H-2: accepts an optional workflowName so each /consult
+ * invocation registers a uniquely-named workflow (typically `consult-<runId>`).
+ * Without this, a second /consult invocation with a different team subset
+ * would overwrite the first registration under the shared name "consult",
+ * silently changing the DAG of any in-flight run.
  */
-export function buildConsultWorkflow(teams?: Array<"eng" | "valid" | "invest">): Workflow {
+export function buildConsultWorkflow(
+  teams?: Array<"eng" | "valid" | "invest">,
+  workflowName?: string,
+): Workflow {
   const selected = teams && teams.length > 0 ? teams : ["eng", "valid", "invest"];
   const leadFor = (s: string): string => {
     if (s === "eng") return "engineering-lead";
@@ -228,6 +237,7 @@ export function buildConsultWorkflow(teams?: Array<"eng" | "valid" | "invest">):
   const synth: Step = { ...synthesisStep, dependsOn: adversarialNames };
   return {
     ...consult,
+    name: workflowName ?? consult.name,
     steps: [dispatchStep, ...positionSteps, ...adversarialSteps, synth],
   };
 }

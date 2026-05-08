@@ -158,13 +158,33 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
         ctx.ui.notify(
           [
             'Usage: /consult <topic> [teams=eng,valid,invest] [--rounds 1]',
-            'Example: /consult "Should we adopt Drizzle ORM?" teams=eng,valid --rounds 2',
+            'Example: /consult "Should we adopt Drizzle ORM?" teams=eng,valid',
           ].join("\n"),
           "error",
         );
         return;
       }
-      const wf = buildConsultWorkflow(parsed.teams);
+      // Codex round-4 H-3: reject --rounds > 1 outright. The DAG engine does
+      // not yet implement multi-round revision (deferred to Phase 4.5);
+      // accepting a budget the workflow ignores misleads the user into
+      // believing rounds=2 will re-orchestrate when it won't.
+      if (parsed.rounds > 1) {
+        ctx.ui.notify(
+          `--rounds ${parsed.rounds} is not supported in v1. Multi-round consult ships in Phase 4.5. Re-run without --rounds (or --rounds 1).`,
+          "error",
+        );
+        return;
+      }
+      // Codex round-4 H-2: each /consult registers a uniquely-named
+      // workflow so concurrent invocations with different team subsets
+      // can't overwrite each other's DAG under a shared "consult" name.
+      // The unique suffix is randomized; once startRun generates the
+      // runId, we cannot retroactively rename the registration but the
+      // workflow stays addressable under its unique name for the lifetime
+      // of the run (and on resume, since the name persists in RunState).
+      const { randomUUID } = await import("crypto");
+      const consultWorkflowName = `consult-${randomUUID().slice(0, 8)}`;
+      const wf = buildConsultWorkflow(parsed.teams, consultWorkflowName);
       engine.registerWorkflow(wf);
 
       const run = await engine.startRun({ workflow: wf.name, goal: parsed.topic, budget: {} });

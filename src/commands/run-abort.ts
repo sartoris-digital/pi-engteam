@@ -1,9 +1,12 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { loadRunState, saveRunState } from "../adw/RunState.js";
+import { loadRunState, saveRunState, withRunStateLock } from "../adw/RunState.js";
 
 /**
  * Deprecated in v1: kept as an alias for /run-cancel. Will be removed in the
  * next major. New code and docs should reference /run-cancel.
+ *
+ * Codex round-4 H-1: shares the same load-modify-save mutex discipline as
+ * /run-cancel so the alias is not a back door past the round-3 cancel race fix.
  */
 export function registerRunAbortCommand(pi: ExtensionAPI, runsDir: string): void {
   pi.registerCommand("run-abort", {
@@ -15,17 +18,24 @@ export function registerRunAbortCommand(pi: ExtensionAPI, runsDir: string): void
         ctx.ui.notify("Usage: /run-abort <runId>", "error");
         return;
       }
-      const state = await loadRunState(runsDir, runId);
-      if (!state) {
+      const outcome = await withRunStateLock(runsDir, runId, async () => {
+        const state = await loadRunState(runsDir, runId);
+        if (!state) return { kind: "not-found" as const };
+        const terminal = ["succeeded", "failed", "aborted"] as const;
+        if (terminal.includes(state.status as any)) {
+          return { kind: "terminal" as const, status: state.status };
+        }
+        await saveRunState(runsDir, { ...state, phase: "cancelling" });
+        return { kind: "ok" as const };
+      });
+      if (outcome.kind === "not-found") {
         ctx.ui.notify(`Run ${runId} not found`, "error");
         return;
       }
-      const terminal = ["succeeded", "failed", "aborted"] as const;
-      if (terminal.includes(state.status as any)) {
-        ctx.ui.notify(`Run ${runId} is already in terminal status '${state.status}'`, "warning");
+      if (outcome.kind === "terminal") {
+        ctx.ui.notify(`Run ${runId} is already in terminal status '${outcome.status}'`, "warning");
         return;
       }
-      await saveRunState(runsDir, { ...state, phase: "cancelling" });
       ctx.ui.notify(
         `Run ${runId} marked phase=cancelling (alias of /run-cancel). The engine will stop at the next step boundary.`,
         "info",
