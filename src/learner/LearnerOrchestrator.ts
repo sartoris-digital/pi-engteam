@@ -300,6 +300,16 @@ function isSafeScriptName(name: unknown): name is string {
   return typeof name === "string" && SCRIPT_NAME.test(name) && !name.includes("..");
 }
 
+// Codex P3.5 round-4 H-7: fixturePath comes from learner-supplied proposal;
+// must stay under <fixturesDir>. Reject path-traversal via `..` or absolute
+// paths outside the dir. Bare basename grammar matches scriptName — fixture
+// files are project-local artifacts, not free paths.
+function isSafeFixtureBasename(name: unknown): name is string {
+  if (typeof name !== "string") return false;
+  if (name.includes("/") || name.includes("\\") || name.includes("..")) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name);
+}
+
 export function parseProposalsFromVerdict(
   verdict: VerdictPayload | undefined,
   gaps: GapEntry[],
@@ -315,6 +325,12 @@ export function parseProposalsFromVerdict(
       // orchestrator otherwise would join() an attacker-controlled path
       // segment into stagingDir/scriptsDir.
       if (!isSafeScriptName(p.scriptName)) continue;
+      // Same rule for fixturePath — drop anything that isn't a safe basename.
+      // The orchestrator joins into fixturesDir; absolute paths or `..`
+      // segments would otherwise let the learner steer reads/writes outside
+      // the fixtures directory.
+      const fixtureBasename = (p.fixturePath as string).split(/[\\/]/).pop() ?? "";
+      if (!isSafeFixtureBasename(fixtureBasename)) continue;
       const gap = (p.gap as GapEntry | undefined) ??
         gaps.find((g) => g.claim === (p as any).gapClaim) ??
         gaps[0];
@@ -324,7 +340,9 @@ export function parseProposalsFromVerdict(
         category: (p.category as GapCategory) ?? "new-domain-script",
         scriptName: p.scriptName,
         approach: p.approach ?? "",
-        fixturePath: p.fixturePath,
+        // Re-anchor to fixturesDir at promotion time — normalize to a basename
+        // so the orchestrator's filesystem ops never see a free path.
+        fixturePath: fixtureBasename,
         regressionCommand: p.regressionCommand ?? "",
       });
     }
@@ -367,10 +385,12 @@ export async function runLearner(cfg: LearnerConfig): Promise<LearnerResult> {
       continue;
     }
 
-    // Step 5: validate.
+    // Step 5: validate. fixturePath is now a sanitized basename — anchor it
+    // under cfg.fixturesDir so the orchestrator's runScript invocation never
+    // sees a free path.
     const validation = await validateAgainstFixtures({
       stagedScriptPath: stagedPath,
-      newFixturePath: proposal.fixturePath,
+      newFixturePath: join(cfg.fixturesDir, proposal.fixturePath),
       fixturesDir: cfg.fixturesDir,
     });
 
