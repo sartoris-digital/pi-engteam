@@ -5,9 +5,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("fs/promises", () => ({
   stat: vi.fn(),
   readFile: vi.fn(),
+  readdir: vi.fn(),
+  realpath: vi.fn(),
 }));
 
-import { stat, readFile } from "fs/promises";
+import { stat, readFile, readdir, realpath } from "fs/promises";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 // Dynamically re-import after mock is set up
@@ -51,7 +53,18 @@ describe("registerDoctorCommand", () => {
   it("reports all checks passed when all files exist and safety.json is valid JSON", async () => {
     const registerDoctorCommand = await loadDoctor();
     vi.mocked(stat).mockResolvedValue({} as any);
-    vi.mocked(readFile).mockResolvedValue('{"hardBlockers":{"enabled":true,"alwaysOn":true}}');
+    // readFile returns content with "team:" for agent .md checks; safety.json valid for that call
+    vi.mocked(readFile).mockImplementation((p: any) => {
+      if (String(p).endsWith(".json")) return Promise.resolve('{"hardBlockers":{"enabled":true,"alwaysOn":true}}') as any;
+      // yaml files → empty (no user/project overrides)
+      if (String(p).endsWith(".yaml")) return Promise.reject(new Error("ENOENT")) as any;
+      // agent .md files → content with team: field
+      return Promise.resolve("---\nteam: planning\n---\n") as any;
+    });
+    // readdir returns a fake list of agent .md files (all with team: field via readFile mock)
+    vi.mocked(readdir).mockResolvedValue(["planner.md", "implementer.md"] as any);
+    // realpath used by loadTeamsConfig — return path unchanged
+    vi.mocked(realpath).mockImplementation((p: any) => Promise.resolve(String(p)));
 
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
@@ -67,6 +80,8 @@ describe("registerDoctorCommand", () => {
     const registerDoctorCommand = await loadDoctor();
     vi.mocked(stat).mockRejectedValue(new Error("ENOENT"));
     vi.mocked(readFile).mockRejectedValue(new Error("ENOENT"));
+    vi.mocked(readdir).mockRejectedValue(new Error("ENOENT"));
+    vi.mocked(realpath).mockImplementation((p: any) => Promise.resolve(String(p)));
 
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
@@ -82,6 +97,8 @@ describe("registerDoctorCommand", () => {
     const registerDoctorCommand = await loadDoctor();
     vi.mocked(stat).mockResolvedValue({} as any);
     vi.mocked(readFile).mockResolvedValue("{}");
+    vi.mocked(readdir).mockResolvedValue([] as any);
+    vi.mocked(realpath).mockImplementation((p: any) => Promise.resolve(String(p)));
 
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);
@@ -102,6 +119,8 @@ describe("registerDoctorCommand", () => {
     const registerDoctorCommand = await loadDoctor();
     vi.mocked(stat).mockResolvedValue({} as any);
     vi.mocked(readFile).mockRejectedValue(new Error("ENOENT"));
+    vi.mocked(readdir).mockResolvedValue([] as any);
+    vi.mocked(realpath).mockImplementation((p: any) => Promise.resolve(String(p)));
 
     const mock = buildMockPi();
     registerDoctorCommand(mock as unknown as ExtensionAPI);

@@ -1,5 +1,6 @@
 ---
 name: engineering-tester
+team: validation
 description: Validates implementations by running the appropriate test suite for the changed files. Writes missing tests when coverage gaps are identified.
 model: claude-sonnet-4.6
 tools: [Read, Grep, Glob, Bash, Write, Edit, SendMessage, VerdictEmit, TaskList, TaskUpdate]

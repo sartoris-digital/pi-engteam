@@ -7,6 +7,8 @@ import { isPlanModeAllowed } from "./PlanMode.js";
 import { verifyToken } from "./approvals.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { checkDomain } from "./DomainLock.js";
+import type { DomainPolicyMap } from "./default-domains.js";
 
 async function loadRunPlanMode(runsDir: string): Promise<boolean> {
   try {
@@ -62,13 +64,55 @@ async function findValidApproval(
   }
 }
 
+type DomainLockConfig = {
+  policies: DomainPolicyMap;
+  mode: "warn" | "block";
+  emitEvent: (evt: { category: "safety"; type: string; payload: Record<string, unknown> }) => void;
+};
+
+async function applyLayerD(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  domainLock: DomainLockConfig,
+): Promise<{ block: true; reason: string; layer: string; [k: string]: unknown } | undefined> {
+  if (!["Write", "Edit", "Bash", "Read"].includes(toolName)) return undefined;
+  const agentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
+  const policy = agentName ? domainLock.policies[agentName] : undefined;
+  const filePath = (toolInput.file_path ?? toolInput.path ?? "") as string;
+  const result = checkDomain({
+    agent: agentName,
+    operation: toolName as "Read" | "Write" | "Edit" | "Bash",
+    path: filePath || undefined,
+    command: typeof toolInput.command === "string" ? toolInput.command : undefined,
+    policy,
+    mode: domainLock.mode,
+  });
+  if (!result.allowed) {
+    domainLock.emitEvent({
+      category: "safety",
+      type: result.mode === "block" ? "domain_block" : "domain_warn",
+      payload: result.structured,
+    });
+    if (result.mode === "block") {
+      return {
+        ...result.structured,
+        block: true,
+        reason: `[Layer D] ${result.reason}`,
+        layer: "D",
+      };
+    }
+    // warn mode: emit event but allow operation to proceed
+  }
+  return undefined;
+}
+
 /**
  * C2: Layer A hard-blocker registration, extracted so it can be applied in
  * agent subprocess mode as well as controller mode.
  */
 export function registerHardBlockers(
   pi: ExtensionAPI,
-  config: Pick<SafetyConfig, "hardBlockers">,
+  config: Pick<SafetyConfig, "hardBlockers"> & { domainLock?: DomainLockConfig },
 ): void {
   if (!config.hardBlockers.enabled) return;
   pi.on("tool_call", async (event: any, _ctx: any) => {
@@ -96,13 +140,18 @@ export function registerHardBlockers(
       }
     }
 
+    // --- Layer D: Domain lock ---
+    if (config.domainLock) {
+      return applyLayerD(toolName, toolInput, config.domainLock);
+    }
+
     return undefined;
   });
 }
 
 export function registerSafetyGuard(
   pi: ExtensionAPI,
-  config: SafetyConfig & { runsDir: string },
+  config: SafetyConfig & { runsDir: string; domainLock?: DomainLockConfig },
 ): void {
   pi.on("tool_call", async (event: any, _ctx: any) => {
     const toolName: string = event.tool?.name ?? "";
@@ -184,6 +233,11 @@ export function registerSafetyGuard(
           layer: "C",
         };
       }
+    }
+
+    // --- Layer D: Domain lock ---
+    if (config.domainLock) {
+      return applyLayerD(toolName, toolInput, config.domainLock);
     }
 
     return undefined;

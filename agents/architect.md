@@ -1,5 +1,6 @@
 ---
 name: engineering-architect
+team: planning
 description: Designs systems, defines service boundaries, data flows, APIs, and rollout plans. Produces ADR-style documents rather than code first.
 model: claude-opus-4.6
 tools: [Read, Grep, Glob, Bash, Write, SendMessage, VerdictEmit, TaskList]

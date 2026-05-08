@@ -1,5 +1,6 @@
 ---
 name: engineering-incident-investigator
+team: investigation
 description: Pulls logs, traces, metrics, and recent changes. Uses competing-hypothesis investigation to build a ranked probable-cause tree for incidents.
 model: claude-opus-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList]

@@ -1,5 +1,6 @@
 ---
 name: engineering-issue-analyst
+team: investigation
 description: Fetches issue tickets from GitHub Issues, Azure DevOps, or Jira and extracts structured requirements into issue-brief.md.
 model: claude-haiku-4.5
 tools: [Read, Grep, Glob, Bash, VerdictEmit]

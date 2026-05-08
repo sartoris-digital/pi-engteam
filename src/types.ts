@@ -120,6 +120,7 @@ export type AgentDefinition = {
   model: string;
   systemPrompt: string;
   tools?: string[];
+  team?: "orchestrator" | "planning" | "engineering" | "validation" | "investigation" | "cross-functional";
 };
 
 export type BudgetStatus = {

@@ -1,5 +1,6 @@
 ---
 name: engineering-knowledge-retriever
+team: planning
 description: Fetches and summarizes relevant code, docs, ADRs, tickets, and runbooks so other agents work with grounded, project-specific context.
 model: claude-sonnet-4.6
 tools: [Read, Grep, Glob, Bash, SendMessage, VerdictEmit, TaskList]

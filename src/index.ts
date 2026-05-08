@@ -27,6 +27,7 @@ import { registerObserveCommand } from "./commands/observe.js";
 import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
 import { registerSpecCommand } from "./commands/spec.js";
 import { loadSafetyConfig } from "./config.js";
+import { loadTeamsConfig } from "./safety/teams-config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
 import { createVerdictEmitTool } from "./team/tools/VerdictEmit.js";
 import { createTaskListTool, createTaskUpdateTool } from "./team/tools/TaskList.js";
@@ -61,7 +62,7 @@ import { loadRateLimitConfig } from "./rateLimit/config.js";
 const ENGINEERING_DIR = join(homedir(), ".pi", "engineering-team");
 const RUNS_DIR = join(ENGINEERING_DIR, "runs");
 
-const AGENT_DEFS: AgentDefinition[] = [
+export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "planner",
     description: "Orchestrator — decomposes goals, sequences work, produces plans",
@@ -70,6 +71,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "You are the Planner agent for the pi-engineering engineering team. " +
       "Decompose the given goal into actionable sub-tasks, identify the specialist agents needed, " +
       "and produce a clear implementation plan. Always call VerdictEmit at the end of your turn.",
+    team: "planning",
   },
   {
     name: "implementer",
@@ -80,6 +82,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Read the plan and implement it step by step. Write tests alongside code (TDD). " +
       "For any destructive operation (git push, package install, file delete), call RequestApproval first. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "engineering",
   },
   {
     name: "reviewer",
@@ -90,6 +93,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Carefully read all changed code. Check for logical errors, missing tests, security issues, " +
       "and regression risk. Be specific about any problems — name file, line, and what is wrong. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "validation",
   },
   {
     name: "discoverer",
@@ -101,6 +105,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Categories must be exactly: SCOPE, CONSTRAINTS, SUCCESS, CONTEXT. " +
       "Use numbered lists under each ## heading. Keep each question to one sentence. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "planning",
   },
   {
     name: "architect",
@@ -112,6 +117,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Use the ADR-style sections: Problem, Approach, Acceptance Criteria, Key Interfaces, Out of Scope, Open Questions. " +
       "Be specific — no padding or vague statements. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "planning",
   },
   {
     name: "issue-analyst",
@@ -124,6 +130,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Extract the requirements and write issue-brief.md with all required sections. " +
       "Select the appropriate downstream workflow based on issue type. " +
       "Always call VerdictEmit at the end of your turn with step='analyze'.",
+    team: "investigation",
   },
   {
     name: "root-cause-debugger",
@@ -134,6 +141,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Use a seven-stage competing-hypothesis protocol: Observe → Hypothesize (≥2 competing causes) → Gather evidence for each → Rebuttal round → Rank by evidence weight → Synthesize → Probe to close gaps. " +
       "Trace failures to file:line. Produce a fix-plan.md with ranked fix options and rollback plans. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "engineering",
   },
   {
     name: "tester",
@@ -145,6 +153,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Use vitest and follow patterns in tests/unit/ and tests/integration/. " +
       "Run pnpm test to confirm 0 failures before calling VerdictEmit. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "validation",
   },
   {
     name: "judge",
@@ -156,6 +165,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Before voting PASS: run git diff to see what changed, confirm test output shows 0 failures, verify all reviewer issues are addressed, and confirm the implementation matches the stated goal. " +
       "You are the only agent authorized to call GrantApproval. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "cross-functional",
   },
   {
     name: "knowledge-retriever",
@@ -167,6 +177,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Summarize findings into a context-pack.md with grounded, project-specific context. Explicitly state what you could not find. " +
       "Check file size before reading; cap parallel reads at 5 files per round. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "planning",
   },
   {
     name: "incident-investigator",
@@ -177,6 +188,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Use a seven-stage competing-hypothesis protocol: Observe → Hypothesize (≥2 competing causes) → Gather evidence for each → Rebuttal round → Rank by evidence weight → Synthesize → Probe to close gaps. " +
       "Pull from events.jsonl, metrics, logs, and recent commits. Include a Timeline section in your report. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "investigation",
   },
   {
     name: "bug-triage",
@@ -188,6 +200,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "assign severity (P0 critical / P1 high / P2 medium / P3 low), determine the responsible owner area, " +
       "and write a triage summary in verdict.md. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "investigation",
   },
   {
     name: "security-auditor",
@@ -200,6 +213,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Write security-report.md with all findings classified by severity. You are read-only — report only, never patch. " +
       "If you find Critical or High severity issues you MUST emit FAIL. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "validation",
   },
   {
     name: "codebase-cartographer",
@@ -211,6 +225,7 @@ const AGENT_DEFS: AgentDefinition[] = [
       "find existing conventions (naming, error handling, test patterns), and flag hotspots. " +
       "Write codebase-map.md summarizing your findings. Check file size before reading; cap parallel reads at 5 files per round. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "planning",
   },
   {
     name: "observability-archivist",
@@ -222,6 +237,63 @@ const AGENT_DEFS: AgentDefinition[] = [
       "Build a trace timeline, identify slow steps and frequent failures, and surface anomalies. " +
       "Write observation-report.md with a timeline, performance breakdown, and actionable insights. " +
       "Always call VerdictEmit at the end of your turn.",
+    team: "investigation",
+  },
+  // --- Lead tier ---
+  {
+    name: "planning-lead",
+    description: "Coordinates the Planning team: planner, architect, discoverer, codebase-cartographer, knowledge-retriever",
+    model: "claude-opus-4.6",
+    systemPrompt:
+      "You are the Planning Lead. You delegate; you do not execute. " +
+      "Coordinate Planning workers (planner, architect, discoverer, codebase-cartographer, knowledge-retriever) via SendMessage; synthesize their VerdictEmit outputs into a single team position. " +
+      "Never SendMessage cross-team workers — escalate scope expansion to the Orchestrator. Always end your turn with VerdictEmit.",
+    tools: ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob"],
+    team: "planning",
+  },
+  {
+    name: "engineering-lead",
+    description: "Coordinates the Engineering team: implementer, root-cause-debugger, performance-analyst",
+    model: "claude-opus-4.6",
+    systemPrompt:
+      "You are the Engineering Lead. You delegate; you do not execute. " +
+      "Coordinate Engineering workers (implementer, root-cause-debugger, performance-analyst) via SendMessage; synthesize their VerdictEmit outputs into a single team position. " +
+      "Never send workers outside their declared domain — escalate scope expansion to the Orchestrator. Always end your turn with VerdictEmit.",
+    tools: ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob"],
+    team: "engineering",
+  },
+  {
+    name: "validation-lead",
+    description: "Coordinates the Validation team: reviewer, tester, security-auditor",
+    model: "claude-opus-4.6",
+    systemPrompt:
+      "You are the Validation Lead. You delegate; you do not execute. " +
+      "Coordinate Validation workers (reviewer, tester, security-auditor) via SendMessage; a security-auditor Critical/High FAIL is blocking and must be escalated to the Orchestrator intact. " +
+      "Never write code or modify tests. Always end your turn with VerdictEmit.",
+    tools: ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob"],
+    team: "validation",
+  },
+  {
+    name: "investigation-lead",
+    description: "Coordinates the Investigation team: incident-investigator, bug-triage, observability-archivist, issue-analyst",
+    model: "claude-opus-4.6",
+    systemPrompt:
+      "You are the Investigation Lead. You delegate; you do not execute. " +
+      "Coordinate Investigation workers (incident-investigator, bug-triage, observability-archivist, issue-analyst) via SendMessage; incident syntheses must include a Timeline section. " +
+      "Never write code or modify production state — escalate remediation to the Orchestrator. Always end your turn with VerdictEmit.",
+    tools: ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob"],
+    team: "investigation",
+  },
+  {
+    name: "orchestrator",
+    description: "Top-level router. Classifies user requests, decomposes into team tasks, dispatches to Leads in parallel by default, synthesizes responses.",
+    model: "claude-opus-4.6",
+    systemPrompt:
+      "You are the Orchestrator. You delegate; you do not execute. " +
+      "Classify every user request, decompose into team-shaped tasks, dispatch to Leads (planning-lead, engineering-lead, validation-lead, investigation-lead) via SendMessage — never address workers directly. " +
+      "Synthesize Lead VerdictEmit outputs back to the user. Always end your turn with VerdictEmit.",
+    tools: ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob"],
+    team: "orchestrator",
   },
 ];
 
@@ -231,9 +303,21 @@ export default async function (pi: ExtensionAPI) {
   // spawned by TeamRuntime.deliver(). Register agent-facing tools only — skip all
   // controller infrastructure (server, observer, commands, TeamRuntime).
   if (process.env["PI_ENGINEERING_AGENT_MODE"]) {
-    // C2: apply Layer A hard blockers in subprocess mode so agents can't run
-    // dangerous rm, force-push, sudo, or device-writes even without the full guard.
-    registerHardBlockers(pi, { hardBlockers: { enabled: true, alwaysOn: true } });
+    // C2: apply Layer A hard blockers + Layer D domain lock in subprocess mode.
+    const subTeamsCfg = await loadTeamsConfig({
+      userPath: join(ENGINEERING_DIR, "teams.yaml"),
+      projectPath: join(process.cwd(), ".pi", "engineering-team", "teams.local.yaml"),
+      runDir: RUNS_DIR,
+      expertiseDir: join(ENGINEERING_DIR, "expertise"),
+    });
+    registerHardBlockers(pi, {
+      hardBlockers: { enabled: true, alwaysOn: true },
+      domainLock: {
+        policies: subTeamsCfg.domains,
+        mode: subTeamsCfg.mode,
+        emitEvent: () => { /* no observer in subprocess; event is a no-op */ },
+      },
+    });
 
     // VerdictEmit — writes verdict to PI_ENGINEERING_VERDICT_FILE before exiting.
     pi.registerTool(createVerdictEmitTool((_v) => {}));
@@ -329,7 +413,12 @@ export default async function (pi: ExtensionAPI) {
   const memoryConfig = await loadMemoryConfig();
   const memoryCore = new MemoryCore(memoryConfig, RUNS_DIR);
 
-  registerSafetyGuard(pi, { ...safetyConfig, runsDir: RUNS_DIR });
+  const teamsCfg = await loadTeamsConfig({
+    userPath: join(ENGINEERING_DIR, "teams.yaml"),
+    projectPath: join(process.cwd(), ".pi", "engineering-team", "teams.local.yaml"),
+    runDir: RUNS_DIR,
+    expertiseDir: join(ENGINEERING_DIR, "expertise"),
+  });
 
   const writer = new EventWriter(RUNS_DIR);
   const sinkUrl = process.env.PI_ENGINEERING_EVENT_URL;
@@ -419,6 +508,16 @@ export default async function (pi: ExtensionAPI) {
       summary: `${evt.category}:${evt.type}`,
     });
   };
+
+  registerSafetyGuard(pi, {
+    ...safetyConfig,
+    runsDir: RUNS_DIR,
+    domainLock: {
+      policies: teamsCfg.domains,
+      mode: teamsCfg.mode,
+      emitEvent: secretEmitEvent,
+    },
+  });
 
   registerSecretSetCommand(pi);
   registerSecretListCommand(pi);
