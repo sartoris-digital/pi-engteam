@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { mkdir, readdir, rm, stat, writeFile, realpath } from "fs/promises";
-import { join, resolve } from "path";
+import { lstat, mkdir, readdir, rm, stat, writeFile, realpath } from "fs/promises";
+import { join, sep } from "path";
 import { loadRunState } from "../adw/RunState.js";
 
 // Same shape as /learn's runId guard. Codex P4 round-1 C-1: previously
@@ -27,9 +27,20 @@ export function registerRunRollbackCommand(pi: ExtensionAPI, runsDir: string): v
       }
       const runDir = join(runsDir, runId);
       try {
+        // Codex round-2 C-1: lstat first — refuse to follow a symlinked run
+        // directory. A symlink runId pointing at runsDir itself (or anywhere
+        // outside) would otherwise let realpath collapse to a parent we then
+        // wipe.
+        const lst = await lstat(runDir);
+        if (lst.isSymbolicLink()) {
+          ctx.ui.notify(`Run dir ${runId} is a symlink; refusing rollback.`, "error");
+          return;
+        }
         const realRunsDir = await realpath(runsDir);
         const realRunDir = await realpath(runDir);
-        if (!realRunDir.startsWith(realRunsDir + "/") && realRunDir !== realRunsDir) {
+        // Must be a STRICT child of runsDir. Equality (runDir resolves to
+        // runsDir itself) is rejected.
+        if (!realRunDir.startsWith(realRunsDir + sep) || realRunDir === realRunsDir) {
           ctx.ui.notify(`Run dir resolves outside runsDir; refusing rollback.`, "error");
           return;
         }
@@ -38,7 +49,6 @@ export function registerRunRollbackCommand(pi: ExtensionAPI, runsDir: string): v
         ctx.ui.notify(`Run dir ${runDir} does not exist`, "error");
         return;
       }
-      void resolve;
       const state = await loadRunState(runsDir, runId);
       const record = {
         runId,

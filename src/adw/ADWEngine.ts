@@ -474,6 +474,10 @@ export class ADWEngine {
         break;
       }
 
+      // Codex round-2 H-1: increment iteration per DAG level so checkBudget's
+      // maxIterations gate actually fires; a level represents one unit of
+      // forward progress (parallel siblings + sequential after them).
+      state = { ...state, iteration: state.iteration + 1 };
       const parallelResults = await Promise.allSettled(
         level.parallel.map((s) => this.runDagStep(runId, state, workflow, s)),
       );
@@ -519,7 +523,16 @@ export class ADWEngine {
     }
 
     if (!aborted) {
-      state = { ...state, status: anyFail ? "failed" : "succeeded", phase: anyFail ? "failed" : "done" };
+      // Codex round-2 C-2: reload phase from disk one last time before the
+      // terminal save. A /run-cancel that lands after the final
+      // applyStepResult but before this save would otherwise be clobbered
+      // back to "done"/"failed".
+      const finalFresh = await loadRunState(this.config.runsDir, runId);
+      if (finalFresh?.phase === "cancelling" || finalFresh?.phase === "cancelled") {
+        state = { ...state, status: "aborted", phase: "cancelled" };
+      } else {
+        state = { ...state, status: anyFail ? "failed" : "succeeded", phase: anyFail ? "failed" : "done" };
+      }
     }
     await saveRunState(this.config.runsDir, state);
     this.clearUiStatus();
