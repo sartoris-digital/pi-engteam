@@ -22,8 +22,15 @@ type TeamRuntimeConfig = {
   bus: MessageBus;
   observer: Observer;
   runsDir: string;
-  /** H2: callback fired after each agent subprocess returns a verdict (replaces dead customToolsFor) */
-  onVerdictReceived?: (runId: string, agentName: string, verdict: VerdictPayload) => void;
+  /**
+   * H2: callback fired after each agent subprocess returns a verdict
+   * (replaces dead customToolsFor).
+   *
+   * Round-3 H2: hostStep is the step name set by ADWEngine via
+   * setStepContext, NOT the worker-supplied verdict.step. The host-side
+   * value is what the projection trusts for kind derivation.
+   */
+  onVerdictReceived?: (runId: string, agentName: string, verdict: VerdictPayload, hostStep: string | undefined) => void;
   agentDefs?: AgentDefinition[];
   /** L2: per-subprocess kill timeout in ms (default 10 minutes) */
   agentTimeoutMs?: number;
@@ -79,6 +86,7 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 export class TeamRuntime {
   private knownDefs = new Map<string, AgentDefinition>();
   private currentRunId?: string;
+  private currentStepName?: string;
   private agentLineCallback?: (agent: string, line: string) => void;
 
   constructor(private config: TeamRuntimeConfig) {
@@ -96,14 +104,25 @@ export class TeamRuntime {
     this.agentLineCallback = fn;
   }
 
-  /** Called by ADWEngine before each step — no-op in subprocess mode (no persistent sessions). */
-  setStepContext(_stepName: string, _allStepNames: string[]): void {}
+  /**
+   * Called by ADWEngine before each step. Round-3 H2: tracks the
+   * host-set step name so deliver() can surface it to onVerdictReceived
+   * — projection kind derivation must use the host's step, not the
+   * worker-controlled verdict.step.
+   */
+  setStepContext(stepName: string, _allStepNames: string[]): void {
+    this.currentStepName = stepName;
+  }
 
-  /** Called by ADWEngine after each step — no-op in subprocess mode. */
-  markStepComplete(_stepName: string): void {}
+  /** Called by ADWEngine after each step. */
+  markStepComplete(_stepName: string): void {
+    this.currentStepName = undefined;
+  }
 
-  /** Fallback for abort/crash paths — no-op in subprocess mode. */
-  clearStepContext(): void {}
+  /** Fallback for abort/crash paths. */
+  clearStepContext(): void {
+    this.currentStepName = undefined;
+  }
 
   /** Register (or replace) an agent definition by name. Called by command handlers at runtime. */
   ensureTeammate(name: string, def: AgentDefinition): void {
@@ -113,6 +132,10 @@ export class TeamRuntime {
   async deliver(to: string, message: TeamMessage): Promise<VerdictPayload | undefined> {
     const def = this.knownDefs.get(to);
     if (!def) throw new Error(`Teammate '${to}' is not registered. Add it to AGENT_DEFS.`);
+
+    // Round-3 H2: snapshot the host-set step at dispatch time so a later
+    // setStepContext call doesn't change which step this verdict belongs to.
+    const hostStepAtDispatch = this.currentStepName;
 
     const provider = modelToProvider(def.model);
     const estimatedTokens = this.config.defaultEstimatedTokens ?? 4000;
@@ -208,7 +231,9 @@ export class TeamRuntime {
         const raw = JSON.parse(data);
         const payload = validateVerdictPayload(raw);
         if (!payload) return undefined;
-        this.config.onVerdictReceived?.(runId, to, payload);
+        // Round-3 H2: pass the host-set step name (captured at deliver
+        // entry) so the projection can derive kind from a trusted source.
+        this.config.onVerdictReceived?.(runId, to, payload, hostStepAtDispatch);
         return payload;
       } catch {
         return undefined;

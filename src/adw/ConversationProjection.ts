@@ -94,16 +94,15 @@ function kindFromStep(step: string | undefined, fallback: ConversationKind): Con
 // JSON-deserialized from worker output) can never claim host trust.
 function eventToEntry(evt: EngteamEvent, hostTrusted: boolean): ConversationEntry | undefined {
   // Direct kind-typed events (anything emitted with type matching a kind).
-  // The host emits these for trusted notes; workers normally don't.
+  // Round-3 H1: ONLY the host may emit kind-typed events. A worker
+  // subprocess that writes a category=message,type=correction line in
+  // its events-subprocess audit file would otherwise project as a forged
+  // [correction] entry. We drop the entry entirely when not hostTrusted.
   if (KIND_TYPED.has(evt.type as ConversationKind)) {
+    if (!hostTrusted) return undefined;
     const from = safeFrom(evt.payload, evt.agentName, hostTrusted);
-    // 'to' can be a reserved label only for host-trusted events. Worker
-    // claims that target "user" are downgraded to "*" so a worker can't
-    // forge a private response to the operator.
     const claimedTo = pickStr(evt.payload, "to");
-    const to = hostTrusted
-      ? claimedTo ?? "*"
-      : (claimedTo && RESERVED_SENDERS.has(claimedTo) ? "*" : claimedTo ?? "*");
+    const to = claimedTo ?? "*";
     const text = clip(pickStr(evt.payload, "text") ?? evt.summary ?? "");
     if (!text) return undefined;
     return {
@@ -145,15 +144,20 @@ function eventToEntry(evt: EngteamEvent, hostTrusted: boolean): ConversationEntr
     };
   }
 
-  // Bus messages: distill into kind=dispatch by default. The bus is
-  // host-mediated (only the host's MessageBus can emit type=sent), so
-  // payload.from is trusted here.
+  // Bus messages: distill into kind=dispatch. Round-3 C1: a subprocess
+  // audit line forwarded as category=message type=sent must NOT be
+  // allowed to claim payload.from='user'/'system'/'verifier'. Apply the
+  // same safeFrom guard the kind-typed path uses, and downgrade
+  // reserved 'to' targets when not hostTrusted.
   if (evt.category === "message" && evt.type === "sent") {
-    const from = pickStr(evt.payload, "from") ?? evt.agentName ?? "system";
-    const to = pickStr(evt.payload, "to") ?? "*";
+    const from = safeFrom(evt.payload, evt.agentName, hostTrusted);
+    const claimedTo = pickStr(evt.payload, "to");
+    const to = hostTrusted
+      ? claimedTo ?? "*"
+      : (claimedTo && RESERVED_SENDERS.has(claimedTo) ? "*" : claimedTo ?? "*");
     // H2: prefer the full message body, capped to TEXT_MAX. If the
-    // message exceeds the cap, fall back to summary and hand the full
-    // body via ref (path written by the caller).
+    // message exceeds the cap, prefer summary as the projected text and
+    // hand the full body via ref (path written by the caller).
     const body = pickStr(evt.payload, "message");
     const summary = pickStr(evt.payload, "summary") ?? evt.summary;
     const ref = pickStr(evt.payload, "ref");

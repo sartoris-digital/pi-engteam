@@ -115,19 +115,27 @@ export class Observer {
       // Phase 4.5 round-1 H-2: include msg.message in the payload so the
       // dialogue projection can render full body content (capped) rather
       // than only the summary.
-      this.emit({
-        runId,
-        category: "message",
-        type: "sent",
-        payload: {
-          from: msg.from,
-          to: msg.to,
-          summary: msg.summary,
-          message: msg.message,
-          requestId: msg.requestId,
+      // Round-3 C1: bus subscriptions are host-mediated (only the host
+      // can publish to the bus from inside the controller process), so
+      // pass opts.host=true. Subprocess-emitted category=message,type=sent
+      // events from the audit ingestion path will arrive without this
+      // marker and the projection will downgrade reserved-sender claims.
+      this.emit(
+        {
+          runId,
+          category: "message",
+          type: "sent",
+          payload: {
+            from: msg.from,
+            to: msg.to,
+            summary: msg.summary,
+            message: msg.message,
+            requestId: msg.requestId,
+          },
+          summary: `${msg.from} → ${msg.to}: ${msg.summary}`,
         },
-        summary: `${msg.from} → ${msg.to}: ${msg.summary}`,
-      });
+        { host: true },
+      );
     });
   }
 }

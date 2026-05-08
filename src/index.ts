@@ -582,15 +582,20 @@ export default async function (pi: ExtensionAPI) {
     // H2: onVerdictReceived replaces the dead customToolsFor pattern.
     // TeamRuntime.deliver() calls this after reading the subprocess verdict file,
     // giving the host access to learnings/decisions/gotchas before they are stripped.
-    onVerdictReceived: (runId, agentName, verdict) => {
+    onVerdictReceived: (runId, agentName, verdict, hostStep) => {
       memoryCore.onVerdict(runId, verdict);
+      // Round-3 H2: thread the host-controlled step into evt.step so the
+      // ConversationProjection's verdict path derives kind from a trusted
+      // source. The summary still mentions verdict.step for human-readable
+      // audit, but kind/section are driven by hostStep.
       observer.emit({
         runId,
         agentName,
+        step: hostStep,
         category: "verdict",
         type: "emit",
         payload: verdict,
-        summary: `${agentName}: ${verdict.verdict} on ${verdict.step}`,
+        summary: `${agentName}: ${verdict.verdict} on ${hostStep ?? verdict.step}`,
       });
     },
   });
