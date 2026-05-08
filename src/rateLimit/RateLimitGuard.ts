@@ -142,7 +142,10 @@ export class RateLimitGuard {
     ticket.released = true;
 
     if (!ticket.key) {
-      // Pass-through ticket (disabled or unconfigured provider)
+      // Pass-through ticket (disabled or unconfigured provider) — also drop
+      // the entry. Codex round-2 R2-M1: previously these leaked under default
+      // config because the early return came before tickets.delete.
+      this.tickets.delete(ticketId);
       return;
     }
 

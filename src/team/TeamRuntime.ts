@@ -115,8 +115,11 @@ export class TeamRuntime {
       await mkdir(tmpDir, { recursive: true });
 
       const id = message.id;
-      const verdictFile = join(tmpDir, `${id}.verdict.json`);
-      const systemPromptFile = join(tmpDir, `${id}.system-prompt.txt`);
+      // Include the per-deliver eventToken in temp filenames so deliverAll()
+      // fan-outs that share the same message.id don't collide on disk
+      // (Codex round-2 R2-M4).
+      const verdictFile = join(tmpDir, `${id}-${eventToken}.verdict.json`);
+      const systemPromptFile = join(tmpDir, `${id}-${eventToken}.system-prompt.txt`);
 
       const teamSuffix =
         `\n\n---\n## Team Context\nYour name in the team is: **${to}**\n` +
