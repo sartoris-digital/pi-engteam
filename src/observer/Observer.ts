@@ -29,7 +29,7 @@ export class Observer {
     private runsDir?: string,
   ) {}
 
-  emit(partial: Omit<EngteamEvent, "ts">): void {
+  emit(partial: Omit<EngteamEvent, "ts">, opts?: { host?: boolean }): void {
     const event: EngteamEvent = {
       ts: new Date().toISOString(),
       ...partial,
@@ -39,8 +39,29 @@ export class Observer {
     // H3: skip placeholder/non-runId emissions ("boot", "none") and any
     // value that doesn't look like a real run id, otherwise we'd create
     // stray <runsDir>/boot/conversation.jsonl files on every startup.
+    //
+    // Round-2 C1: opts.host is the in-memory trust marker. Subprocess-
+    // ingested events go through emit() with opts undefined so they can
+    // never project as host-trusted, regardless of payload contents.
     if (this.runsDir && partial.runId && isProjectableRunId(partial.runId)) {
-      void appendProjection(join(this.runsDir, partial.runId), event);
+      void appendProjection(join(this.runsDir, partial.runId), event, opts?.host ?? false);
+    }
+  }
+
+  /**
+   * Synchronous projection variant. Useful when ordering matters — e.g.
+   * the verifier's correction emit must reach conversation.jsonl BEFORE
+   * the corrective team.deliver call returns the worker's reply.
+   */
+  async emitAwaited(partial: Omit<EngteamEvent, "ts">, opts?: { host?: boolean }): Promise<void> {
+    const event: EngteamEvent = {
+      ts: new Date().toISOString(),
+      ...partial,
+    };
+    void this.writer.write(partial.runId, event);
+    this.sink?.enqueue(event);
+    if (this.runsDir && partial.runId && isProjectableRunId(partial.runId)) {
+      await appendProjection(join(this.runsDir, partial.runId), event, opts?.host ?? false);
     }
   }
 

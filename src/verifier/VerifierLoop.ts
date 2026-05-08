@@ -43,7 +43,7 @@ export interface VerifierLoopConfig {
     iteration: number;
     issues: string[];
     reportPath: string;
-  }) => void;
+  }) => void | Promise<void>;
 }
 
 export class VerifyExhaustedError extends Error {
@@ -228,11 +228,13 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
         issues,
         reportPath,
       });
-      // Phase 4.5 round-1 H-3: surface the corrective turn in the dialogue
-      // projection so future agent prompts see it as kind=correction. The
-      // host-flagged emit happens before delivery so the entry is ordered
-      // correctly relative to the worker's response.
-      cfg.onCorrection?.({
+      // Phase 4.5 round-1 H-3 + round-2 M-2: surface the corrective turn
+      // in the dialogue projection so future agent prompts see it as
+      // kind=correction. Await the callback so the projection write
+      // completes BEFORE the corrective deliver below; otherwise the
+      // worker's reply could land in conversation.jsonl before the
+      // correction prompt, scrambling dialogue order.
+      await cfg.onCorrection?.({
         workerAgentName: cfg.workerAgentName,
         workerStep: cfg.workerStep,
         iteration: iter,

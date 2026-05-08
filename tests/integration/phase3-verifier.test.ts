@@ -63,7 +63,7 @@ describe("Phase 3 Verifier integration", () => {
   });
 
   function buildEngine(deliver: (agent: string, msg: any) => Promise<VerdictPayload | undefined>) {
-    const observer = { emit: vi.fn() } as any;
+    const observer = { emit: vi.fn(), emitAwaited: vi.fn(async () => {}) } as any;
     const team: any = {
       deliver: vi.fn(deliver),
       setRunId: vi.fn(),
@@ -175,7 +175,7 @@ describe("Phase 3 Verifier integration", () => {
 
   it("does NOT run verifier when step.verify is unset", async () => {
     let verifierCalls = 0;
-    const observer = { emit: vi.fn() } as any;
+    const observer = { emit: vi.fn(), emitAwaited: vi.fn(async () => {}) } as any;
     const team: any = {
       deliver: vi.fn(async (agent: string, msg: any) => {
         if (agent === "verifier") verifierCalls++;

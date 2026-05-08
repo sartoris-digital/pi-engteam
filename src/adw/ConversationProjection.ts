@@ -58,16 +58,16 @@ function pickStrArr(p: Record<string, unknown> | undefined, key: string): string
 // or "system" entry that future agents would render as authoritative.
 const RESERVED_SENDERS = new Set(["user", "system", "host", "verifier"]);
 
-function safeFrom(payload: Record<string, unknown> | undefined, trustedAgent: string | undefined, hostFlag?: boolean): string {
+function safeFrom(payload: Record<string, unknown> | undefined, trustedAgent: string | undefined, hostTrusted: boolean): string {
   const trusted = trustedAgent && trustedAgent.length > 0 ? trustedAgent : undefined;
   const claimed = pickStr(payload, "from");
-  // Host-flagged events: caller asserts trust. Prefer the explicit payload
-  // claim (so the host can write "user" / "system" / "verifier" entries),
+  // Host-trusted events: caller asserts trust via the in-memory parameter
+  // (NOT a payload field — see C1 round-2: a payload-serialized __host
+  // flag is forgeable through subprocess audit ingestion). Prefer the
+  // explicit payload claim so the host can write "user"/"system" entries,
   // fall back to the trusted agent name, then "system".
-  if (hostFlag) return claimed ?? trusted ?? "system";
+  if (hostTrusted) return claimed ?? trusted ?? "system";
   // Untrusted events: a subprocess-claimed reserved sender is rejected.
-  // Prefer the trusted host-derived agent name; only honor a worker-supplied
-  // name when no trusted source exists (and the claim isn't reserved).
   if (claimed && RESERVED_SENDERS.has(claimed)) return trusted ?? "agent";
   return trusted ?? claimed ?? "agent";
 }
@@ -88,18 +88,20 @@ function kindFromStep(step: string | undefined, fallback: ConversationKind): Con
 // Map a raw EngteamEvent to a spec-shape ConversationEntry, or undefined to
 // skip (most lifecycle/tool events are skipped — only user-visible dialogue
 // is projected).
-function eventToEntry(evt: EngteamEvent): ConversationEntry | undefined {
-  const hostFlag = (evt.payload as Record<string, unknown>)?.["__host"] === true;
-
+//
+// hostTrusted is supplied by Observer.emit at the call site. It is NOT read
+// from the event payload, so a subprocess-emitted event line (which is
+// JSON-deserialized from worker output) can never claim host trust.
+function eventToEntry(evt: EngteamEvent, hostTrusted: boolean): ConversationEntry | undefined {
   // Direct kind-typed events (anything emitted with type matching a kind).
   // The host emits these for trusted notes; workers normally don't.
   if (KIND_TYPED.has(evt.type as ConversationKind)) {
-    const from = safeFrom(evt.payload, evt.agentName, hostFlag);
-    // 'to' can be a reserved label only for host-generated events. Worker
+    const from = safeFrom(evt.payload, evt.agentName, hostTrusted);
+    // 'to' can be a reserved label only for host-trusted events. Worker
     // claims that target "user" are downgraded to "*" so a worker can't
     // forge a private response to the operator.
     const claimedTo = pickStr(evt.payload, "to");
-    const to = hostFlag
+    const to = hostTrusted
       ? claimedTo ?? "*"
       : (claimedTo && RESERVED_SENDERS.has(claimedTo) ? "*" : claimedTo ?? "*");
     const text = clip(pickStr(evt.payload, "text") ?? evt.summary ?? "");
@@ -118,7 +120,10 @@ function eventToEntry(evt: EngteamEvent): ConversationEntry | undefined {
   // and verifier outcomes (type=verify, verify_exhausted).
   if (evt.category === "verdict") {
     const verdict = pickStr(evt.payload, "verdict") ?? "?";
-    const stepLabel = evt.step ?? pickStr(evt.payload, "step") ?? "step";
+    // Round-2 H1: derive kind ONLY from evt.step (host-set in ADWEngine
+    // before invoking the worker). payload.step is worker-controlled and
+    // would otherwise let any agent forge kind=synthesis.
+    const stepLabel = evt.step ?? "step";
     const issues = pickStrArr(evt.payload, "issues");
     const headline = `${verdict} on ${stepLabel}` + (issues && issues.length > 0 ? ` — ${issues.join("; ")}` : "");
     const ref = pickStrArr(evt.payload, "artifacts")?.[0]
@@ -195,8 +200,9 @@ export function projectionPath(runDir: string): string {
 export async function appendProjection(
   runDir: string,
   evt: EngteamEvent,
+  hostTrusted: boolean = false,
 ): Promise<void> {
-  const entry = eventToEntry(evt);
+  const entry = eventToEntry(evt, hostTrusted);
   if (!entry) return;
   await mkdir(runDir, { recursive: true });
   await appendFile(projectionPath(runDir), JSON.stringify(entry) + "\n", "utf8");
