@@ -31,6 +31,10 @@ type TeamRuntimeConfig = {
   rateLimit?: RateLimitGuard;
   /** Phase 1.5: conservative token estimate per deliver, used for TPM enforcement (default 4000). */
   defaultEstimatedTokens?: number;
+  /** Phase 1.5.4: optional resolver mapping an agent definition to its rate-limit account key.
+   * When set, account-scoped quotas in rate-limits.json (e.g., `{provider:"anthropic", account:"work"}`)
+   * actually fire. Without this, account-scoped quotas silently miss the lookup. */
+  accountFor?: (def: AgentDefinition) => string | undefined;
   /** Phase 1.5: invoked once per subprocess audit event line ingested from disk */
   onSubprocessEvent?: (runId: string, agentName: string, line: SubprocessEventLine) => void;
 };
@@ -94,15 +98,16 @@ export class TeamRuntime {
     // races and stale-file replays that pid-based naming was vulnerable to.
     const eventToken = randomBytes(8).toString("hex");
 
+    const account = this.config.accountFor?.(def);
     let ticket: ReturnType<RateLimitGuard["acquire"]> | undefined;
     if (this.config.rateLimit) {
-      ticket = this.config.rateLimit.acquire(provider, { estimatedTokens });
+      ticket = this.config.rateLimit.acquire(provider, { account, estimatedTokens });
       if (!ticket.ok) {
         const wait = Math.max(0, Math.min(ticket.retryAfterMs, 30_000));
         await new Promise((r) => setTimeout(r, wait));
-        ticket = this.config.rateLimit.acquire(provider, { estimatedTokens });
+        ticket = this.config.rateLimit.acquire(provider, { account, estimatedTokens });
         if (!ticket.ok) {
-          throw new Error(`RateLimit blocked: provider=${provider}, reason=${ticket.reason}`);
+          throw new Error(`RateLimit blocked: provider=${provider}${account ? `:${account}` : ""}, reason=${ticket.reason}`);
         }
       }
     }
