@@ -428,7 +428,11 @@ export default async function (pi: ExtensionAPI) {
       const { join: pathJoin } = await import("path");
       const eventDir = pathJoin(subRunsDirForEvents, subRunIdForEvents);
       try { mkdirSync(eventDir, { recursive: true }); } catch {}
-      const eventFile = pathJoin(eventDir, `events-subprocess-${process.pid}.jsonl`);
+      // Subprocess writes its audit events under the unique deliver-token (set
+      // by TeamRuntime). Falling back to pid is a debugging escape hatch for
+      // adhoc subprocess invocations not driven by TeamRuntime.
+      const eventToken = process.env["PI_ENGINEERING_SUBPROC_EVENT_TOKEN"] ?? `pid-${process.pid}`;
+      const eventFile = pathJoin(eventDir, `events-subprocess-${eventToken}.jsonl`);
       const subResolver = createSecretResolver({
         vault: subVault,
         emitEvent: (evt) => {

@@ -162,6 +162,9 @@ export class RateLimitGuard {
         }
       }
     }
+    // Drop ticket entry after release so long-running controllers don't leak
+    // O(n) ticket records per dispatch (Codex round-1 M-4).
+    this.tickets.delete(ticketId);
   }
 
   status(): Array<{

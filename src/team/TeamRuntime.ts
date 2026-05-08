@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { basename } from "path";
 import { join } from "path";
+import { randomBytes } from "crypto";
 import type { AgentDefinition, TeamMessage, VerdictPayload } from "../types.js";
 import type { MessageBus } from "./MessageBus.js";
 import type { Observer } from "../observer/Observer.js";
@@ -28,6 +29,8 @@ type TeamRuntimeConfig = {
   agentTimeoutMs?: number;
   /** Phase 1.5: rate-limit guard for outbound LLM dispatch */
   rateLimit?: RateLimitGuard;
+  /** Phase 1.5: conservative token estimate per deliver, used for TPM enforcement (default 4000). */
+  defaultEstimatedTokens?: number;
   /** Phase 1.5: invoked once per subprocess audit event line ingested from disk */
   onSubprocessEvent?: (runId: string, agentName: string, line: SubprocessEventLine) => void;
 };
@@ -85,43 +88,52 @@ export class TeamRuntime {
     if (!def) throw new Error(`Teammate '${to}' is not registered. Add it to AGENT_DEFS.`);
 
     const provider = modelToProvider(def.model);
+    const estimatedTokens = this.config.defaultEstimatedTokens ?? 4000;
+    // Per-deliver event token: lets each subprocess write to its own audit file
+    // and lets the controller drain ONLY that file. Avoids parallel-deliver
+    // races and stale-file replays that pid-based naming was vulnerable to.
+    const eventToken = randomBytes(8).toString("hex");
+
     let ticket: ReturnType<RateLimitGuard["acquire"]> | undefined;
     if (this.config.rateLimit) {
-      ticket = this.config.rateLimit.acquire(provider);
+      ticket = this.config.rateLimit.acquire(provider, { estimatedTokens });
       if (!ticket.ok) {
-        await new Promise((r) => setTimeout(r, ticket!.ok ? 0 : ticket!.retryAfterMs));
-        ticket = this.config.rateLimit.acquire(provider);
+        const wait = Math.max(0, Math.min(ticket.retryAfterMs, 30_000));
+        await new Promise((r) => setTimeout(r, wait));
+        ticket = this.config.rateLimit.acquire(provider, { estimatedTokens });
         if (!ticket.ok) {
           throw new Error(`RateLimit blocked: provider=${provider}, reason=${ticket.reason}`);
         }
       }
     }
 
-    const tmpDir = join(this.config.runsDir, "_agent_tmp");
-    await mkdir(tmpDir, { recursive: true });
-
-    const id = message.id;
-    const verdictFile = join(tmpDir, `${id}.verdict.json`);
-    const systemPromptFile = join(tmpDir, `${id}.system-prompt.txt`);
-
-    const teamSuffix =
-      `\n\n---\n## Team Context\nYour name in the team is: **${to}**\n` +
-      `Use SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\n` +
-      `Always end your turn with VerdictEmit when you have completed your assigned step.`;
-
-    await writeFile(systemPromptFile, def.systemPrompt + teamSuffix);
-
-    const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
-    const { command, args } = getPiInvocation(piArgs);
-
-    const runId = this.currentRunId ?? id;
-    const spawnStartMs = Date.now();
-    let proc: ReturnType<typeof spawn> | undefined;
-    const killTimeout = setTimeout(() => {
-      proc?.kill();
-    }, this.config.agentTimeoutMs ?? 10 * 60 * 1000); // L2: configurable, default 10 min
-
+    // Single try/finally wraps EVERY filesystem and spawn op so a throw in
+    // mkdir/writeFile/etc. still releases the rate-limit ticket. Codex round-1
+    // C-1 fix.
     try {
+      const tmpDir = join(this.config.runsDir, "_agent_tmp");
+      await mkdir(tmpDir, { recursive: true });
+
+      const id = message.id;
+      const verdictFile = join(tmpDir, `${id}.verdict.json`);
+      const systemPromptFile = join(tmpDir, `${id}.system-prompt.txt`);
+
+      const teamSuffix =
+        `\n\n---\n## Team Context\nYour name in the team is: **${to}**\n` +
+        `Use SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\n` +
+        `Always end your turn with VerdictEmit when you have completed your assigned step.`;
+
+      await writeFile(systemPromptFile, def.systemPrompt + teamSuffix);
+
+      const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
+      const { command, args } = getPiInvocation(piArgs);
+
+      const runId = this.currentRunId ?? id;
+      let proc: ReturnType<typeof spawn> | undefined;
+      const killTimeout = setTimeout(() => {
+        proc?.kill();
+      }, this.config.agentTimeoutMs ?? 10 * 60 * 1000);
+
       try {
         await new Promise<void>((resolve, reject) => {
           proc = spawn(command, args, {
@@ -129,14 +141,14 @@ export class TeamRuntime {
             env: {
               ...process.env,
               PI_ENGINEERING_AGENT_MODE: "1",
-              PI_ENGINEERING_AGENT_NAME: to,   // H3: agent name so subprocess can gate GrantApproval
+              PI_ENGINEERING_AGENT_NAME: to,
               PI_ENGINEERING_VERDICT_FILE: verdictFile,
               PI_ENGINEERING_RUN_ID: runId,
               PI_ENGINEERING_RUNS_DIR: this.config.runsDir,
+              PI_ENGINEERING_SUBPROC_EVENT_TOKEN: eventToken,
             },
             stdio: ["inherit", "pipe", "inherit"],
           });
-          // Forward each stdout line to the progress callback so the host UI can surface it
           if (proc.stdout) {
             proc.stdout.setEncoding("utf8");
             proc.stdout.on("data", (chunk: string) => {
@@ -156,15 +168,13 @@ export class TeamRuntime {
       } finally {
         clearTimeout(killTimeout);
         try { await unlink(systemPromptFile); } catch {}
-        // Phase 1.5: drain subprocess audit events written to disk, then unlink.
-        await this.ingestSubprocessEvents(runId, to, spawnStartMs);
+        await this.ingestSubprocessEvents(runId, to, eventToken);
       }
 
       try {
         const data = await readFile(verdictFile, "utf8");
         await unlink(verdictFile).catch(() => {});
         const payload = JSON.parse(data) as VerdictPayload;
-        // H2: fire callback so the host (index.ts) can update memory / emit observer events
         this.config.onVerdictReceived?.(runId, to, payload);
         return payload;
       } catch {
@@ -177,37 +187,31 @@ export class TeamRuntime {
     }
   }
 
-  private async ingestSubprocessEvents(runId: string, agentName: string, spawnStartMs: number): Promise<void> {
+  // Drains ONLY the per-deliver audit file identified by eventToken. Filtering
+  // by token prevents parallel deliveries from stealing each other's audit
+  // events (Codex round-1 C-3) and prevents stale files from prior crashed
+  // runs being misattributed to the current agent (Codex round-1 H-1).
+  private async ingestSubprocessEvents(runId: string, agentName: string, eventToken: string): Promise<void> {
     if (!this.config.onSubprocessEvent) return;
     const runDir = join(this.config.runsDir, runId);
-    let entries: string[];
+    const path = join(runDir, `events-subprocess-${eventToken}.jsonl`);
+    let raw: string;
     try {
-      entries = await readdir(runDir);
+      raw = await readFile(path, "utf8");
     } catch {
       return;
     }
-    for (const name of entries) {
-      if (!name.startsWith("events-subprocess-") || !name.endsWith(".jsonl")) continue;
-      const path = join(runDir, name);
-      let raw: string;
+    for (const rawLine of raw.split("\n")) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
       try {
-        raw = await readFile(path, "utf8");
+        const line = JSON.parse(trimmed) as SubprocessEventLine;
+        this.config.onSubprocessEvent(runId, agentName, line);
       } catch {
-        continue;
+        // skip malformed line
       }
-      for (const rawLine of raw.split("\n")) {
-        const trimmed = rawLine.trim();
-        if (!trimmed) continue;
-        try {
-          const line = JSON.parse(trimmed) as SubprocessEventLine;
-          this.config.onSubprocessEvent(runId, agentName, line);
-        } catch {
-          // skip malformed line
-        }
-      }
-      try { await unlink(path); } catch {}
     }
-    void spawnStartMs;
+    try { await unlink(path); } catch {}
   }
 
   async deliverAll(message: Omit<TeamMessage, "to">): Promise<void> {

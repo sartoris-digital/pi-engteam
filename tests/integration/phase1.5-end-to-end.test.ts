@@ -55,8 +55,10 @@ describe("Phase 1.5 end-to-end: subprocess event ingestion", () => {
     mkdirSync(runDir, { recursive: true });
 
     // Pre-seed events written by a "subprocess" — a real subprocess would
-    // appendFileSync these via SecretResolver.emitEvent.
-    const eventsFile = join(runDir, "events-subprocess-9999.jsonl");
+    // appendFileSync these via SecretResolver.emitEvent. The deliver-token
+    // identifies the exact subprocess so parallel deliveries don't race.
+    const eventToken = "abc123def456";
+    const eventsFile = join(runDir, `events-subprocess-${eventToken}.jsonl`);
     const lines = [
       { category: "safety", type: "secret_access", payload: { secret_name: "API_TOKEN", agent: "implementer", target: "bash", timestamp: "2025-01-01T00:00:00.000Z" }, ts: "2025-01-01T00:00:00.000Z" },
       { category: "safety", type: "secret_access", payload: { secret_name: "DB_PASSWORD", agent: "implementer", target: "bash", timestamp: "2025-01-01T00:00:01.000Z" }, ts: "2025-01-01T00:00:01.000Z" },
@@ -74,8 +76,8 @@ describe("Phase 1.5 end-to-end: subprocess event ingestion", () => {
     });
     team.setRunId(runId);
 
-    // Drive ingestion via the private method (tests the file-scan/unlink loop).
-    await (team as any).ingestSubprocessEvents(runId, "implementer", Date.now());
+    // Drive ingestion via the private method (tests the per-token file read).
+    await (team as any).ingestSubprocessEvents(runId, "implementer", eventToken);
 
     expect(onSubprocessEvent).toHaveBeenCalledTimes(2);
     const first = onSubprocessEvent.mock.calls[0];
@@ -94,7 +96,8 @@ describe("Phase 1.5 end-to-end: subprocess event ingestion", () => {
     const runId = "run-malformed";
     const runDir = join(dir, runId);
     mkdirSync(runDir, { recursive: true });
-    const eventsFile = join(runDir, "events-subprocess-1234.jsonl");
+    const eventToken = "tokmalformed";
+    const eventsFile = join(runDir, `events-subprocess-${eventToken}.jsonl`);
     writeFileSync(eventsFile, "not-json\n{\"category\":\"safety\",\"type\":\"x\",\"payload\":{},\"ts\":\"t\"}\n");
 
     const onSubprocessEvent = vi.fn();
@@ -108,7 +111,7 @@ describe("Phase 1.5 end-to-end: subprocess event ingestion", () => {
     });
     team.setRunId(runId);
 
-    await (team as any).ingestSubprocessEvents(runId, "implementer", Date.now());
+    await (team as any).ingestSubprocessEvents(runId, "implementer", eventToken);
 
     // Only the well-formed line should make it through.
     expect(onSubprocessEvent).toHaveBeenCalledTimes(1);
@@ -119,7 +122,8 @@ describe("Phase 1.5 end-to-end: subprocess event ingestion", () => {
     const runId = "run-no-cb";
     const runDir = join(dir, runId);
     mkdirSync(runDir, { recursive: true });
-    const eventsFile = join(runDir, "events-subprocess-555.jsonl");
+    const eventToken = "toknocb";
+    const eventsFile = join(runDir, `events-subprocess-${eventToken}.jsonl`);
     writeFileSync(eventsFile, JSON.stringify({ category: "safety", type: "secret_access", payload: {}, ts: "t" }) + "\n");
 
     const team = new TeamRuntime({
@@ -131,9 +135,43 @@ describe("Phase 1.5 end-to-end: subprocess event ingestion", () => {
     });
     team.setRunId(runId);
 
-    await (team as any).ingestSubprocessEvents(runId, "implementer", Date.now());
+    await (team as any).ingestSubprocessEvents(runId, "implementer", eventToken);
     // File is preserved when no callback is registered (nothing was ingested).
     expect(existsSync(eventsFile)).toBe(true);
+  });
+
+  it("ignores files that don't match this deliver's event token (parallel-deliver isolation)", async () => {
+    dir = makeTmpDir();
+    const runId = "run-parallel";
+    const runDir = join(dir, runId);
+    mkdirSync(runDir, { recursive: true });
+    // A sibling deliver's events file — must NOT be ingested or unlinked.
+    const otherFile = join(runDir, "events-subprocess-OTHER_TOKEN.jsonl");
+    writeFileSync(otherFile, JSON.stringify({ category: "safety", type: "secret_access", payload: {}, ts: "t" }) + "\n");
+
+    // This deliver's events file.
+    const myToken = "MYTOKEN";
+    const myFile = join(runDir, `events-subprocess-${myToken}.jsonl`);
+    writeFileSync(myFile, JSON.stringify({ category: "safety", type: "secret_access", payload: { secret_name: "MINE" }, ts: "t" }) + "\n");
+
+    const onSubprocessEvent = vi.fn();
+    const team = new TeamRuntime({
+      cwd: dir,
+      bus: makeMockBus(),
+      observer: makeMockObserver(),
+      runsDir: dir,
+      agentDefs: [fakeDef("implementer")],
+      onSubprocessEvent,
+    });
+    team.setRunId(runId);
+
+    await (team as any).ingestSubprocessEvents(runId, "implementer", myToken);
+
+    expect(onSubprocessEvent).toHaveBeenCalledTimes(1);
+    expect(onSubprocessEvent.mock.calls[0][2].payload.secret_name).toBe("MINE");
+    // Mine got drained, sibling preserved.
+    expect(existsSync(myFile)).toBe(false);
+    expect(existsSync(otherFile)).toBe(true);
   });
 });
 
