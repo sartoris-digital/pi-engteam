@@ -586,7 +586,13 @@ export default async function (pi: ExtensionAPI) {
         readExpertise(agentName, expertiseDirs),
         readReadonly(agentName, expertiseDirs),
       ]);
-      return [exp, ro].filter((s) => s.length > 0).join("\n");
+      // Phase 5 round-4 M2: aggregate cap on combined output. Per-section
+      // caps in ExpertiseStore (8000 + 12000) could compose to 20000+;
+      // squash to a hard ceiling so the system prompt size is bounded.
+      const COMBINED_CAP = 16000;
+      const joined = [exp, ro].filter((s) => s.length > 0).join("\n");
+      if (joined.length <= COMBINED_CAP) return joined;
+      return joined.slice(0, COMBINED_CAP - 1) + "…";
     },
     onSubprocessEvent: (runId, agentName, line) => {
       // Phase 4.5 round-4 H2: a worker subprocess writes its own audit

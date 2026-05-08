@@ -208,20 +208,22 @@ export class TeamRuntime {
         if (this.config.expertiseFor) {
           const rendered = await this.config.expertiseFor(to);
           if (rendered && rendered.length > 0) {
-            // Round-2 C3 + round-3 M3: prevent stored expertise from closing
-            // the fence early. Round 2 used a zero-width space, which is
-            // normalization-fragile (Unicode normalizers can strip U+200B).
-            // Round 3 switches to visible ASCII escaping: angle brackets in
-            // the rendered content are replaced with their HTML entity
-            // representations (`&lt;`, `&gt;`). The agent still reads the
-            // text, but the fence parser cannot find a closing tag. The
-            // outer fence uses a unique, hard-to-collide marker ("ED-FENCE")
-            // so even an entry that decodes the entities can't reproduce
-            // the literal closing sentinel.
+            // Round-2 C3 + round-3 M3 + round-4 C2: prevent stored expertise
+            // from closing the fence early. Round 4 also neutralizes the
+            // ASCII sentinel strings themselves — a worker that puts the
+            // literal "===END-EXPERTISE-DATA-BLOCK===" line in wisdom
+            // (decoding around the HTML escapes) would otherwise still
+            // close the block. The sentinel-disarming substitution runs
+            // after HTML-escaping so it can't be re-introduced.
             const safeRendered = rendered
               .replace(/&/g, "&amp;")
               .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;");
+              .replace(/>/g, "&gt;")
+              // Substring match on any line that contains the sentinel —
+              // insert ZWSP-equivalent visible markers between '=' chars
+              // so the line never matches the exact closing marker.
+              .replace(/={3,}\s*BEGIN-EXPERTISE-DATA-BLOCK\s*={3,}/gi, "===.BEGIN-EXPERTISE-DATA-BLOCK.===")
+              .replace(/={3,}\s*END-EXPERTISE-DATA-BLOCK\s*={3,}/gi, "===.END-EXPERTISE-DATA-BLOCK.===");
             expertiseSuffix = [
               "",
               "",

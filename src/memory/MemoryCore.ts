@@ -209,6 +209,10 @@ export class MemoryCore {
   private flushInFlight?: Promise<void>;
   // Phase 5 §8.6: per-agent wisdom buffer flushed at session end.
   private readonly expertiseBuffer = new Map<string, WisdomEntry[]>();
+  // Phase 5 round-4 H1: drop new wisdom after destroy() begins so a
+  // late onVerdict landing post-shutdown can't fill a buffer that has
+  // already drained.
+  private destroyed = false;
 
   constructor(
     private readonly config: MemoryConfig,
@@ -269,6 +273,15 @@ export class MemoryCore {
   /** Called from index.ts VerdictEmit callback for every agent verdict. */
   onVerdict(runId: string, verdict: VerdictPayload, agentName?: string): void {
     if (verdict.verdict !== "PASS" && verdict.verdict !== "FAIL") return;
+    // Phase 5 round-4 H1: reject post-destroy verdicts. The drain loop in
+    // destroy() guarantees the buffer is empty when it returns; new
+    // entries arriving after that would be silently lost on process exit.
+    if (this.destroyed) {
+      console.error(
+        "[pi-memory] onVerdict received after destroy(); wisdom dropped for runId=" + runId,
+      );
+      return;
+    }
     const completedVerdict = verdict as VerdictPayload & { verdict: "PASS" | "FAIL" };
     // HIGH-2: attach rejection handler — captureRun is fire-and-forget but must not crash
     void this.captureRun(runId, completedVerdict).catch((err) => {
@@ -312,6 +325,10 @@ export class MemoryCore {
 
   // CRITICAL-3: async so session_shutdown handler can await it
   async destroy(): Promise<void> {
+    // Phase 5 round-4 H1: set the destroyed flag BEFORE the drain so any
+    // onVerdict racing this method is rejected before its wisdom hits an
+    // already-flushed buffer.
+    this.destroyed = true;
     if (this.heartbeatTimer) {
       this.deps.clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;

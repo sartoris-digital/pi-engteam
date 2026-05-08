@@ -152,6 +152,50 @@ export function checkDomain(opts: {
 }): DomainLockResult {
   const { agent, operation, path, command, policy, mode } = opts;
 
+  // Phase 5 round-4 C1: GLOBAL force-block on the expertise dirs that runs
+  // ahead of every per-agent policy check. Layer A's isProtectedPath
+  // already handles Write/Edit/Read with file paths and Bash with literal
+  // path substrings, but a worker's Bash command without a bash_policy
+  // would otherwise reach this path with operation="Bash" and be allowed
+  // through (line ~210). Block here unconditionally — only the host
+  // process's MemoryCore writes expertise files, and that path doesn't
+  // flow through the Pi tool boundary.
+  const expertisePathRegex = /\.pi\/engineering-team\/expertise/i;
+  if (operation === "Write" || operation === "Edit") {
+    if (path && expertisePathRegex.test(path)) {
+      return {
+        allowed: false,
+        mode: "block",
+        reason: "domain-lock",
+        structured: {
+          block: true,
+          reason: "domain-lock",
+          agent,
+          operation,
+          path,
+          allowed_paths: {},
+          hint: "Expertise files are curated by Memory Core only. Workers MUST NOT write to .pi/engineering-team/expertise — emit wisdom via VerdictEmit's learnings/decisions/issues_found/gotchas fields instead.",
+        },
+      };
+    }
+  }
+  if (operation === "Bash" && command && expertisePathRegex.test(command)) {
+    return {
+      allowed: false,
+      mode: "block",
+      reason: "domain-lock",
+      structured: {
+        block: true,
+        reason: "domain-lock",
+        agent,
+        operation,
+        command,
+        allowed_paths: {},
+        hint: "Bash command targets expertise files. Workers MUST NOT modify .pi/engineering-team/expertise — emit wisdom via VerdictEmit instead.",
+      },
+    };
+  }
+
   // Agent has no policy entry: caller is responsible for emitting a warn event.
   if (!policy) return { allowed: true };
 
