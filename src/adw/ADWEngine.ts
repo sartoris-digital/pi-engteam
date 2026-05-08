@@ -71,10 +71,20 @@ export class ADWEngine {
     this.uiCallbacks = undefined;
   }
 
+  // Phase 5.6 round-1 H1: monotonic sequence so a stale async footer
+  // refresh (one that started earlier but completed later) doesn't
+  // overwrite a newer setStatus or a clear. Each refresh captures the
+  // current seq value at start; if the seq has advanced or
+  // clearUiStatus has been called by the time loadTasks resolves, the
+  // setStatus is skipped.
+  private footerRefreshSeq = 0;
+
   private clearUiStatus(): void {
     this.uiCallbacks?.setStatus("engineering", undefined);
     this.uiCallbacks?.setStatus("engineering_out", undefined);
     this.uiCallbacks?.setStatus("tilldone", undefined);
+    // Bump seq so any in-flight refreshes see a stale token and bail.
+    this.footerRefreshSeq++;
     this.config.team.setAgentLineCallback?.(undefined);
   }
 
@@ -85,8 +95,13 @@ export class ADWEngine {
    */
   private async refreshTillDoneFooter(state: RunState): Promise<void> {
     if (!this.uiCallbacks) return;
+    const myToken = ++this.footerRefreshSeq;
     try {
       const tasks = await loadTasks(this.config.runsDir, state.runId);
+      // Round-1 H1: drop stale refresh writes. If a later refresh OR a
+      // clear has bumped the seq while we were awaiting loadTasks, our
+      // setStatus would be incorrect.
+      if (myToken !== this.footerRefreshSeq) return;
       const text = formatTillDoneFooter({
         workflow: state.workflow,
         goal: state.goal,

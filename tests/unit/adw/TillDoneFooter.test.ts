@@ -65,6 +65,46 @@ describe("formatTillDoneFooter — Phase 5.6 §9.2 single-line", () => {
     expect(out.length).toBeLessThan(150);
     expect(out).toContain("…");
   });
+
+  it("clips goals at 40 chars in the empty-tasks fallback (round-1 L1)", () => {
+    const longGoal = "a".repeat(80);
+    const out = formatTillDoneFooter({
+      workflow: "wf",
+      goal: longGoal,
+      tasks: [],
+    });
+    // 40-char goal cap: "wf · " (5) + clipped goal (≤40) = ~45 chars max.
+    expect(out.length).toBeLessThanOrEqual(50);
+    expect(out).toContain("…");
+  });
+
+  it("renders all six bucket labels in stable order in one call", () => {
+    const out = formatTillDoneFooter({
+      workflow: "wf",
+      goal: "g",
+      tasks: [
+        task({ taskId: "p1", status: "pending", team: "planning" }),
+        task({ taskId: "e1", status: "pending", team: "engineering" }),
+        task({ taskId: "v1", status: "pending", team: "validation" }),
+        task({ taskId: "i1", status: "pending", team: "investigation" }),
+        task({ taskId: "c1", status: "pending", team: "cross-functional" }),
+        task({ taskId: "u1", status: "pending" }),
+      ],
+    });
+    const order = ["PLN", "ENG", "VAL", "INV", "CFN", "UNA"];
+    let last = -1;
+    for (const label of order) {
+      const idx = out.indexOf(label);
+      expect(idx).toBeGreaterThan(last);
+      last = idx;
+    }
+  });
+
+  it("caps the rendered single-line at MAX_STATUS_LINE (round-1 L2)", () => {
+    const tasks = Array.from({ length: 200 }, (_, i) => task({ taskId: `t${i}`, status: "pending", team: "engineering" }));
+    const out = formatTillDoneFooter({ workflow: "wf", goal: "g", tasks });
+    expect(out.length).toBeLessThanOrEqual(200);
+  });
 });
 
 describe("formatTillDoneDetailed — multi-line variant", () => {
@@ -93,5 +133,37 @@ describe("formatTillDoneDetailed — multi-line variant", () => {
       tasks: [],
     });
     expect(out).toContain("(no tasks)");
+  });
+
+  it("sanitizes notes/taskId control bytes (round-1 M1)", () => {
+    const out = formatTillDoneDetailed({
+      workflow: "wf",
+      goal: "g",
+      tasks: [
+        task({
+          taskId: "t-1",
+          status: "pending",
+          team: "engineering",
+          // Newlines + ANSI escape would otherwise corrupt /run-status output.
+          notes: "line1\nline2\x1b[31mEVIL\x1b[0m\rmid",
+        }),
+      ],
+    });
+    // Newlines in notes must NOT add new lines to the rendered output
+    // (apart from the existing per-task formatting). The sanitized
+    // notes should be on a single output line.
+    const evilLine = out.split("\n").find((l) => l.includes("EVIL"));
+    expect(evilLine).toBeDefined();
+    expect(evilLine).not.toContain("\x1b");
+    expect(evilLine).not.toContain("\r");
+  });
+
+  it("renders pending tasks with ○ marker", () => {
+    const out = formatTillDoneDetailed({
+      workflow: "wf",
+      goal: "g",
+      tasks: [task({ taskId: "p1", status: "pending", team: "planning" })],
+    });
+    expect(out).toContain("○ p1");
   });
 });
