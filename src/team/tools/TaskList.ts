@@ -80,17 +80,22 @@ export async function loadTasks(runsDir: string, runId: string): Promise<Task[]>
 
 export async function saveTasks(runsDir: string, runId: string, tasks: Task[]): Promise<void> {
   ensureSafeRunId(runId);
-  // Round-3 M2: validate symmetrically with loadTasks. A caller that
-  // tries to persist a malformed record gets a hard error instead of
-  // silent state loss on the next read.
+  // Round-3 M2 + round-4 M1: validate AND write the normalized records.
+  // The round-3 fix only validated; the original (un-normalized) array
+  // was still serialized, so a partially-bad record (e.g., notes that's
+  // a number) would persist and silently lose the bad fields on read.
+  // Now we write what loadTasks would accept.
+  const normalized: Task[] = [];
   for (let i = 0; i < tasks.length; i++) {
-    if (normalizeTask(tasks[i]) === null) {
+    const n = normalizeTask(tasks[i]);
+    if (n === null) {
       throw new Error(`saveTasks refused: tasks[${i}] failed validation (taskId/status/team must conform).`);
     }
+    normalized.push(n);
   }
   const dir = join(runsDir, runId);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "tasks.json"), JSON.stringify(tasks, null, 2));
+  await writeFile(join(dir, "tasks.json"), JSON.stringify(normalized, null, 2));
 }
 
 /**

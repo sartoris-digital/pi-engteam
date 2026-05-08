@@ -155,6 +155,13 @@ export class TeamRuntime {
 
   constructor(private config: TeamRuntimeConfig) {
     for (const def of config.agentDefs ?? []) {
+      // Round-4 M2: refuse non-conforming agent names at registration.
+      // PI_ENGINEERING_AGENT_NAME (set from `to`) flows into subprocess
+      // env and Layer-D policy lookup, so the validation must happen at
+      // the runtime boundary, not just in prompt rendering.
+      if (!AGENT_NAME_RE.test(def.name)) {
+        throw new Error(`TeamRuntime: refusing to register agent with unsafe name: ${JSON.stringify(def.name)}`);
+      }
       this.knownDefs.set(def.name, def);
     }
   }
@@ -190,6 +197,11 @@ export class TeamRuntime {
 
   /** Register (or replace) an agent definition by name. Called by command handlers at runtime. */
   ensureTeammate(name: string, def: AgentDefinition): void {
+    // Round-4 M2: same shape guard as the constructor — name flows into
+    // subprocess env and policy lookup downstream.
+    if (!AGENT_NAME_RE.test(name)) {
+      throw new Error(`ensureTeammate: refusing to register agent with unsafe name: ${JSON.stringify(name)}`);
+    }
     this.knownDefs.set(name, def);
   }
 
@@ -198,6 +210,12 @@ export class TeamRuntime {
     message: TeamMessage,
     opts?: { hostStep?: string },
   ): Promise<VerdictPayload | undefined> {
+    // Round-4 M2: defense-in-depth. The constructor + ensureTeammate
+    // already reject unsafe names, but `to` is the value that flows into
+    // PI_ENGINEERING_AGENT_NAME and policy lookups — validate here too.
+    if (!AGENT_NAME_RE.test(to)) {
+      throw new Error(`deliver: refusing dispatch to unsafe agent name: ${JSON.stringify(to)}`);
+    }
     const def = this.knownDefs.get(to);
     if (!def) throw new Error(`Teammate '${to}' is not registered. Add it to AGENT_DEFS.`);
 

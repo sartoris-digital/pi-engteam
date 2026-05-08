@@ -142,6 +142,41 @@ async function applyLayerD(
 }
 
 /**
+ * Phase 5.5 round-4 H1: shared Layer A Bash guard used by both
+ * registerHardBlockers (subprocess mode) and registerSafetyGuard
+ * (controller mode). Returns a block descriptor when the command should
+ * be hard-blocked, or undefined to allow downstream layers to evaluate.
+ */
+function bashLayerAGuard(command: string): { block: true; reason: string; layer: string } | undefined {
+  const result = classifyCommand(command);
+  if (result.classification === "blocked") {
+    return {
+      block: true,
+      reason: `[Layer A] Blocked: ${result.reason ?? result.rule ?? "hard-block rule matched"}`,
+      layer: "A",
+    };
+  }
+  if (/\.pi\/engineering-team\/expertise/i.test(command)) {
+    return {
+      block: true,
+      reason: "[Layer A] Bash command targets expertise files; only Memory Core may write them.",
+      layer: "A",
+    };
+  }
+  // Round-4 C1: any tasks.json mention is blocked. The dequoted variant
+  // catches concatenation bypasses like `task""s.json`.
+  const dequoted = command.replace(/['"`]/g, "");
+  if (/tasks\.json/i.test(command) || /tasks\.json/i.test(dequoted)) {
+    return {
+      block: true,
+      reason: "[Layer A] Bash command mentions tasks.json; only the TaskUpdate tool may modify run task ledgers.",
+      layer: "A",
+    };
+  }
+  return undefined;
+}
+
+/**
  * C2: Layer A hard-blocker registration, extracted so it can be applied in
  * agent subprocess mode as well as controller mode.
  */
@@ -154,51 +189,8 @@ export function registerHardBlockers(
     const { toolName, toolInput } = normalizeToolEvent(event);
 
     if (toolName === "Bash" && typeof toolInput.command === "string") {
-      const result = classifyCommand(toolInput.command);
-      if (result.classification === "blocked") {
-        return {
-          block: true,
-          reason: `[Layer A] Blocked: ${result.reason ?? result.rule ?? "hard-block rule matched"}`,
-          layer: "A",
-        };
-      }
-      // Phase 5 round-2 C1 + round-3 C1: Bash bypass of the expertise
-      // single-writer policy. The match is now case-insensitive (defense
-      // against macOS HFS+ case-folded paths) and matches both forward
-      // slashes and the unlikely-but-possible double-slash variant. This
-      // catches `mv ... ./.pi/engineering-team/expertise/eng.md`,
-      // `cp .../EXPERTISE/...`, `tee >> .pi/engineering-team/expertise/foo`,
-      // and similar.
-      //
-      // Round-3 C1 caveat: this guard cannot catch shell-variable
-      // indirection (`mv "$tmp/forged.md" "$EXP/eng.md"` where EXP is
-      // set in a prior call), command substitution, or other dynamic
-      // expansion. The defense-in-depth is the per-agent DomainLock
-      // policy at Layer D — every worker agent's default force_block list
-      // includes the expertise dir, so even a Write/Edit/Bash that does
-      // reach disk is rejected by Pi's tool-call boundary if the worker's
-      // domain lock is enforced.
-      if (/\.pi\/engineering-team\/expertise/i.test(toolInput.command)) {
-        return {
-          block: true,
-          reason: "[Layer A] Bash command targets expertise files; only Memory Core may write them.",
-          layer: "A",
-        };
-      }
-      // Phase 5.5 round-3 C1: same defense for tasks.json. classifier.ts
-      // treats redirects as 'destructive' (Judge-approvable), not
-      // 'blocked'. A worker could otherwise `echo '[]' >
-      // /runs/abc/tasks.json` or `tee >> .../tasks.json`, bypassing
-      // TaskUpdate's taskId validation. Match any Bash command that
-      // mentions a tasks.json under a /runs/ path.
-      if (/(?:\/runs\/|\/engineering-team\/runs\/)[^\s'"`]*\/tasks\.json/i.test(toolInput.command)
-          || /tasks\.json/i.test(toolInput.command) && /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(toolInput.command)) {
-        return {
-          block: true,
-          reason: "[Layer A] Bash command targets a run's tasks.json; only the TaskUpdate tool may modify it.",
-          layer: "A",
-        };
-      }
+      const guard = bashLayerAGuard(toolInput.command);
+      if (guard) return guard;
     }
 
     if (["Write", "Edit", "Read"].includes(toolName)) {
@@ -230,20 +222,18 @@ export function registerSafetyGuard(
     // --- Layer A: Hard blockers ---
     if (config.hardBlockers.enabled) {
       if (toolName === "Bash" && typeof toolInput.command === "string") {
-        const result = classifyCommand(toolInput.command);
-        if (result.classification === "blocked") {
-          return {
-            block: true,
-            reason: `[Layer A] Blocked: ${result.reason ?? result.rule ?? "hard-block rule matched"}`,
-            layer: "A",
-          };
-        }
+        // Round-4 H1: shared with registerHardBlockers so controller
+        // mode gets the same expertise + tasks.json Bash defenses.
+        const guard = bashLayerAGuard(toolInput.command);
+        if (guard) return guard;
       }
 
       if (["Write", "Edit", "Read"].includes(toolName)) {
         const filePath = ((toolInput.file_path ?? toolInput.path ?? "") as string);
         if (filePath) {
-          const check = isProtectedPath(filePath);
+          // Round-4 H1: pass runsDir so the tasks.json rule honors
+          // non-standard runsDir layouts in controller mode too.
+          const check = isProtectedPath(filePath, { runsDir: config.runsDir });
           if (check.blocked) {
             return {
               block: true,
