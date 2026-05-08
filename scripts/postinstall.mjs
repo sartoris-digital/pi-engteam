@@ -23,6 +23,7 @@ const HOME = homedir();
 const PI_DIR = join(HOME, ".pi");
 const ENGINEERING_DIR = join(PI_DIR, "engineering-team");
 const AGENTS_DIR = join(PI_DIR, "agent", "agents");
+const VERIFIER_SCRIPTS_DIR = join(ENGINEERING_DIR, "verifier-scripts");
 
 /** Resolve the actual tsup CLI JS entry (avoids running the shell shim via node). */
 async function findTsupCli() {
@@ -120,11 +121,29 @@ async function installAgents() {
   console.log(`[pi-engineering] installed ${files.length} agent(s) → ${AGENTS_DIR}`);
 }
 
+/** Copy src/assets/verifier-scripts/*.py → ~/.pi/engineering-team/verifier-scripts/. */
+async function installVerifierScripts() {
+  const srcDir = join(ROOT, "src", "assets", "verifier-scripts");
+  let files;
+  try {
+    files = (await readdir(srcDir)).filter((f) => f.endsWith(".py"));
+  } catch {
+    console.warn("[pi-engineering] postinstall: src/assets/verifier-scripts not found — skipping");
+    return;
+  }
+  await mkdir(VERIFIER_SCRIPTS_DIR, { recursive: true });
+  await Promise.all(
+    files.map((f) => copyFile(join(srcDir, f), join(VERIFIER_SCRIPTS_DIR, f))),
+  );
+  console.log(`[pi-engineering] installed ${files.length} verifier script(s) → ${VERIFIER_SCRIPTS_DIR}`);
+}
+
 async function main() {
   console.log("[pi-engineering] postinstall: building server and installing files...");
   await buildServer(); // best-effort; skipped if tsup (devDep) is unavailable
   await installServer(); // always attempt — uses pre-built dist/server.cjs if build was skipped
   await installAgents();
+  await installVerifierScripts();
   console.log("[pi-engineering] postinstall done.");
 }
 

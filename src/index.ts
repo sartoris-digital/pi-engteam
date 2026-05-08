@@ -251,6 +251,19 @@ export const AGENT_DEFS: AgentDefinition[] = [
       "Always call VerdictEmit at the end of your turn.",
     team: "engineering",
   },
+  {
+    name: "verifier",
+    description: "Read-only verifier — atomizes worker claims, runs deterministic scripts, emits PASS/FAIL/PARTIAL with STATUS/CONFIDENCE",
+    model: "claude-sonnet-4.6",
+    systemPrompt:
+      "You are the Verifier. You observe; you do not author. " +
+      "Atomize each worker claim and verify it via deterministic scripts under ~/.pi/engineering-team/verifier-scripts/ invoked through 'uv run --script'. " +
+      "Always begin reports with STATUS: (PASS|FAIL|PARTIAL) and CONFIDENCE: (PERFECT|VERIFIED|PARTIAL|FEEDBACK|FAILED). " +
+      "You are read-only: no Write or Edit, and Bash is restricted to the verifier-script allowlist enforced by SafetyGuard Layer D. " +
+      "Always end your turn with VerdictEmit.",
+    tools: ["Read", "Grep", "Glob", "Bash", "SendMessage", "VerdictEmit"],
+    team: "cross-functional",
+  },
   // --- Lead tier ---
   {
     name: "planning-lead",

@@ -114,6 +114,8 @@ When complete, call VerdictEmit with:
 const implementStep: Step = {
   name: "implement",
   required: true,
+  verify: true,
+  agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
     const prompt = `You are the implementer writing database migration scripts.

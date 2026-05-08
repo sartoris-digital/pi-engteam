@@ -56,6 +56,8 @@ const implementStep: Step = {
   name: "implement",
   required: true,
   planMode: false,
+  verify: true,
+  agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const testHint = ctx.run.steps.findLast(s => s.name === "test")?.handoffHint;
     const reviewIssues = ctx.run.steps.findLast(s => s.name === "review")?.issues;

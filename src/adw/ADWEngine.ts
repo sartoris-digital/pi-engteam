@@ -1,4 +1,4 @@
-import type { RunState, BudgetStatus } from "../types.js";
+import type { RunState, BudgetStatus, VerdictPayload } from "../types.js";
 import type { Workflow, StepContext, StepResult } from "../workflows/types.js";
 import type { TeamRuntime } from "../team/TeamRuntime.js";
 import type { Observer } from "../observer/Observer.js";
@@ -10,6 +10,9 @@ import {
 } from "./RunState.js";
 import { checkBudget, tickBudget } from "./BudgetGuard.js";
 import { writeActiveRun } from "./ActiveRun.js";
+import { runVerifyLoop, VerifyExhaustedError } from "../verifier/VerifierLoop.js";
+import { mkdir, appendFile } from "fs/promises";
+import { join as joinPath } from "path";
 
 type ADWConfig = {
   runsDir: string;
@@ -223,6 +226,89 @@ export class ADWEngine {
           `✗ ${state.currentStep}: FAIL${detail ? ` — ${detail.slice(0, 140)}` : ""}`,
           "warning",
         );
+      }
+
+      // Phase 3: Verifier loop. Runs after a worker step PASS when the step
+      // declares verify: true. On verifier FAIL/exhaustion, the run pauses for
+      // user intervention and we surface the issues in state.json for /run-status.
+      if (
+        stepDef.verify === true &&
+        stepDef.agent &&
+        result.verdict === "PASS" &&
+        result.success
+      ) {
+        const verdictPayload: VerdictPayload = {
+          step: state.currentStep,
+          verdict: result.verdict,
+          issues: result.issues,
+          artifacts: result.artifacts ? Object.values(result.artifacts) : undefined,
+          handoffHint: result.handoffHint,
+        };
+        const verifyRunId = state.runId;
+        const runDir = joinPath(this.config.runsDir, verifyRunId);
+        try {
+          const verifyResult = await runVerifyLoop({
+            team: this.config.team,
+            verifierAgentName: "verifier",
+            workerAgentName: stepDef.agent,
+            workerStep: stepDef.name,
+            workerVerdict: verdictPayload,
+            runId: verifyRunId,
+            runDir,
+            maxVerifyLoops: stepDef.maxVerifyLoops ?? 3,
+            onPartialGap: async (gap) => {
+              try {
+                const learningDir = joinPath(runDir, "learning");
+                await mkdir(learningDir, { recursive: true });
+                await appendFile(
+                  joinPath(learningDir, "gaps.jsonl"),
+                  JSON.stringify({ ...gap, runId: verifyRunId, ts: new Date().toISOString() }) + "\n",
+                );
+              } catch { /* best-effort */ }
+            },
+          });
+
+          this.config.observer.emit({
+            runId,
+            step: state.currentStep,
+            iteration: state.iteration,
+            category: "verdict",
+            type: "verify",
+            payload: {
+              verdict: verifyResult.verdict,
+              confidence: verifyResult.confidence,
+              issues: verifyResult.issues,
+              report: verifyResult.report,
+            },
+            summary: `verifier ${verifyResult.verdict} on ${state.currentStep}`,
+          });
+        } catch (err) {
+          if (err instanceof VerifyExhaustedError) {
+            state = updateStep(state, state.currentStep, {
+              verdict: "FAIL",
+              issues: err.lastIssues,
+              error: err.message,
+            });
+            state = { ...state, status: "waiting_user" };
+            await saveRunState(this.config.runsDir, state);
+            this.config.observer.emit({
+              runId,
+              step: state.currentStep,
+              iteration: state.iteration,
+              category: "verdict",
+              type: "verify_exhausted",
+              payload: { issues: err.lastIssues, attempts: err.attempts },
+              summary: `verifier exhausted on ${state.currentStep}`,
+            });
+            this.uiCallbacks?.notify(
+              `⏸ Verifier exhausted on ${state.currentStep} after ${err.attempts} loop(s). Run paused.`,
+              "warning",
+            );
+            this.uiCallbacks?.setStatus("engineering", `⏸ verifier exhausted (${state.currentStep})`);
+            break;
+          }
+          throw err;
+        }
       }
 
       const transition = workflow.transitions.find(

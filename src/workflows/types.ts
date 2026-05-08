@@ -26,6 +26,12 @@ export type Step = {
   pauseAfter?: "answering" | "approving";
   /** If set, engine applies this planMode to the run state before running the step */
   planMode?: boolean;
+  /** Phase 3: when true, dispatch the verifier after the worker emits PASS for this step. */
+  verify?: boolean;
+  /** Phase 3: bound on verify→fail→re-iterate cycles for this step. Default 3. */
+  maxVerifyLoops?: number;
+  /** Phase 3: name of the worker agent that owns this step (used by the verifier loop to address corrective messages). If omitted, no verifier loop runs. */
+  agent?: string;
   run: (ctx: StepContext) => Promise<StepResult>;
 };
 

@@ -63,6 +63,8 @@ When your plan is complete, call VerdictEmit with:
 const buildStep: Step = {
   name: "build",
   required: true,
+  verify: true,
+  agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["plan"] ?? "No plan artifact found";
     const prompt = `You are the implementer. Here is the plan you need to execute:
@@ -144,6 +146,8 @@ When your review is complete, call VerdictEmit with:
 const fixStep: Step = {
   name: "fix",
   required: true,
+  verify: true,
+  agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const reviewIssues =
       [...ctx.run.steps].reverse().find(s => s.name === "review")?.issues?.join("\n") ?? "No specific issues provided";

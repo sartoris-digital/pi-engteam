@@ -112,6 +112,8 @@ When complete, call VerdictEmit with:
 const implementStep: Step = {
   name: "implement",
   required: true,
+  verify: true,
+  agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const verifyHint =
       ctx.run.steps.findLast(s => s.name === "verify")?.handoffHint ?? "";
