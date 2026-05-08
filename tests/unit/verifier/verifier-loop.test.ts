@@ -281,6 +281,29 @@ describe("VerifierLoop", () => {
     expect(promptText).not.toContain("session slice");
   });
 
+  it("sanitizes workerStep so path traversal cannot escape verificationDir (Codex round-2 NC-3)", async () => {
+    const { team } = makeMockTeam([
+      async () => ({ step: "verify:build", verdict: "PASS" }),
+    ]);
+    const evilStep = "../../escape";
+    const res = await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: evilStep,
+      workerVerdict: baseVerdict,
+      runId: "r-traversal",
+      runDir,
+      maxVerifyLoops: 3,
+    });
+    // Report path must stay under <runDir>/verification/. The filename component
+    // (everything after the verification root) must not contain `..` segments.
+    const verificationRoot = join(runDir, "verification");
+    expect(res.report.startsWith(verificationRoot + "/")).toBe(true);
+    const tail = res.report.slice(verificationRoot.length + 1);
+    expect(tail.split("/").includes("..")).toBe(false);
+  });
+
   it("re-iteration uses the worker's fresh verdict, not the original stale one (Codex P3 H-2)", async () => {
     const verifierCalls: any[] = [];
     const { team } = makeMockTeam([

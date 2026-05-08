@@ -1,7 +1,16 @@
-import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { join, basename } from "path";
 import type { TeamRuntime } from "../team/TeamRuntime.js";
 import type { VerdictPayload } from "../types.js";
+
+// Replace any character that could escape the verification dir or otherwise
+// surprise filesystem semantics. Limit to a conservative env-var-like grammar.
+function sanitizeStepName(step: string): string {
+  const safe = step.replace(/[^A-Za-z0-9_.-]/g, "_");
+  // Reject empty, all-dots, or "." / ".." which `basename` may pass through.
+  if (!safe || /^\.+$/.test(safe)) return "step";
+  return basename(safe);
+}
 
 export type VerifyConfidence = "PERFECT" | "VERIFIED" | "PARTIAL" | "FEEDBACK" | "FAILED";
 
@@ -48,12 +57,29 @@ function parseConfidenceFromReport(report: string): VerifyConfidence | undefined
   return m ? (m[1] as VerifyConfidence) : undefined;
 }
 
+async function readOptionalContext(runDir: string): Promise<string> {
+  // Pull plan.md and spec.md if present so the verifier has intent context, not
+  // just artifact paths. Codex round-2 P3 NH-2: prevent context starvation on
+  // intent-heavy changes.
+  const parts: string[] = [];
+  for (const name of ["plan.md", "spec.md", "issue-brief.md"]) {
+    try {
+      const text = await readFile(join(runDir, name), "utf8");
+      if (text.trim()) {
+        parts.push(`### ${name}\n${text}`);
+      }
+    } catch { /* file absent — skip */ }
+  }
+  return parts.join("\n\n---\n\n");
+}
+
 function buildVerifierPrompt(opts: {
   cfg: VerifierLoopConfig;
   iter: number;
   workerVerdict: VerdictPayload;
+  context: string;
 }): string {
-  const { cfg, iter, workerVerdict } = opts;
+  const { cfg, iter, workerVerdict, context } = opts;
   return `You are the Verifier. Atomize the worker's claims and verify each one via deterministic scripts.
 
 WORKER: ${cfg.workerAgentName}
@@ -62,6 +88,7 @@ ITERATION: ${iter}
 RUN_ID: ${cfg.runId}
 RUN_DIR: ${cfg.runDir}
 
+${context ? `RUN CONTEXT (plan/spec/brief):\n${context}\n` : ""}
 WORKER VERDICT:
 ${JSON.stringify(workerVerdict, null, 2)}
 
@@ -73,7 +100,7 @@ INSTRUCTIONS:
 2. For each claim, invoke an appropriate script under ~/.pi/engineering-team/verifier-scripts/ via 'uv run --script <script> <args>'.
 3. Call VerdictEmit with:
    - step: "verify:${cfg.workerStep}"
-   - verdict: PASS | FAIL | PARTIAL (PASS = every claim verified; FAIL = at least one claim failed; PARTIAL = no failures but some claims unverifiable)
+   - verdict: PASS | FAIL | PARTIAL (PASS = every claim verified; FAIL = at least one claim failed; PARTIAL = no failures but some claims unverifiable). Do NOT emit NEEDS_MORE — the verifier is bounded; if you cannot verify, use PARTIAL with a clear gap description.
    - issues: one entry per failed claim with file:line and the script output. The host writes a structured report file from your verdict + issues — you do NOT have Write access.
 `;
 }
@@ -102,9 +129,12 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
   // the worker re-iterates after a corrective message (Codex round-1 P3 H-2).
   let currentWorkerVerdict: VerdictPayload = cfg.workerVerdict;
 
+  const safeStep = sanitizeStepName(cfg.workerStep);
+  const context = await readOptionalContext(cfg.runDir);
+
   for (let iter = 1; iter <= cfg.maxVerifyLoops; iter++) {
-    const reportPath = join(verificationDir, `${cfg.workerStep}-${iter}.md`);
-    const prompt = buildVerifierPrompt({ cfg, iter, workerVerdict: currentWorkerVerdict });
+    const reportPath = join(verificationDir, `${safeStep}-${iter}.md`);
+    const prompt = buildVerifierPrompt({ cfg, iter, workerVerdict: currentWorkerVerdict, context });
 
     const verdict = await cfg.team.deliver(cfg.verifierAgentName, {
       id: crypto.randomUUID(),
