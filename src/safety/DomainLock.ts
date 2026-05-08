@@ -7,9 +7,11 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { realpathSync, existsSync } from "fs";
 import { homedir } from "os";
 import { resolve, dirname, sep } from "path";
+import { parse as shellParse } from "shell-quote";
+import { normalizeToolEvent } from "./SafetyGuard.js";
 import type { DomainPolicy } from "./default-domains.js";
 
-export type DomainOperation = "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob";
+export type DomainOperation = "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob" | "Find" | "Ls";
 
 export type DomainLockResult =
   | { allowed: true }
@@ -66,6 +68,29 @@ function pathAllowed(target: string, roots: string[]): boolean {
   return false;
 }
 
+function rejectTraversal(
+  agent: string,
+  operation: DomainOperation,
+  path: string,
+  mode: "warn" | "block",
+  allowed: Record<string, string[]>,
+): DomainLockResult {
+  return {
+    allowed: false,
+    mode,
+    reason: "domain-lock",
+    structured: {
+      block: true,
+      reason: "domain-lock",
+      agent,
+      operation,
+      path,
+      allowed_paths: allowed,
+      hint: `${path} contains '..' segments. Agent paths must be canonical absolute or project-relative paths without parent-traversal.`,
+    },
+  };
+}
+
 function buildHint(operation: DomainOperation, target: string, agent: string): string {
   return (
     `${target} is outside ${agent}'s ${operation === "Bash" ? "bash" : "domain"}. To proceed: ` +
@@ -75,27 +100,44 @@ function buildHint(operation: DomainOperation, target: string, agent: string): s
   );
 }
 
-// Compound-command operators that, if present after the allowed script, would
-// let an agent chain arbitrary commands ("uv run --script foo.py; rm -rf /").
-// Detection is conservative: any unquoted occurrence of these tokens means
-// reject. We do not attempt full shell parsing — just refuse anything that
-// looks compound.
-const COMPOUND_PATTERN = /(?:^|[^\\])(?:[;&|]|\$\(|`|>{1,2}|<)/;
-
+// Compound-command detection: parse with shell-quote (already a dep, used by
+// classifier.ts) and reject if any operator token appears. Operator tokens are
+// returned by shell-quote as plain objects ({ op: ';' } etc.) or comment
+// objects. Backslash-escape gymnastics ("\\;", "\\$(...)") that defeat naive
+// regex scanners get parsed by shell-quote into proper operator objects when
+// they actually function as shell operators.
 function hasCompoundOperators(remainder: string): boolean {
-  // Strip simple quoted regions before checking. This is intentionally loose:
-  // any quoting we can't cleanly handle counts as a compound and is rejected.
-  let stripped = remainder;
-  // Repeatedly remove balanced single- or double-quoted regions.
-  for (let i = 0; i < 20; i++) {
-    const before = stripped;
-    stripped = stripped.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
-    if (stripped === before) break;
+  if (remainder.trim() === "") return false;
+  let parsed: ReturnType<typeof shellParse>;
+  try {
+    parsed = shellParse(remainder);
+  } catch {
+    // Parse failed → assume malformed/dangerous. Reject.
+    return true;
   }
-  // Reject if any unclosed quote remains.
-  if ((stripped.match(/'/g) ?? []).length % 2 !== 0) return true;
-  if ((stripped.match(/"/g) ?? []).length % 2 !== 0) return true;
-  return COMPOUND_PATTERN.test(stripped);
+  for (const tok of parsed) {
+    if (typeof tok === "object" && tok !== null && "op" in tok) {
+      // Any operator (`;`, `&&`, `||`, `|`, `&`, `>`, `>>`, `<`, etc.) is rejected.
+      return true;
+    }
+  }
+  // shell-quote returns command-substitution forms ($(...) and backticks) as
+  // plain string tokens rather than ops. Scan the joined string-tokens for
+  // these forms after stripping shell-quote-recognized quoting.
+  const joined = parsed.filter((t): t is string => typeof t === "string").join(" ");
+  if (/\$\(|`/.test(joined)) return true;
+  return false;
+}
+
+// Reject paths containing `..` segments. path.resolve collapses `..` lexically
+// BEFORE we get a chance to realpath each component, which means a symlinked
+// parent followed by `..` could escape the allowed root via lexical
+// normalization. Forbidding `..` in agent-supplied paths is the simplest
+// correct guard.
+function containsParentTraversal(p: string): boolean {
+  const expanded = expandHome(p);
+  const segments = expanded.split(sep);
+  return segments.includes("..");
 }
 
 export function checkDomain(opts: {
@@ -111,8 +153,11 @@ export function checkDomain(opts: {
   // Agent has no policy entry: caller is responsible for emitting a warn event.
   if (!policy) return { allowed: true };
 
-  if (operation === "Read" || operation === "Grep" || operation === "Glob") {
+  if (operation === "Read" || operation === "Grep" || operation === "Glob" || operation === "Find" || operation === "Ls") {
     if (!path) return { allowed: true };
+    if (containsParentTraversal(path)) {
+      return rejectTraversal(agent, operation, path, mode, { read: policy.read });
+    }
     if (pathAllowed(path, policy.read)) return { allowed: true };
     return {
       allowed: false,
@@ -132,6 +177,9 @@ export function checkDomain(opts: {
 
   if (operation === "Write" || operation === "Edit") {
     if (!path) return { allowed: true };
+    if (containsParentTraversal(path)) {
+      return rejectTraversal(agent, operation, path, mode, { upsert: policy.upsert, delete: policy.delete });
+    }
     // Only `upsert` grants write/edit. `delete` is a separate verb and
     // must NOT imply write permission (Codex round 1 MEDIUM #3).
     if (pathAllowed(path, policy.upsert)) {
@@ -270,10 +318,9 @@ export function registerDomainLock(
   },
 ): void {
   pi.on("tool_call", async (event: any, _ctx: any) => {
-    const toolName: string = event.tool?.name ?? "";
-    if (!["Read", "Write", "Edit", "Bash", "Grep", "Glob"].includes(toolName)) return undefined;
+    const { toolName, toolInput } = normalizeToolEvent(event);
+    if (!["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Find", "Ls"].includes(toolName)) return undefined;
 
-    const toolInput: Record<string, unknown> = event.toolInput ?? {};
     const agent = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "unknown";
     const policy = opts.getPolicyForAgent();
 

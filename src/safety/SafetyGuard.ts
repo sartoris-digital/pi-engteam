@@ -10,6 +10,31 @@ import { join } from "path";
 import { checkDomain } from "./DomainLock.js";
 import type { DomainPolicyMap } from "./default-domains.js";
 
+// Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
+// "write"|"grep"|"find"|"ls"|<custom>) and `input` (typed input object). All
+// safety layers were originally written against an older shape (`event.tool.name`
+// / `event.toolInput`). normalizeToolEvent reads both shapes and returns the
+// canonical capitalized name used throughout safety code.
+const BUILTIN_TOOL_NAME_MAP: Record<string, string> = {
+  bash: "Bash",
+  read: "Read",
+  edit: "Edit",
+  write: "Write",
+  grep: "Grep",
+  find: "Find",
+  ls: "Ls",
+};
+
+export function normalizeToolEvent(event: any): {
+  toolName: string;
+  toolInput: Record<string, unknown>;
+} {
+  const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
+  const input = (event?.input ?? event?.toolInput ?? {}) as Record<string, unknown>;
+  const canonical = BUILTIN_TOOL_NAME_MAP[rawName.toLowerCase()] ?? rawName;
+  return { toolName: canonical, toolInput: input };
+}
+
 async function loadRunPlanMode(runsDir: string): Promise<boolean> {
   try {
     const activeFile = join(runsDir, "active-run.txt");
@@ -75,7 +100,7 @@ async function applyLayerD(
   toolInput: Record<string, unknown>,
   domainLock: DomainLockConfig,
 ): Promise<{ block: true; reason: string; layer: string; [k: string]: unknown } | undefined> {
-  if (!["Write", "Edit", "Bash", "Read", "Grep", "Glob"].includes(toolName)) return undefined;
+  if (!["Write", "Edit", "Bash", "Read", "Grep", "Glob", "Find", "Ls"].includes(toolName)) return undefined;
   const agentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
   const policy = agentName ? domainLock.policies[agentName] : undefined;
   // Surface missing-policy as a warn so misspelled or new agents are visible to operators.
@@ -90,7 +115,7 @@ async function applyLayerD(
   const filePath = (toolInput.file_path ?? toolInput.path ?? toolInput.pattern_path ?? "") as string;
   const result = checkDomain({
     agent: agentName,
-    operation: toolName as "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob",
+    operation: toolName as "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob" | "Find" | "Ls",
     path: filePath || undefined,
     command: typeof toolInput.command === "string" ? toolInput.command : undefined,
     policy,
@@ -125,8 +150,7 @@ export function registerHardBlockers(
 ): void {
   if (!config.hardBlockers.enabled) return;
   pi.on("tool_call", async (event: any, _ctx: any) => {
-    const toolName: string = event.tool?.name ?? "";
-    const toolInput: Record<string, unknown> = event.toolInput ?? {};
+    const { toolName, toolInput } = normalizeToolEvent(event);
 
     if (toolName === "Bash" && typeof toolInput.command === "string") {
       const result = classifyCommand(toolInput.command);
@@ -163,8 +187,7 @@ export function registerSafetyGuard(
   config: SafetyConfig & { runsDir: string; domainLock?: DomainLockConfig },
 ): void {
   pi.on("tool_call", async (event: any, _ctx: any) => {
-    const toolName: string = event.tool?.name ?? "";
-    const toolInput: Record<string, unknown> = event.toolInput ?? {};
+    const { toolName, toolInput } = normalizeToolEvent(event);
 
     // --- Layer A: Hard blockers ---
     if (config.hardBlockers.enabled) {

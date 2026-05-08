@@ -511,9 +511,8 @@ describe("checkDomain — Grep/Glob respect read domain (HIGH #3 regression)", (
 });
 
 describe("loadTeamsConfig — parse errors surfaced (HIGH #4 regression)", () => {
-  it("malformed user yaml produces a parseErrors entry instead of silent fallback", async () => {
+  it("malformed user yaml (unclosed inline bracket) produces a parseErrors entry", async () => {
     const userPath = join(workDir, "teams.yaml");
-    // Truly malformed YAML that the minimal parser should reject (unclosed bracket).
     writeFileSync(userPath, "implementer:\n  upsert: [unclosed\n");
     const cfg = await loadTeamsConfig({
       userPath,
@@ -521,9 +520,9 @@ describe("loadTeamsConfig — parse errors surfaced (HIGH #4 regression)", () =>
       runDir: workDir,
       expertiseDir: workDir,
     });
-    // The parser may or may not flag this depending on hand-rolled tolerance —
-    // but a totally absent file must NOT produce a parse error.
-    expect(Array.isArray(cfg.parseErrors)).toBe(true);
+    expect(cfg.parseErrors.length).toBe(1);
+    expect(cfg.parseErrors[0].path).toBe(userPath);
+    expect(cfg.parseErrors[0].error).toMatch(/unclosed/i);
   });
 
   it("missing files do NOT count as parse errors", async () => {
@@ -535,4 +534,91 @@ describe("loadTeamsConfig — parse errors surfaced (HIGH #4 regression)", () =>
     });
     expect(cfg.parseErrors).toEqual([]);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Codex round-2 regression tests for Phase 2
+// ---------------------------------------------------------------------------
+
+describe("checkDomain — parent-traversal rejection (round-2 CRITICAL #3 regression)", () => {
+  it("rejects Write to a path containing `..` segments even if it lexically resolves under the root", () => {
+    const allowed = join(workDir, "allowed");
+    mkdirSync(allowed, { recursive: true });
+    const policy: DomainPolicy = { read: ["."], upsert: [allowed], delete: [] };
+    // path.resolve would collapse "/allowed/foo/../bar" lexically to "/allowed/bar",
+    // but if `foo` were a symlinked dir the OS would walk through it first.
+    // Reject all `..` outright as the safer rule.
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Write",
+      path: `${allowed}/foo/../escape`,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(false);
+    if (!r.allowed) {
+      expect((r.structured.hint as string)).toMatch(/parent-traversal/);
+    }
+  });
+
+  it("rejects Read with `..` segments too", () => {
+    const allowed = join(workDir, "allowed");
+    mkdirSync(allowed, { recursive: true });
+    const policy: DomainPolicy = { read: [allowed], upsert: [], delete: [] };
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Read",
+      path: `${allowed}/x/../y`,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(false);
+  });
+
+  it("allows Write to a path containing legitimate segments named like `..` (e.g., `..foo`) but NOT bare `..`", () => {
+    const allowed = join(workDir, "allowed");
+    mkdirSync(allowed, { recursive: true });
+    const policy: DomainPolicy = { read: ["."], upsert: [allowed], delete: [] };
+    const r = checkDomain({
+      agent: "implementer",
+      operation: "Write",
+      path: `${allowed}/..backup`,
+      policy,
+      mode: "block",
+    });
+    expect(r.allowed).toBe(true);
+  });
+});
+
+describe("checkDomain — backslash-escaped compound bypass (round-2 CRITICAL #2 regression)", () => {
+  const policy: DomainPolicy = {
+    read: ["."],
+    upsert: [],
+    delete: [],
+    bash_policy: {
+      mode: "script-only",
+      runner: "uv run --script",
+      allowed_scripts: ["/allowed/script.py"],
+    },
+  };
+
+  // Even-backslash compound: `\\;` in shell input = literal-backslash + unescaped semi.
+  // shell-quote should still surface this as an operator token; our scan must reject.
+  for (const evilTail of [
+    " \\\\; rm -rf /",
+    " \\\\&& cat /etc/passwd",
+    " \\\\| base64",
+    " \\\\> /tmp/exfil",
+  ]) {
+    it(`rejects even-backslash compound: '${evilTail}'`, () => {
+      const r = checkDomain({
+        agent: "verifier",
+        operation: "Bash",
+        command: `uv run --script /allowed/script.py${evilTail}`,
+        policy,
+        mode: "block",
+      });
+      expect(r.allowed).toBe(false);
+    });
+  }
 });

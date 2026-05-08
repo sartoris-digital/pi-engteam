@@ -337,18 +337,35 @@ export default async function (pi: ExtensionAPI) {
     // NOT execute Write/Edit/Bash; this is the runtime gate that enforces it.
     const subAgentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
     const subAgentDef = AGENT_DEFS.find((a) => a.name === subAgentName);
-    if (subAgentDef?.tools && subAgentDef.tools.length > 0) {
-      const allowed = new Set(subAgentDef.tools);
+    const { normalizeToolEvent } = await import("./safety/SafetyGuard.js");
+    const subAgentTools = subAgentDef?.tools;
+    if (subAgentTools && subAgentTools.length > 0) {
+      // Normalize allowed list: lowercase form for built-ins so we match
+      // Pi's lowercase event.toolName, plus the original entries (custom tools
+      // are emitted by their registered name verbatim).
+      const allowed = new Set([
+        ...subAgentTools,
+        ...subAgentTools.map((t) => t.toLowerCase()),
+      ]);
       pi.on("tool_call", async (event: any) => {
-        const tool: string = event.tool?.name ?? "";
-        if (!allowed.has(tool)) {
+        const { toolName } = normalizeToolEvent(event);
+        const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
+        if (!allowed.has(toolName) && !allowed.has(rawName) && !allowed.has(rawName.toLowerCase())) {
           return {
             block: true,
-            reason: `[Layer D] Agent '${subAgentName}' is not allowed to call tool '${tool}'. Allowed: ${[...allowed].join(", ")}.`,
-            layer: "D",
-            agent: subAgentName,
-            tool,
-            allowed_tools: [...allowed],
+            reason: `[Layer D] Agent '${subAgentName}' is not allowed to call tool '${rawName}'. Allowed: ${subAgentTools.join(", ")}.`,
+          };
+        }
+        return undefined;
+      });
+    } else if (!subAgentDef && subAgentName) {
+      // Subprocess started with an agent name we don't recognize. Fail closed.
+      pi.on("tool_call", async (event: any) => {
+        const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
+        if (["bash", "write", "edit"].includes(rawName.toLowerCase())) {
+          return {
+            block: true,
+            reason: `[Layer D] Subprocess agent '${subAgentName}' has no AGENT_DEFS entry; mutating tools (${rawName}) blocked by default.`,
           };
         }
         return undefined;
@@ -460,6 +477,19 @@ export default async function (pi: ExtensionAPI) {
   const sinkUrl = process.env.PI_ENGINEERING_EVENT_URL;
   const sink = sinkUrl ? new HttpSink(sinkUrl, "global", RUNS_DIR) : undefined;
   const observer = new Observer(writer, sink);
+
+  // Surface teams.yaml parse errors to operators at boot. Without this, corrupt
+  // config silently falls back to defaults and is only visible via /engineering-doctor.
+  for (const pe of teamsCfg.parseErrors) {
+    observer.emit({
+      runId: "boot",
+      category: "safety",
+      type: "domain_warn" as any,
+      payload: { reason: "teams-config-parse-error", path: pe.path, error: pe.error },
+      summary: `teams config parse error: ${pe.path}`,
+    });
+    console.warn(`[pi-engineering] teams config parse error at ${pe.path}: ${pe.error}`);
+  }
 
   const bus = new MessageBus();
 

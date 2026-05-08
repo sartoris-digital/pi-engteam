@@ -141,6 +141,14 @@ export function parseMinimalYaml(text: string): RawObject {
       frame.lastKey = key;
       continue;
     }
+    // Unclosed inline bracket — refuse rather than silently treating as a string.
+    if (rest.startsWith("[") || rest.endsWith("]")) {
+      throw new Error(`unclosed inline array at key '${key}': ${rest}`);
+    }
+    // Unclosed quote — same.
+    if ((rest.startsWith('"') && !rest.endsWith('"')) || (rest.startsWith("'") && !rest.endsWith("'"))) {
+      throw new Error(`unclosed quoted string at key '${key}': ${rest}`);
+    }
 
     obj[key] = unquote(rest);
     frame.lastKey = key;
