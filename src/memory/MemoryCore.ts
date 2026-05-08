@@ -7,6 +7,15 @@ import { loadRunState } from "../adw/RunState.js";
 import type { CompletedRun, MemoryConfig, VerdictPayload } from "../types.js";
 import { writeSnapshot } from "./snapshot.js";
 import { ensureScriptsInstalled, spawnFlush } from "./spawnFlush.js";
+import {
+  DEFAULT_EXPERTISE_CONFIG,
+  appendExpertise,
+  resolveDirs,
+  trackAndMaybePromote,
+  verdictToWisdom,
+  type ExpertiseConfig,
+  type WisdomEntry,
+} from "./ExpertiseStore.js";
 
 const SECOND_BRAIN_DIR = join(homedir(), ".pi", "engineering-team", "second-brain");
 const LOGS_DIR = join(SECOND_BRAIN_DIR, "logs");
@@ -198,6 +207,8 @@ export class MemoryCore {
   private modelRegistry?: ModelRegistry;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private flushInFlight?: Promise<void>;
+  // Phase 5 §8.6: per-agent wisdom buffer flushed at session end.
+  private readonly expertiseBuffer = new Map<string, WisdomEntry[]>();
 
   constructor(
     private readonly config: MemoryConfig,
@@ -256,13 +267,32 @@ export class MemoryCore {
   }
 
   /** Called from index.ts VerdictEmit callback for every agent verdict. */
-  onVerdict(runId: string, verdict: VerdictPayload): void {
+  onVerdict(runId: string, verdict: VerdictPayload, agentName?: string): void {
     if (verdict.verdict !== "PASS" && verdict.verdict !== "FAIL") return;
     const completedVerdict = verdict as VerdictPayload & { verdict: "PASS" | "FAIL" };
     // HIGH-2: attach rejection handler — captureRun is fire-and-forget but must not crash
     void this.captureRun(runId, completedVerdict).catch((err) => {
       console.error("[pi-memory] captureRun failed:", err instanceof Error ? err.message : String(err));
     });
+    // Phase 5 §8.6: buffer wisdom by agent for flushExpertise() at session end.
+    if (agentName && agentName.length > 0) {
+      const wisdom = verdictToWisdom({
+        learnings: verdict.learnings,
+        decisions: verdict.decisions,
+        issues_found: verdict.issues_found,
+        gotchas: verdict.gotchas,
+      });
+      if (wisdom.length > 0) {
+        this.bufferWisdomForAgent(agentName, wisdom);
+      }
+    }
+  }
+
+  private bufferWisdomForAgent(agentName: string, entries: WisdomEntry[]): void {
+    if (!this.expertiseBuffer.has(agentName)) {
+      this.expertiseBuffer.set(agentName, []);
+    }
+    this.expertiseBuffer.get(agentName)!.push(...entries);
   }
 
   /** HIGH-3: called from index.ts when engine.abortRun fires — captures aborted runs. */
@@ -406,6 +436,41 @@ export class MemoryCore {
       this.lastFlushPath,   // HIGH-6: pass explicit sentinel path
     );
     this.deps.spawnFlush(snapshotPath);
+    // Phase 5 §8.6: distribute buffered wisdom to per-agent expertise files.
+    await this.flushExpertise();
+  }
+
+  /**
+   * Phase 5 §8.6: walk the per-agent buffer, append to project-local
+   * expertise files, dedupe against existing content, enforce line cap,
+   * and promote entries seen across N≥threshold projects to user-global.
+   * Best-effort — failures log but don't crash the flush pipeline.
+   */
+  async flushExpertise(): Promise<void> {
+    const cfg: ExpertiseConfig = {
+      ...DEFAULT_EXPERTISE_CONFIG,
+      ...(this.config.expertise ?? {}),
+    };
+    if (!cfg.enabled) {
+      this.expertiseBuffer.clear();
+      return;
+    }
+    const projectCwd = process.cwd();
+    const dirs = resolveDirs(cfg, projectCwd);
+    for (const [agentName, wisdom] of this.expertiseBuffer.entries()) {
+      try {
+        const added = await appendExpertise(agentName, dirs, wisdom, cfg);
+        if (added.length > 0) {
+          await trackAndMaybePromote(agentName, cfg, projectCwd, added);
+        }
+      } catch (err) {
+        console.error(
+          `[pi-memory] flushExpertise failed for ${agentName}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    this.expertiseBuffer.clear();
   }
 
   private async readLastFlushTimestamp(): Promise<string> {

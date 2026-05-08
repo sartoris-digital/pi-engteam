@@ -44,6 +44,12 @@ import { registerRunPlanModeCommand } from "./commands/run-plan-mode.js";
 import { registerRunStatusCommand } from "./commands/run-status.js";
 import { loadMemoryConfig } from "./memory/config.js";
 import { MemoryCore } from "./memory/MemoryCore.js";
+import {
+  DEFAULT_EXPERTISE_CONFIG,
+  readExpertise,
+  readReadonly,
+  resolveDirs,
+} from "./memory/ExpertiseStore.js";
 import type { AgentDefinition } from "./types.js";
 import { Vault } from "./secrets/Vault.js";
 import { MasterKeyManager } from "./secrets/MasterKey.js";
@@ -562,6 +568,11 @@ export default async function (pi: ExtensionAPI) {
     });
   });
 
+  // Phase 5 §8.7: render the agent-bound expertise + read-only knowledge
+  // section that gets appended to the agent's system prompt at deliver time.
+  const expertiseCfg = { ...DEFAULT_EXPERTISE_CONFIG, ...(memoryConfig.expertise ?? {}) };
+  const expertiseDirs = resolveDirs(expertiseCfg, process.cwd());
+
   const team = new TeamRuntime({
     cwd: process.cwd(),
     bus,
@@ -569,6 +580,14 @@ export default async function (pi: ExtensionAPI) {
     runsDir: RUNS_DIR,
     agentDefs: AGENT_DEFS,
     rateLimit: rateLimitGuard,
+    expertiseFor: async (agentName: string) => {
+      if (!expertiseCfg.enabled) return "";
+      const [exp, ro] = await Promise.all([
+        readExpertise(agentName, expertiseDirs),
+        readReadonly(agentName, expertiseDirs),
+      ]);
+      return [exp, ro].filter((s) => s.length > 0).join("\n");
+    },
     onSubprocessEvent: (runId, agentName, line) => {
       // Phase 4.5 round-4 H2: a worker subprocess writes its own audit
       // events into events-subprocess-<token>.jsonl. The host forwards
@@ -598,7 +617,7 @@ export default async function (pi: ExtensionAPI) {
     // TeamRuntime.deliver() calls this after reading the subprocess verdict file,
     // giving the host access to learnings/decisions/gotchas before they are stripped.
     onVerdictReceived: (runId, agentName, verdict, hostStep) => {
-      memoryCore.onVerdict(runId, verdict);
+      memoryCore.onVerdict(runId, verdict, agentName);
       // Round-3 H2: thread the host-controlled step into evt.step so the
       // ConversationProjection's verdict path derives kind from a trusted
       // source. The summary still mentions verdict.step for human-readable

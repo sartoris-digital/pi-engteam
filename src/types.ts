@@ -150,6 +150,14 @@ export type MemoryConfig = {
   obsidianDailyNotesSubdir: string;
   maxConversationTurns: number;
   flushModel: string;
+  /** Phase 5 §8.6: per-agent compounding expertise file curation. */
+  expertise?: {
+    enabled: boolean;
+    maxLinesPerFile: number;
+    promoteThresholdProjects: number;
+    globalDir: string;
+    projectDirSubpath: string;
+  };
 };
 
 export type CompletedRun = {

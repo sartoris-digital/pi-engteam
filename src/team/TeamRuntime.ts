@@ -31,6 +31,14 @@ type TeamRuntimeConfig = {
    * value is what the projection trusts for kind derivation.
    */
   onVerdictReceived?: (runId: string, agentName: string, verdict: VerdictPayload, hostStep: string | undefined) => void;
+  /**
+   * Phase 5 §8.6: optional resolver returning a rendered "## Expertise"
+   * + "## Read-only Knowledge" suffix to append to the agent system
+   * prompt at deliver time. Returns an empty string when there's nothing
+   * to add. The runtime never calls this with an unsafe agent name —
+   * only registered AGENT_DEFS pass through.
+   */
+  expertiseFor?: (agentName: string) => Promise<string>;
   agentDefs?: AgentDefinition[];
   /** L2: per-subprocess kill timeout in ms (default 10 minutes) */
   agentTimeoutMs?: number;
@@ -185,7 +193,25 @@ export class TeamRuntime {
         `Use SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\n` +
         `Always end your turn with VerdictEmit when you have completed your assigned step.`;
 
-      await writeFile(systemPromptFile, def.systemPrompt + teamSuffix);
+      // Phase 5 §8.7: inject curated expertise + read-only knowledge into the
+      // boot-time system prompt. Best-effort: a missing or failing resolver
+      // never blocks dispatch.
+      let expertiseSuffix = "";
+      try {
+        if (this.config.expertiseFor) {
+          const rendered = await this.config.expertiseFor(to);
+          if (rendered && rendered.length > 0) {
+            expertiseSuffix = "\n\n---\n" + rendered;
+          }
+        }
+      } catch (err) {
+        console.error(
+          `[pi-team] expertiseFor failed for ${to}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
+      await writeFile(systemPromptFile, def.systemPrompt + teamSuffix + expertiseSuffix);
 
       const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
       const { command, args } = getPiInvocation(piArgs);
