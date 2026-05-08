@@ -129,6 +129,19 @@ export function isProtectedPath(filePath: string): { blocked: boolean; reason?: 
         reason: "Expertise files are curated by Memory Core only (single-writer policy).",
       };
     }
+
+    // Phase 5.5 round-2 C2: tasks.json under a run directory must only
+    // be modified via TaskUpdate (which validates taskId shape). A
+    // direct Bash/Write/Edit to tasks.json would let a worker plant
+    // unsafe records that orchestrator reminders later read back.
+    // Match `tasks.json` at the leaf under any path containing the run
+    // directory marker.
+    if (/\/tasks\.json$/i.test(cand) && /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(cand)) {
+      return {
+        blocked: true,
+        reason: "Run tasks.json is managed by the TaskUpdate tool only.",
+      };
+    }
   }
 
   return { blocked: false };

@@ -42,7 +42,32 @@ export async function loadTasks(runsDir: string, runId: string): Promise<Task[]>
   ensureSafeRunId(runId);
   const path = join(runsDir, runId, "tasks.json");
   try {
-    return JSON.parse(await readFile(path, "utf8")) as Task[];
+    const raw = JSON.parse(await readFile(path, "utf8"));
+    if (!Array.isArray(raw)) return [];
+    // Round-2 C2 defense-in-depth: filter records that don't conform.
+    // A worker that bypassed TaskUpdate (e.g., direct file write before
+    // Layer A blocked it, or a stale file from before the validator
+    // shipped) could otherwise feed garbage downstream.
+    const out: Task[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const t = item as Record<string, unknown>;
+      if (typeof t.taskId !== "string" || !TASK_ID_RE.test(t.taskId)) continue;
+      const status = t.status;
+      if (status !== "pending" && status !== "in_progress" && status !== "completed" && status !== "blocked") continue;
+      const team = t.team;
+      const validTeam = !team || team === "engineering" || team === "validation" || team === "investigation" || team === "planning" || team === "cross-functional";
+      if (!validTeam) continue;
+      out.push({
+        taskId: t.taskId,
+        status: t.status as Task["status"],
+        notes: typeof t.notes === "string" ? t.notes : undefined,
+        owner: typeof t.owner === "string" ? t.owner : undefined,
+        team: team as Task["team"],
+        updatedAt: typeof t.updatedAt === "string" ? t.updatedAt : new Date().toISOString(),
+      });
+    }
+    return out;
   } catch {
     return [];
   }

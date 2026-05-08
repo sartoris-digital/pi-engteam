@@ -2,6 +2,20 @@ import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { join } from "path";
 import type { RunState, Budget, StepRecord } from "../types.js";
 
+// Phase 5.5 round-2 C1: centralized safe-runId guard. The same shape
+// already used by /learn, /run-cancel, /run-rollback, and TaskList.
+// Exported so other entry points (commands, /run-resume, etc.) can
+// validate before path-joining or before passing runId on.
+export const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+export function isSafeRunId(runId: string): boolean {
+  return typeof runId === "string" && RUN_ID_RE.test(runId);
+}
+function ensureSafeRunId(runId: string): void {
+  if (!isSafeRunId(runId)) {
+    throw new Error(`Refusing run-state access for unsafe runId: ${JSON.stringify(runId)}`);
+  }
+}
+
 const DEFAULT_BUDGET: Budget = {
   maxIterations: 8,
   maxCostUsd: 20,
@@ -39,6 +53,7 @@ export async function createRunState(params: {
 }
 
 export async function saveRunState(runsDir: string, state: RunState): Promise<void> {
+  ensureSafeRunId(state.runId);
   const runDir = join(runsDir, state.runId);
   await mkdir(runDir, { recursive: true });
   const stateFile = join(runDir, "state.json");
@@ -83,6 +98,11 @@ export function withRunStateLock<T>(
 }
 
 export async function loadRunState(runsDir: string, runId: string): Promise<RunState | null> {
+  // Round-2 C1: refuse traversal-shaped runIds. Returning null (vs throwing)
+  // matches the existing "missing run" semantic so callers like
+  // ADWEngine.resumeRun cleanly surface "Run X not found" without leaking
+  // a separate error class.
+  if (!isSafeRunId(runId)) return null;
   try {
     const stateFile = join(runsDir, runId, "state.json");
     const raw = await readFile(stateFile, "utf8");
