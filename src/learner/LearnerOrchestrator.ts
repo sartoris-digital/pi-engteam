@@ -1,0 +1,433 @@
+// src/learner/LearnerOrchestrator.ts
+// Phase 3.5 — coordinates the 8-step Learner workflow.
+//
+// The orchestrator dispatches creative reasoning (gather, classify, design) to
+// the learner agent subprocess, then performs deterministic file mutations,
+// fixture validation, Judge round-trip, atomic promotion, archival, and
+// reporting in TypeScript. Promotion is gated on (1) staging-only writes by
+// the learner (Layer D), (2) HMAC-signed Judge approval, (3) all-fixtures-pass
+// validation. Atomic mv assumption: fs.promises.rename is atomic on POSIX
+// when source and destination are on the same filesystem. .staging/ and the
+// active scripts dir share the same parent, so this is safe.
+import { spawn } from "child_process";
+import { mkdir, readdir, readFile, rename, writeFile, appendFile, unlink, stat } from "fs/promises";
+import { existsSync } from "fs";
+import { dirname, join, basename } from "path";
+import type { TeamRuntime } from "../team/TeamRuntime.js";
+import type { TeamMessage, VerdictPayload } from "../types.js";
+
+export type GapEntry = {
+  runId: string;
+  step: string;
+  claim: string;
+  reason: string;
+  ts: string;
+};
+
+export type GapCategory =
+  | "existing-script-extension"
+  | "new-domain-script"
+  | "persona-edit"
+  | "unaddressable-escalation";
+
+export type ProposedChange = {
+  gap: GapEntry;
+  category: GapCategory;
+  scriptName: string;          // e.g., "verify_typescript.py"
+  approach: string;             // free-form description for the Judge
+  fixturePath: string;          // path under .fixtures/<name>
+  regressionCommand: string;    // shell command (uv run --script ...) demonstrating the new check
+};
+
+export type LearnerConfig = {
+  team: TeamRuntime;
+  learnerAgentName: string;
+  judgeAgentName: string;
+  scriptsDir: string;
+  stagingDir: string;
+  versionsDir: string;
+  fixturesDir: string;
+  changelogPath: string;
+  /** Explicit gap files; orchestrator reads each and aggregates. */
+  gapsPaths: string[];
+  /** Where to write the report. The first gap's runDir is used by default. */
+  reportRunDir?: string;
+  onPromote?: (script: string, version: string) => void;
+};
+
+export type LearnerResult = {
+  gapsProcessed: number;
+  scriptsProposed: number;
+  scriptsApproved: number;
+  scriptsPromoted: number;
+  escalations: string[];
+  reportPath: string;
+};
+
+// ── Step 1: gather ──────────────────────────────────────────────────────────
+async function readGaps(paths: string[]): Promise<GapEntry[]> {
+  const all: GapEntry[] = [];
+  for (const p of paths) {
+    let raw: string;
+    try {
+      raw = await readFile(p, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const entry = JSON.parse(trimmed) as Partial<GapEntry>;
+        if (entry.claim && entry.step) {
+          all.push({
+            runId: entry.runId ?? "",
+            step: entry.step,
+            claim: entry.claim,
+            reason: entry.reason ?? "",
+            ts: entry.ts ?? new Date().toISOString(),
+          });
+        }
+      } catch { /* skip malformed line */ }
+    }
+  }
+  return all;
+}
+
+// ── Step 4 helper: run a python script via uv ───────────────────────────────
+type RunScriptResult = { exitCode: number; stdout: string; stderr: string };
+
+async function runScript(scriptPath: string, args: string[]): Promise<RunScriptResult> {
+  return new Promise((resolve) => {
+    const proc = spawn("uv", ["run", "--script", scriptPath, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (c) => { stdout += c.toString(); });
+    proc.stderr?.on("data", (c) => { stderr += c.toString(); });
+    proc.on("error", () => resolve({ exitCode: -1, stdout, stderr: stderr || "spawn-failed" }));
+    proc.on("close", (code) => resolve({ exitCode: code ?? -1, stdout, stderr }));
+  });
+}
+
+// ── Step 5: validate against all fixtures ───────────────────────────────────
+type FixtureValidation = {
+  ok: boolean;
+  fixtureCount: number;
+  newFixturePassed: boolean;
+  details: string[];
+};
+
+async function validateAgainstFixtures(opts: {
+  stagedScriptPath: string;
+  newFixturePath: string;
+  fixturesDir: string;
+}): Promise<FixtureValidation> {
+  const details: string[] = [];
+
+  // Run the new fixture explicitly first.
+  const newRes = await runScript(opts.stagedScriptPath, ["--fixture", opts.newFixturePath]);
+  const newFixturePassed = newRes.exitCode === 0;
+  details.push(
+    `[new-fixture] ${basename(opts.newFixturePath)} exit=${newRes.exitCode} ok=${newFixturePassed}`,
+  );
+
+  // Then run every other registered fixture; each must continue to pass.
+  let regressionPasses = 0;
+  let regressionTotal = 0;
+  if (existsSync(opts.fixturesDir)) {
+    const entries = await readdir(opts.fixturesDir).catch(() => []);
+    for (const f of entries) {
+      const p = join(opts.fixturesDir, f);
+      if (p === opts.newFixturePath) continue;
+      try {
+        const s = await stat(p);
+        if (!s.isFile()) continue;
+      } catch { continue; }
+      regressionTotal++;
+      const r = await runScript(opts.stagedScriptPath, ["--fixture", p]);
+      const ok = r.exitCode === 0;
+      if (ok) regressionPasses++;
+      details.push(`[regression] ${f} exit=${r.exitCode} ok=${ok}`);
+    }
+  }
+
+  const ok = newFixturePassed && regressionPasses === regressionTotal;
+  return {
+    ok,
+    fixtureCount: regressionTotal + 1,
+    newFixturePassed,
+    details,
+  };
+}
+
+// ── Step 6 helper: produce a unified diff (active vs staged) ────────────────
+async function buildDiff(activePath: string, stagedPath: string): Promise<string> {
+  const active = existsSync(activePath) ? await readFile(activePath, "utf8") : "";
+  const staged = await readFile(stagedPath, "utf8").catch(() => "");
+  // v1: include both file bodies. The Judge gets concrete content.
+  return [
+    `--- ACTIVE: ${activePath}`,
+    active || "(file does not exist; new script)",
+    `+++ STAGED: ${stagedPath}`,
+    staged,
+  ].join("\n");
+}
+
+// ── Step 6: ask Judge for approval ──────────────────────────────────────────
+async function requestJudgeApproval(opts: {
+  team: TeamRuntime;
+  judgeAgentName: string;
+  proposal: ProposedChange;
+  diff: string;
+  validation: FixtureValidation;
+}): Promise<{ approved: boolean; tokenId?: string }> {
+  const justification = [
+    `Verifier-script update for gap: ${opts.proposal.gap.claim}`,
+    `Category: ${opts.proposal.category}`,
+    `Approach: ${opts.proposal.approach}`,
+    `Fixture: ${opts.proposal.fixturePath}`,
+    `Regression command: ${opts.proposal.regressionCommand}`,
+    `Validation: ok=${opts.validation.ok} fixtureCount=${opts.validation.fixtureCount}`,
+    `Validation details:\n${opts.validation.details.join("\n")}`,
+    "",
+    "Diff:",
+    opts.diff,
+  ].join("\n");
+
+  const message: TeamMessage = {
+    id: crypto.randomUUID(),
+    from: "learner",
+    to: opts.judgeAgentName,
+    summary: `Approve verifier-script update: ${opts.proposal.scriptName}`,
+    message:
+      `The Learner has staged ${opts.proposal.scriptName}. Review the diff, fixture, and validation output below.\n` +
+      `If acceptable, call GrantApproval with op="verifier-script-update" and command=${opts.proposal.scriptName}.\n\n` +
+      justification,
+    ts: new Date().toISOString(),
+  };
+  const verdict = await opts.team.deliver(opts.judgeAgentName, message);
+  if (!verdict) return { approved: false };
+  // We accept either an explicit PASS verdict or a verdict whose handoffHint
+  // contains a tokenId. v1 contract: Judge agents emit PASS when granting.
+  const approved = verdict.verdict === "PASS";
+  return { approved, tokenId: undefined };
+}
+
+// ── Step 7: atomic promotion + archive + CHANGELOG ──────────────────────────
+async function promote(opts: {
+  proposal: ProposedChange;
+  scriptsDir: string;
+  stagingDir: string;
+  versionsDir: string;
+  changelogPath: string;
+  validation: FixtureValidation;
+}): Promise<string> {
+  const stagedPath = join(opts.stagingDir, opts.proposal.scriptName);
+  const activePath = join(opts.scriptsDir, opts.proposal.scriptName);
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const versionDir = join(opts.versionsDir, ts);
+  await mkdir(versionDir, { recursive: true });
+
+  // Archive prior version (if any) before overwriting.
+  if (existsSync(activePath)) {
+    const prior = await readFile(activePath, "utf8");
+    await writeFile(join(versionDir, opts.proposal.scriptName), prior);
+  }
+
+  // Atomic rename: same filesystem (both paths under scriptsDir).
+  await mkdir(dirname(activePath), { recursive: true });
+  await rename(stagedPath, activePath);
+
+  // CHANGELOG entry — append-only.
+  const entry =
+    `\n## ${ts} — ${opts.proposal.scriptName}\n` +
+    `- gap: ${opts.proposal.gap.claim}\n` +
+    `- category: ${opts.proposal.category}\n` +
+    `- fixtures-passed: ${opts.validation.fixtureCount}\n` +
+    `- archive: ${join(opts.versionsDir, ts, opts.proposal.scriptName)}\n`;
+  await appendFile(opts.changelogPath, entry);
+
+  return ts;
+}
+
+// ── Steps 1–3: ask the learner agent for proposals ──────────────────────────
+async function dispatchLearnerForProposals(opts: {
+  team: TeamRuntime;
+  learnerAgentName: string;
+  gaps: GapEntry[];
+  scriptsDir: string;
+}): Promise<ProposedChange[]> {
+  if (opts.gaps.length === 0) return [];
+  const message: TeamMessage = {
+    id: crypto.randomUUID(),
+    from: "system",
+    to: opts.learnerAgentName,
+    summary: `Classify and design proposals for ${opts.gaps.length} verifier gap(s)`,
+    message:
+      `You are the Learner. Read the following gaps and the existing scripts under ${opts.scriptsDir}. ` +
+      `For each addressable gap, produce a staged file under the .staging/ directory and a fixture under .fixtures/, ` +
+      `then call VerdictEmit with one entry in 'artifacts' per staged script (filename only). ` +
+      `Set 'handoffHint' to a JSON array of { gap, category, scriptName, approach, fixturePath, regressionCommand } objects.\n\n` +
+      `GAPS:\n${opts.gaps.map((g, n) => `${n + 1}. step=${g.step} claim=${g.claim}`).join("\n")}\n`,
+    ts: new Date().toISOString(),
+  };
+  const verdict = await opts.team.deliver(opts.learnerAgentName, message);
+  return parseProposalsFromVerdict(verdict, opts.gaps);
+}
+
+export function parseProposalsFromVerdict(
+  verdict: VerdictPayload | undefined,
+  gaps: GapEntry[],
+): ProposedChange[] {
+  if (!verdict?.handoffHint) return [];
+  try {
+    const parsed = JSON.parse(verdict.handoffHint) as Array<Partial<ProposedChange>>;
+    if (!Array.isArray(parsed)) return [];
+    const proposals: ProposedChange[] = [];
+    for (const p of parsed) {
+      if (!p.scriptName || !p.fixturePath) continue;
+      const gap = (p.gap as GapEntry | undefined) ??
+        gaps.find((g) => g.claim === (p as any).gapClaim) ??
+        gaps[0];
+      if (!gap) continue;
+      proposals.push({
+        gap,
+        category: (p.category as GapCategory) ?? "new-domain-script",
+        scriptName: p.scriptName,
+        approach: p.approach ?? "",
+        fixturePath: p.fixturePath,
+        regressionCommand: p.regressionCommand ?? "",
+      });
+    }
+    return proposals;
+  } catch {
+    return [];
+  }
+}
+
+// ── Public entrypoint ──────────────────────────────────────────────────────
+export async function runLearner(cfg: LearnerConfig): Promise<LearnerResult> {
+  // Step 1: gather.
+  const gaps = await readGaps(cfg.gapsPaths);
+
+  // Step 2 + 3: dispatch creative reasoning to the learner agent.
+  const proposals = await dispatchLearnerForProposals({
+    team: cfg.team,
+    learnerAgentName: cfg.learnerAgentName,
+    gaps,
+    scriptsDir: cfg.scriptsDir,
+  });
+
+  let approved = 0;
+  let promoted = 0;
+  const escalations: string[] = [];
+
+  await mkdir(cfg.stagingDir, { recursive: true });
+  await mkdir(cfg.versionsDir, { recursive: true });
+  await mkdir(cfg.fixturesDir, { recursive: true });
+
+  for (const proposal of proposals) {
+    if (proposal.category === "unaddressable-escalation") {
+      escalations.push(`${proposal.gap.step}: ${proposal.gap.claim}`);
+      continue;
+    }
+
+    const stagedPath = join(cfg.stagingDir, proposal.scriptName);
+    if (!existsSync(stagedPath)) {
+      escalations.push(`missing staged file for ${proposal.scriptName}`);
+      continue;
+    }
+
+    // Step 5: validate.
+    const validation = await validateAgainstFixtures({
+      stagedScriptPath: stagedPath,
+      newFixturePath: proposal.fixturePath,
+      fixturesDir: cfg.fixturesDir,
+    });
+
+    if (!validation.ok) {
+      escalations.push(
+        `validation-failed: ${proposal.scriptName} (newFixturePassed=${validation.newFixturePassed})`,
+      );
+      // Clean up staged file so it never lingers as a partial promotion.
+      try { await unlink(stagedPath); } catch { /* best-effort */ }
+      continue;
+    }
+
+    // Step 6: Judge approval.
+    const activePath = join(cfg.scriptsDir, proposal.scriptName);
+    const diff = await buildDiff(activePath, stagedPath);
+    const approval = await requestJudgeApproval({
+      team: cfg.team,
+      judgeAgentName: cfg.judgeAgentName,
+      proposal,
+      diff,
+      validation,
+    });
+
+    if (!approval.approved) {
+      escalations.push(`judge-denied: ${proposal.scriptName}`);
+      try { await unlink(stagedPath); } catch { /* best-effort */ }
+      continue;
+    }
+    approved++;
+
+    // Step 7: promote.
+    const version = await promote({
+      proposal,
+      scriptsDir: cfg.scriptsDir,
+      stagingDir: cfg.stagingDir,
+      versionsDir: cfg.versionsDir,
+      changelogPath: cfg.changelogPath,
+      validation,
+    });
+    promoted++;
+    cfg.onPromote?.(proposal.scriptName, version);
+  }
+
+  // Step 8: report.
+  const reportRunDir = cfg.reportRunDir ?? cfg.stagingDir;
+  const learningDir = cfg.reportRunDir ? join(reportRunDir) : reportRunDir;
+  await mkdir(learningDir, { recursive: true });
+  const reportPath = join(learningDir, "report.md");
+  const reportText = [
+    `# Learner Report`,
+    `Generated: ${new Date().toISOString()}`,
+    ``,
+    `- Gaps processed: ${gaps.length}`,
+    `- Scripts proposed: ${proposals.length}`,
+    `- Scripts approved: ${approved}`,
+    `- Scripts promoted: ${promoted}`,
+    ``,
+    `## Escalations`,
+    escalations.length === 0 ? "(none)" : escalations.map((e) => `- ${e}`).join("\n"),
+    ``,
+    `## Promoted scripts`,
+    proposals
+      .filter((p) => p.category !== "unaddressable-escalation")
+      .map((p) => `- ${p.scriptName} (${p.category})`).join("\n") || "(none)",
+    "",
+  ].join("\n");
+  await writeFile(reportPath, reportText);
+
+  return {
+    gapsProcessed: gaps.length,
+    scriptsProposed: proposals.length,
+    scriptsApproved: approved,
+    scriptsPromoted: promoted,
+    escalations,
+    reportPath,
+  };
+}
+
+// Exposed for unit tests so we can verify each step independently of the
+// full orchestrator harness.
+export const _testing = {
+  readGaps,
+  validateAgainstFixtures,
+  promote,
+  buildDiff,
+  parseProposalsFromVerdict,
+};

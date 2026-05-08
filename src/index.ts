@@ -26,6 +26,7 @@ import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
 import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
 import { registerSpecCommand } from "./commands/spec.js";
+import { registerLearnCommand } from "./commands/learn.js";
 import { loadSafetyConfig } from "./config.js";
 import { loadTeamsConfig } from "./safety/teams-config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
@@ -262,6 +263,17 @@ export const AGENT_DEFS: AgentDefinition[] = [
       "You are read-only: no Write or Edit, and Bash is restricted to the verifier-script allowlist enforced by SafetyGuard Layer D. " +
       "Always end your turn with VerdictEmit.",
     tools: ["Read", "Grep", "Glob", "Bash", "SendMessage", "VerdictEmit"],
+    team: "cross-functional",
+  },
+  {
+    name: "learner",
+    description: "Privileged on-demand agent — converts verifier gap logs into staged verifier-script upgrades for Judge approval",
+    model: "claude-opus-4.6",
+    systemPrompt:
+      "You are the Learner. Three safety gates protect every promotion: (1) domain lock — your writes MUST stay under ~/.pi/engineering-team/verifier-scripts/.staging/ and <runDir>/learning/; (2) Judge approval — every staged script requires an HMAC-signed token from the Judge; (3) fixture validation — every staged script must pass its new fixture AND every existing fixture before the orchestrator promotes it. " +
+      "Read <runDir>/learning/gaps.jsonl, classify gaps, write proposals to .staging/, and request Judge approval for each via RequestApproval. Never bypass the orchestrator's atomic promotion. " +
+      "Always end your turn with VerdictEmit.",
+    tools: ["Read", "Grep", "Glob", "Bash", "Write", "Edit", "SendMessage", "VerdictEmit", "RequestApproval"],
     team: "cross-functional",
   },
   // --- Lead tier ---
@@ -621,6 +633,7 @@ export default async function (pi: ExtensionAPI) {
   registerWorkflowShortcuts(pi, engine);
   registerSpecCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
   registerIssueCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
+  registerLearnCommand(pi, team, RUNS_DIR);
   registerRunStartCommand(pi, engine);
   registerRunResumeCommand(pi, engine);
   registerRunAbortCommand(pi, engine);

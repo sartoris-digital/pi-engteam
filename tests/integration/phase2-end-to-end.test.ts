@@ -65,8 +65,8 @@ describe("AGENT_DEFS — completeness", () => {
     }
   });
 
-  it("has exactly 22 entries (16 workers including performance-analyst + 5 leads + verifier)", () => {
-    expect(AGENT_DEFS).toHaveLength(22);
+  it("has exactly 23 entries (16 workers including performance-analyst + 5 leads + verifier + learner)", () => {
+    expect(AGENT_DEFS).toHaveLength(23);
   });
 
   it("every agent has a non-empty name, description, model, systemPrompt, and team", () => {

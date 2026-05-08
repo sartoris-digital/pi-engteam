@@ -6,6 +6,7 @@ import { isProtectedPath } from "./paths.js";
 import { isPlanModeAllowed } from "./PlanMode.js";
 import { verifyToken } from "./approvals.js";
 import { readFile } from "fs/promises";
+import { homedir } from "os";
 import { join } from "path";
 import { checkDomain } from "./DomainLock.js";
 import type { DomainPolicyMap } from "./default-domains.js";
@@ -252,18 +253,51 @@ export function registerSafetyGuard(
       const { hashArgs } = await import("./approvals.js");
       // C1: use the file path as "command" to match what GrantApproval.ts stores
       const filePath = (toolInput.file_path ?? toolInput.path ?? "") as string;
-      const argsHash = hashArgs({ op: toolName.toLowerCase(), command: filePath });
-      const approved = await findValidApproval(
-        config.runsDir,
-        toolName.toLowerCase(),
-        argsHash,
-      );
-      if (!approved) {
-        return {
-          block: true,
-          reason: `[Layer C] ${toolName} requires Judge approval. Call RequestApproval first.`,
-          layer: "C",
-        };
+
+      // Phase 3.5: writes to active verifier-scripts/ (NOT .staging/) require a
+      // Judge-approved verifier-script-update token. Promotion goes through the
+      // Learner orchestrator's atomic rename — direct Write/Edit by any agent
+      // hits this gate. .staging/ is intentionally exempt (Learner writes there
+      // via Layer D); .fixtures/ and .versions/ are also exempt — fixture and
+      // archive churn is part of the orchestrator's normal flow.
+      const expandedPath = filePath.startsWith("~/")
+        ? join(homedir(), filePath.slice(2))
+        : filePath;
+      const verifierScriptsRoot = join(homedir(), ".pi", "engineering-team", "verifier-scripts");
+      const isActiveVerifierScript =
+        expandedPath.startsWith(verifierScriptsRoot + "/") &&
+        !expandedPath.startsWith(join(verifierScriptsRoot, ".staging") + "/") &&
+        !expandedPath.startsWith(join(verifierScriptsRoot, ".versions") + "/") &&
+        !expandedPath.startsWith(join(verifierScriptsRoot, ".fixtures") + "/");
+
+      if (isActiveVerifierScript) {
+        const argsHash = hashArgs({ op: "verifier-script-update", command: filePath });
+        const approved = await findValidApproval(
+          config.runsDir,
+          "verifier-script-update",
+          argsHash,
+        );
+        if (!approved) {
+          return {
+            block: true,
+            reason: `[Layer C] ${toolName} on active verifier-script requires a verifier-script-update approval token. Stage the change under .staging/ and let the Learner orchestrator promote it.`,
+            layer: "C",
+          };
+        }
+      } else {
+        const argsHash = hashArgs({ op: toolName.toLowerCase(), command: filePath });
+        const approved = await findValidApproval(
+          config.runsDir,
+          toolName.toLowerCase(),
+          argsHash,
+        );
+        if (!approved) {
+          return {
+            block: true,
+            reason: `[Layer C] ${toolName} requires Judge approval. Call RequestApproval first.`,
+            layer: "C",
+          };
+        }
       }
     }
 

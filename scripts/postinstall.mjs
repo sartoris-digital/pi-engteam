@@ -138,12 +138,35 @@ async function installVerifierScripts() {
   console.log(`[pi-engineering] installed ${files.length} verifier script(s) → ${VERIFIER_SCRIPTS_DIR}`);
 }
 
+/** Phase 3.5: ensure Learner staging/versions/fixtures + CHANGELOG exist. */
+async function installLearnerScaffold() {
+  const stagingDir = join(VERIFIER_SCRIPTS_DIR, ".staging");
+  const versionsDir = join(VERIFIER_SCRIPTS_DIR, ".versions");
+  const fixturesDir = join(VERIFIER_SCRIPTS_DIR, ".fixtures");
+  const changelogPath = join(VERIFIER_SCRIPTS_DIR, "CHANGELOG.md");
+
+  await mkdir(stagingDir, { recursive: true });
+  await mkdir(versionsDir, { recursive: true });
+  await mkdir(fixturesDir, { recursive: true });
+
+  if (!existsSync(changelogPath)) {
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      changelogPath,
+      "# Verifier-script CHANGELOG\n\nEvery promotion from .staging/ to active is logged here by the Learner orchestrator.\n",
+    );
+    console.log(`[pi-engineering] created CHANGELOG → ${changelogPath}`);
+  }
+  console.log(`[pi-engineering] learner scaffold ready → ${VERIFIER_SCRIPTS_DIR}/.staging,.versions,.fixtures`);
+}
+
 async function main() {
   console.log("[pi-engineering] postinstall: building server and installing files...");
   await buildServer(); // best-effort; skipped if tsup (devDep) is unavailable
   await installServer(); // always attempt — uses pre-built dist/server.cjs if build was skipped
   await installAgents();
   await installVerifierScripts();
+  await installLearnerScaffold();
   console.log("[pi-engineering] postinstall done.");
 }
 
