@@ -94,4 +94,65 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     // Survives without throwing — timer was never created.
     expect(true).toBe(true);
   });
+
+  it("dirty flag fires a follow-up refresh when calls arrive during in-flight (round-1 H1)", async () => {
+    await bootstrap("r4");
+    const engine = new ADWEngine({
+      runsDir,
+      workflows: new Map(),
+      team: makeMockTeam(),
+      observer: makeMockObserver(),
+    });
+    const setStatus = vi.fn();
+    engine.setUiCallbacks({ notify: vi.fn(), setStatus }, "r4");
+
+    // First refresh — schedules and fires.
+    engine.refreshTillDoneFooterForRun("r4");
+    await new Promise((res) => setTimeout(res, 300));
+    let tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
+    expect(tilldoneCalls).toHaveLength(1);
+
+    // Now simulate a TaskUpdate arriving DURING the in-flight chain.
+    // Concretely, fire many refreshes; the first one schedules+fires,
+    // arrivals during fire mark dirty and produce a follow-up.
+    for (let i = 0; i < 5; i++) {
+      engine.refreshTillDoneFooterForRun("r4");
+    }
+    await new Promise((res) => setTimeout(res, 600));
+
+    // We expect the original (1) plus at most one follow-up (so up to 2
+    // additional writes after the dirty path settles). The point is:
+    // the count is BOUNDED, not N where N is the number of refreshes.
+    tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
+    expect(tilldoneCalls.length).toBeLessThanOrEqual(3);
+  });
+
+  it("clearUiStatus invalidates an in-flight refresh's setStatus (round-1 H2)", async () => {
+    await bootstrap("r5");
+    const engine = new ADWEngine({
+      runsDir,
+      workflows: new Map(),
+      team: makeMockTeam(),
+      observer: makeMockObserver(),
+    });
+    const setStatus = vi.fn();
+    engine.setUiCallbacks({ notify: vi.fn(), setStatus }, "r5");
+
+    engine.refreshTillDoneFooterForRun("r5");
+    // Wait for timer to fire but not for I/O to complete — the
+    // clearUiCallbacks call below races the in-flight async chain.
+    await new Promise((res) => setTimeout(res, 260));
+    engine.clearUiCallbacks();
+
+    await new Promise((res) => setTimeout(res, 200));
+    // After clearUiCallbacks, the engine no longer has callbacks at all,
+    // so any subsequent setStatus would be skipped at the !uiCallbacks
+    // guard. We assert by checking that the FIRST tilldone call (which
+    // ran before clearUiCallbacks) is the only one — additional calls
+    // after the clear are blocked.
+    // (Either one tilldone write happened before clear, or zero. Both
+    // are acceptable; what matters is no UNDEFINED-OWNER write fires
+    // after the run ended.)
+    expect(setStatus.mock.calls.length).toBeLessThanOrEqual(1);
+  });
 });

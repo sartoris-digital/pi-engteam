@@ -18,6 +18,20 @@ import { join as joinPath } from "path";
 import { loadTasks } from "../team/tools/TaskList.js";
 import { formatTillDoneFooter } from "./TillDoneFooter.js";
 
+// Phase 5.7 round-1 H1/H2/H3: per-runId footer refresh tracking. Each
+// pending entry tracks: the debounce timer (cleared/replaced when a new
+// refresh arrives in the debounce window), an in-flight flag set when
+// the timer fires and reads/writes start, a dirty flag set by refreshes
+// arriving WHILE in-flight (triggers a follow-up refresh on settle),
+// and a gen counter bumped by clearUiStatus or new schedules to
+// invalidate any in-flight refresh that hasn't reached setStatus yet.
+type FooterRefreshEntry = {
+  timer?: ReturnType<typeof setTimeout>;
+  inFlight: boolean;
+  dirty: boolean;
+  gen: number;
+};
+
 type ADWConfig = {
   runsDir: string;
   workflows: Map<string, Workflow>;
@@ -93,13 +107,21 @@ export class ADWEngine {
   // setStatus is skipped.
   private footerRefreshSeq = 0;
 
-  // Phase 5.7: per-runId debounce timer for refreshTillDoneFooterForRun.
-  // A bursty worker emitting many TaskUpdates inside one step would
-  // otherwise trigger N concurrent loadRunState + loadTasks reads. The
-  // debounce coalesces calls within FOOTER_DEBOUNCE_MS into a single
-  // read+write. Step-boundary refreshes (refreshTillDoneFooter) are
-  // sparse and bypass the debounce.
-  private pendingFooterTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Phase 5.7: per-runId debounce + in-flight tracking for
+  // refreshTillDoneFooterForRun. A bursty worker emitting many
+  // TaskUpdates inside one step would otherwise trigger N concurrent
+  // loadRunState + loadTasks reads.
+  //
+  // Round-1 H1/H2/H3 (Phase 5.7): the entry persists across the entire
+  // load+save async chain so:
+  //   - A new refresh during the in-flight window doesn't kick off a
+  //     parallel read; instead it sets the `dirty` flag, and a follow-up
+  //     refresh fires once the in-flight one settles.
+  //   - clearUiStatus can bump the entry's `gen` to invalidate the
+  //     in-flight refresh before it reaches setStatus.
+  //   - Owner rebinds during loadTasks are detected by re-checking
+  //     uiCallbacksOwner against state.runId AFTER each await.
+  private pendingFooterTimers = new Map<string, FooterRefreshEntry>();
   private static readonly FOOTER_DEBOUNCE_MS = 250;
 
   private clearUiStatus(runId?: string): void {
@@ -126,17 +148,34 @@ export class ADWEngine {
     if (runId) {
       this.cancelPendingFooterTimer(runId);
     } else {
-      // No specific runId: legacy callers; cancel ALL pending timers.
-      for (const t of this.pendingFooterTimers.values()) clearTimeout(t);
-      this.pendingFooterTimers.clear();
+      // No specific runId: legacy callers; cancel ALL pending timers
+      // and invalidate any in-flight refreshes.
+      for (const e of this.pendingFooterTimers.values()) {
+        if (e.timer) clearTimeout(e.timer);
+        e.timer = undefined;
+        e.dirty = false;
+        e.gen++;
+      }
+      // Drop entries that aren't in-flight; in-flight ones self-clean
+      // when their async chain reaches the finally block.
+      for (const [k, e] of [...this.pendingFooterTimers.entries()]) {
+        if (!e.inFlight) this.pendingFooterTimers.delete(k);
+      }
     }
     this.config.team.setAgentLineCallback?.(undefined);
   }
 
   private cancelPendingFooterTimer(runId: string): void {
-    const t = this.pendingFooterTimers.get(runId);
-    if (t) {
-      clearTimeout(t);
+    const entry = this.pendingFooterTimers.get(runId);
+    if (!entry) return;
+    if (entry.timer) clearTimeout(entry.timer);
+    // Bump gen so any in-flight async chain captures a stale value at
+    // its post-await re-check and bails before setStatus.
+    entry.gen++;
+    entry.dirty = false;
+    entry.timer = undefined;
+    if (!entry.inFlight) {
+      // No async chain to invalidate; safe to drop the entry now.
       this.pendingFooterTimers.delete(runId);
     }
   }
@@ -146,35 +185,75 @@ export class ADWEngine {
    * for triggering a footer refresh outside of step boundaries (e.g.,
    * from src/index.ts onSubprocessEvent on each TaskUpdate audit line).
    *
-   * A bursty worker emitting N TaskUpdates within one step previously
-   * fired N concurrent loadRunState + loadTasks reads. Now: each call
-   * (re)schedules a single timer per runId; the actual read+write
-   * happens FOOTER_DEBOUNCE_MS after the LAST call, coalescing the
-   * burst into one I/O round-trip. Owner gate is checked at fire time
-   * so a stale run's audit still can't overwrite an active run's footer.
+   * Round-1 H1/H2/H3 (Phase 5.7):
+   * - If a refresh is already in flight for this runId, set the dirty
+   *   flag and return. The in-flight handler will fire a follow-up
+   *   refresh on settle to capture the latest tasks.json state.
+   * - Each new schedule bumps `gen` to invalidate any prior in-flight
+   *   refresh that hasn't reached setStatus yet.
+   * - The handler re-checks owner AND callback presence after each
+   *   await, before writing setStatus.
    *
    * Best-effort throughout: missing state/tasks/callbacks silently no-op.
    */
   refreshTillDoneFooterForRun(runId: string): void {
     if (!this.uiCallbacks) return;
     if (this.uiCallbacksOwner && this.uiCallbacksOwner !== runId) return;
-    const existing = this.pendingFooterTimers.get(runId);
-    if (existing) clearTimeout(existing);
+
+    let entry = this.pendingFooterTimers.get(runId);
+    if (!entry) {
+      entry = { inFlight: false, dirty: false, gen: 0 };
+      this.pendingFooterTimers.set(runId, entry);
+    }
+    // If something is already in flight, just mark dirty — the handler
+    // will fire one final refresh after it settles. Bump gen so any
+    // older in-flight chain that might race the follow-up is invalidated
+    // at the setStatus point.
+    if (entry.inFlight) {
+      entry.dirty = true;
+      entry.gen++;
+      return;
+    }
+    // Clear any pending pre-fire timer and reschedule.
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.gen++;
+    const myEntry = entry;
     const timer = setTimeout(() => {
-      this.pendingFooterTimers.delete(runId);
-      // Re-check owner at fire time — ownership may have changed during
-      // the debounce window.
+      void this.runDebouncedFooterRefresh(runId, myEntry);
+    }, ADWEngine.FOOTER_DEBOUNCE_MS);
+    timer.unref?.();
+    entry.timer = timer;
+  }
+
+  private async runDebouncedFooterRefresh(runId: string, entry: FooterRefreshEntry): Promise<void> {
+    entry.timer = undefined;
+    entry.inFlight = true;
+    const myGen = entry.gen;
+    try {
+      // Re-check owner + callbacks at every await point so a clear or
+      // owner rebind during the read chain stops the eventual write.
       if (!this.uiCallbacks) return;
       if (this.uiCallbacksOwner && this.uiCallbacksOwner !== runId) return;
-      void loadRunState(this.config.runsDir, runId)
-        .then((state) => {
-          if (state) return this.refreshTillDoneFooter(state);
-        })
-        .catch(() => { /* best-effort */ });
-    }, ADWEngine.FOOTER_DEBOUNCE_MS);
-    // Don't keep the process alive just to flush a footer.
-    timer.unref?.();
-    this.pendingFooterTimers.set(runId, timer);
+      const state = await loadRunState(this.config.runsDir, runId).catch(() => null);
+      if (!state) return;
+      if (myGen !== entry.gen) return; // invalidated during loadRunState
+      if (!this.uiCallbacks) return;
+      if (this.uiCallbacksOwner && this.uiCallbacksOwner !== runId) return;
+      await this.refreshTillDoneFooter(state);
+      // refreshTillDoneFooter does its own owner+seq check before setStatus.
+    } finally {
+      entry.inFlight = false;
+      // If a refresh arrived during in-flight, fire a follow-up so the
+      // latest tasks.json state is reflected.
+      if (entry.dirty) {
+        entry.dirty = false;
+        // Schedule via the public path so debounce + owner gate apply.
+        this.refreshTillDoneFooterForRun(runId);
+      } else if (!entry.timer && !entry.inFlight) {
+        // No further work pending — drop the map entry to avoid leaks.
+        this.pendingFooterTimers.delete(runId);
+      }
+    }
   }
 
   /**
@@ -197,6 +276,11 @@ export class ADWEngine {
       // clear has bumped the seq while we were awaiting loadTasks, our
       // setStatus would be incorrect.
       if (myToken !== this.footerRefreshSeq) return;
+      // Phase 5.7 round-1 H3: re-check owner AND callbacks AFTER each
+      // await. setUiCallbacks may have rebound to a different run during
+      // the loadTasks read; we must NOT write to the new owner's status.
+      if (!this.uiCallbacks) return;
+      if (this.uiCallbacksOwner && this.uiCallbacksOwner !== state.runId) return;
       const text = formatTillDoneFooter({
         workflow: state.workflow,
         goal: state.goal,
