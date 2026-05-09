@@ -93,6 +93,15 @@ export class ADWEngine {
   // setStatus is skipped.
   private footerRefreshSeq = 0;
 
+  // Phase 5.7: per-runId debounce timer for refreshTillDoneFooterForRun.
+  // A bursty worker emitting many TaskUpdates inside one step would
+  // otherwise trigger N concurrent loadRunState + loadTasks reads. The
+  // debounce coalesces calls within FOOTER_DEBOUNCE_MS into a single
+  // read+write. Step-boundary refreshes (refreshTillDoneFooter) are
+  // sparse and bypass the debounce.
+  private pendingFooterTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private static readonly FOOTER_DEBOUNCE_MS = 250;
+
   private clearUiStatus(runId?: string): void {
     // Round-3 M1: only clear if the current callback owner matches the
     // ending run, OR if no owner is recorded (legacy behavior). When
@@ -103,6 +112,9 @@ export class ADWEngine {
       // refreshTillDoneFooter doesn't write a stale value, but don't
       // touch the new owner's status keys.
       this.footerRefreshSeq++;
+      // Phase 5.7: also cancel any pending debounced refresh for THIS
+      // ending run so it doesn't fire after we've decided to step away.
+      if (runId) this.cancelPendingFooterTimer(runId);
       return;
     }
     this.uiCallbacks?.setStatus("engineering", undefined);
@@ -110,23 +122,59 @@ export class ADWEngine {
     this.uiCallbacks?.setStatus("tilldone", undefined);
     // Bump seq so any in-flight refreshes see a stale token and bail.
     this.footerRefreshSeq++;
+    // Phase 5.7: cancel any pending debounced refresh — the run is over.
+    if (runId) {
+      this.cancelPendingFooterTimer(runId);
+    } else {
+      // No specific runId: legacy callers; cancel ALL pending timers.
+      for (const t of this.pendingFooterTimers.values()) clearTimeout(t);
+      this.pendingFooterTimers.clear();
+    }
     this.config.team.setAgentLineCallback?.(undefined);
   }
 
+  private cancelPendingFooterTimer(runId: string): void {
+    const t = this.pendingFooterTimers.get(runId);
+    if (t) {
+      clearTimeout(t);
+      this.pendingFooterTimers.delete(runId);
+    }
+  }
+
   /**
-   * Phase 5.6 round-2 H2 + round-4 H1: public hook for triggering a
-   * footer refresh outside of step boundaries. Owner-gated — if a
-   * different run currently owns the UI callbacks, this is a no-op so
-   * a stale run's TaskUpdate audit can't overwrite an active run's
-   * footer. Best-effort otherwise (missing state, missing tasks, missing
-   * callbacks all silently no-op).
+   * Phase 5.6 round-2 H2 + round-4 H1 + Phase 5.7: public debounced hook
+   * for triggering a footer refresh outside of step boundaries (e.g.,
+   * from src/index.ts onSubprocessEvent on each TaskUpdate audit line).
+   *
+   * A bursty worker emitting N TaskUpdates within one step previously
+   * fired N concurrent loadRunState + loadTasks reads. Now: each call
+   * (re)schedules a single timer per runId; the actual read+write
+   * happens FOOTER_DEBOUNCE_MS after the LAST call, coalescing the
+   * burst into one I/O round-trip. Owner gate is checked at fire time
+   * so a stale run's audit still can't overwrite an active run's footer.
+   *
+   * Best-effort throughout: missing state/tasks/callbacks silently no-op.
    */
-  async refreshTillDoneFooterForRun(runId: string): Promise<void> {
+  refreshTillDoneFooterForRun(runId: string): void {
     if (!this.uiCallbacks) return;
     if (this.uiCallbacksOwner && this.uiCallbacksOwner !== runId) return;
-    const state = await loadRunState(this.config.runsDir, runId).catch(() => null);
-    if (!state) return;
-    return this.refreshTillDoneFooter(state);
+    const existing = this.pendingFooterTimers.get(runId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.pendingFooterTimers.delete(runId);
+      // Re-check owner at fire time — ownership may have changed during
+      // the debounce window.
+      if (!this.uiCallbacks) return;
+      if (this.uiCallbacksOwner && this.uiCallbacksOwner !== runId) return;
+      void loadRunState(this.config.runsDir, runId)
+        .then((state) => {
+          if (state) return this.refreshTillDoneFooter(state);
+        })
+        .catch(() => { /* best-effort */ });
+    }, ADWEngine.FOOTER_DEBOUNCE_MS);
+    // Don't keep the process alive just to flush a footer.
+    timer.unref?.();
+    this.pendingFooterTimers.set(runId, timer);
   }
 
   /**
