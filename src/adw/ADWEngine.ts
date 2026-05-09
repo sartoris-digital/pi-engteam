@@ -169,9 +169,13 @@ export class ADWEngine {
     const entry = this.pendingFooterTimers.get(runId);
     if (!entry) return;
     if (entry.timer) clearTimeout(entry.timer);
-    // Bump gen so any in-flight async chain captures a stale value at
-    // its post-await re-check and bails before setStatus.
+    // Bump gen AND footerRefreshSeq so any in-flight async chain bails
+    // before setStatus. footerRefreshSeq is what refreshTillDoneFooter
+    // checks after loadTasks; entry.gen is what runDebouncedFooterRefresh
+    // checks before delegating to refreshTillDoneFooter. Both must
+    // advance to fully invalidate (round-3 M1).
     entry.gen++;
+    this.footerRefreshSeq++;
     entry.dirty = false;
     entry.timer = undefined;
     if (!entry.inFlight) {
@@ -209,9 +213,15 @@ export class ADWEngine {
     // will fire one final refresh after it settles. Bump gen so any
     // older in-flight chain that might race the follow-up is invalidated
     // at the setStatus point.
+    //
+    // Round-3 M1: also bump footerRefreshSeq. refreshTillDoneFooter
+    // compares its captured myToken to footerRefreshSeq AFTER loadTasks,
+    // before setStatus. Without this bump, a stale in-flight chain
+    // could complete its write between the gen check and the setStatus.
     if (entry.inFlight) {
       entry.dirty = true;
       entry.gen++;
+      this.footerRefreshSeq++;
       return;
     }
     // Clear any pending pre-fire timer and reschedule.

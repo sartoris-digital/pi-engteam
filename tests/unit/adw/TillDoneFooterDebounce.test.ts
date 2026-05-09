@@ -165,10 +165,10 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     expect(setStatus.mock.calls.length).toBeLessThanOrEqual(1);
   });
 
-  it("end-of-run clearUiStatus(runId) drains pending refreshes (round-2 M3)", async () => {
-    // This drives the cancelPendingFooterTimer path (gen invalidation +
-    // map cleanup) by running a real one-step workflow and asserting
-    // the engine clears the tilldone key at run end.
+  it("end-of-run clearUiStatus(runId) clears tilldone AND invalidates pending refreshes (round-3 M3)", async () => {
+    // Drives the cancelPendingFooterTimer path by running a workflow
+    // whose step takes long enough that the debounce timer fires AND
+    // the in-flight chain can be in progress when the run ends.
     const dir = await mkdtemp(join(tmpdir(), "tilldone-end-"));
     const workflow = {
       name: "wf",
@@ -176,7 +176,12 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
       steps: [{
         name: "only",
         required: true,
-        run: async () => ({ success: true, verdict: "PASS" as const }),
+        run: async () => {
+          // Step duration > debounce window so the timer fires while
+          // the step is running.
+          await new Promise((res) => setTimeout(res, 400));
+          return { success: true, verdict: "PASS" as const };
+        },
       }],
       transitions: [{ from: "only", when: () => true, to: "halt" as const }],
       defaults: {},
@@ -192,22 +197,21 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     const run = await engine.startRun({ workflow: "wf", goal: "g", budget: {} });
     engine.setUiCallbacks({ notify: vi.fn(), setStatus }, run.runId);
 
-    // Schedule a refresh that has a chance of being in-flight when the
-    // run ends. Even with a fast workflow, the debounce timer likely
-    // hasn't fired before executeRun completes.
+    // Schedule a refresh BEFORE executeRun. The 250ms debounce timer
+    // fires during the 400ms step; the in-flight chain reads + writes
+    // a tilldone string. Then the run ends, clearUiStatus(runId) fires
+    // setStatus("tilldone", undefined).
     engine.refreshTillDoneFooterForRun(run.runId);
     await engine.executeRun(run.runId);
-    // Wait long enough for any pending timer to be invalidated.
+    // Allow any post-end async tail to settle.
     await new Promise((res) => setTimeout(res, 350));
 
-    // After run end, clearUiStatus(runId) should have set tilldone to
-    // undefined AND bumped gen so any straggling in-flight refresh
-    // skips its setStatus. Last setStatus call for tilldone must be
-    // undefined OR there was no post-clear tilldone write.
     const tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
-    if (tilldoneCalls.length > 0) {
-      // The very last tilldone write must be the undefined clear.
-      expect(tilldoneCalls.at(-1)![1]).toBeUndefined();
-    }
+    // Round-3 M3: REQUIRE at least one tilldone clear (undefined) so
+    // the test fails if the cancel path silently no-ops.
+    const undefinedClears = tilldoneCalls.filter((c) => c[1] === undefined);
+    expect(undefinedClears.length).toBeGreaterThanOrEqual(1);
+    // The LAST tilldone call must be the clear, not a stale string.
+    expect(tilldoneCalls.at(-1)![1]).toBeUndefined();
   });
 });
