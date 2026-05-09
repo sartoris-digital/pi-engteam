@@ -249,8 +249,14 @@ export class ADWEngine {
         entry.dirty = false;
         // Schedule via the public path so debounce + owner gate apply.
         this.refreshTillDoneFooterForRun(runId);
-      } else if (!entry.timer && !entry.inFlight) {
-        // No further work pending — drop the map entry to avoid leaks.
+      }
+      // Round-2 M1: drop the map entry whenever no further work is
+      // queued — covers BOTH the no-dirty path AND the dirty path that
+      // bailed out of refreshTillDoneFooterForRun (no callbacks, owner
+      // mismatch). Without this, long-lived processes accumulate stale
+      // per-run entries with no scheduled work.
+      const current = this.pendingFooterTimers.get(runId);
+      if (current === entry && !current.timer && !current.inFlight && !current.dirty) {
         this.pendingFooterTimers.delete(runId);
       }
     }

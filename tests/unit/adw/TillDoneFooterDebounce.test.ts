@@ -95,8 +95,11 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     expect(true).toBe(true);
   });
 
-  it("dirty flag fires a follow-up refresh when calls arrive during in-flight (round-1 H1)", async () => {
+  it("dirty flag fires a follow-up refresh that re-reads tasks.json (round-2 M2)", async () => {
     await bootstrap("r4");
+    await saveTasks(runsDir, "r4", [
+      { taskId: "t1", status: "pending", team: "engineering", updatedAt: "1" },
+    ]);
     const engine = new ADWEngine({
       runsDir,
       workflows: new Map(),
@@ -106,25 +109,31 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     const setStatus = vi.fn();
     engine.setUiCallbacks({ notify: vi.fn(), setStatus }, "r4");
 
-    // First refresh — schedules and fires.
+    // Schedule first refresh; while its async chain is awaiting I/O,
+    // mutate tasks.json AND fire another refresh so the in-flight one
+    // sees dirty=true and triggers a follow-up that reads the new state.
     engine.refreshTillDoneFooterForRun("r4");
-    await new Promise((res) => setTimeout(res, 300));
-    let tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
-    expect(tilldoneCalls).toHaveLength(1);
 
-    // Now simulate a TaskUpdate arriving DURING the in-flight chain.
-    // Concretely, fire many refreshes; the first one schedules+fires,
-    // arrivals during fire mark dirty and produce a follow-up.
-    for (let i = 0; i < 5; i++) {
-      engine.refreshTillDoneFooterForRun("r4");
-    }
-    await new Promise((res) => setTimeout(res, 600));
+    // Wait until the timer fires (250ms) — the in-flight chain is now
+    // awaiting loadRunState/loadTasks. Mutate tasks and refresh again
+    // to drive the dirty path.
+    await new Promise((res) => setTimeout(res, 260));
+    await saveTasks(runsDir, "r4", [
+      { taskId: "t1", status: "completed", team: "engineering", updatedAt: "2" },
+    ]);
+    engine.refreshTillDoneFooterForRun("r4");
 
-    // We expect the original (1) plus at most one follow-up (so up to 2
-    // additional writes after the dirty path settles). The point is:
-    // the count is BOUNDED, not N where N is the number of refreshes.
-    tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
-    expect(tilldoneCalls.length).toBeLessThanOrEqual(3);
+    // Wait for the follow-up to fire (another debounce window + I/O).
+    await new Promise((res) => setTimeout(res, 700));
+
+    const tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
+    expect(tilldoneCalls.length).toBeGreaterThanOrEqual(2);
+    // Distinct rendered strings prove a SECOND read actually happened
+    // — the first showed 0/1 complete, the second showed 1/1.
+    const distinct = new Set(tilldoneCalls.map((c) => c[1]));
+    expect(distinct.size).toBeGreaterThanOrEqual(2);
+    const lastWrite = tilldoneCalls.at(-1)![1] as string;
+    expect(lastWrite).toContain("1/1");
   });
 
   it("clearUiStatus invalidates an in-flight refresh's setStatus (round-1 H2)", async () => {
@@ -154,5 +163,51 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     // are acceptable; what matters is no UNDEFINED-OWNER write fires
     // after the run ended.)
     expect(setStatus.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it("end-of-run clearUiStatus(runId) drains pending refreshes (round-2 M3)", async () => {
+    // This drives the cancelPendingFooterTimer path (gen invalidation +
+    // map cleanup) by running a real one-step workflow and asserting
+    // the engine clears the tilldone key at run end.
+    const dir = await mkdtemp(join(tmpdir(), "tilldone-end-"));
+    const workflow = {
+      name: "wf",
+      description: "test",
+      steps: [{
+        name: "only",
+        required: true,
+        run: async () => ({ success: true, verdict: "PASS" as const }),
+      }],
+      transitions: [{ from: "only", when: () => true, to: "halt" as const }],
+      defaults: {},
+    };
+    const engine = new ADWEngine({
+      runsDir: dir,
+      workflows: new Map([["wf", workflow]]),
+      team: makeMockTeam(),
+      observer: makeMockObserver(),
+    });
+    const setStatus = vi.fn();
+
+    const run = await engine.startRun({ workflow: "wf", goal: "g", budget: {} });
+    engine.setUiCallbacks({ notify: vi.fn(), setStatus }, run.runId);
+
+    // Schedule a refresh that has a chance of being in-flight when the
+    // run ends. Even with a fast workflow, the debounce timer likely
+    // hasn't fired before executeRun completes.
+    engine.refreshTillDoneFooterForRun(run.runId);
+    await engine.executeRun(run.runId);
+    // Wait long enough for any pending timer to be invalidated.
+    await new Promise((res) => setTimeout(res, 350));
+
+    // After run end, clearUiStatus(runId) should have set tilldone to
+    // undefined AND bumped gen so any straggling in-flight refresh
+    // skips its setStatus. Last setStatus call for tilldone must be
+    // undefined OR there was no post-clear tilldone write.
+    const tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
+    if (tilldoneCalls.length > 0) {
+      // The very last tilldone write must be the undefined clear.
+      expect(tilldoneCalls.at(-1)![1]).toBeUndefined();
+    }
   });
 });
