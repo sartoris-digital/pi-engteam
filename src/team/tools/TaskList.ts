@@ -3,6 +3,7 @@ import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
+import { withRunStateLock } from "../../adw/RunState.js";
 
 // Phase 5.5 §9.2: TillDone team metadata. The optional `team` field lets
 // the Orchestrator route tasks to the appropriate Lead. Tasks created
@@ -197,6 +198,11 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
           details: {},
         };
       }
+      // Phase 5.6 round-4 C1: serialize the load → mutate → save → audit
+      // sequence per runId so concurrent DAG-fanout TaskUpdates from
+      // sibling steps don't last-writer-wins each other's task state.
+      // Reuses the per-runId mutex established for RunState saves.
+      return withRunStateLock(runsDir, runId, async () => {
       const tasks = await loadTasks(runsDir, runId);
       const existing = tasks.find(t => t.taskId === params.taskId);
       if (existing) {
@@ -246,6 +252,7 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
         content: [{ type: "text" as const, text: `Task ${params.taskId} updated: ${params.status}${params.team ? ` (team=${params.team})` : ""}` }],
         details: {},
       };
+      });
     },
     renderCall(args, theme, context) {
       const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);

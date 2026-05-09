@@ -20,6 +20,16 @@ export function registerRunResumeCommand(pi: ExtensionAPI, engine: ADWEngine): v
         );
         return;
       }
+      // Phase 5.6 round-4 H1: bind UI callbacks for the resumed run so
+      // the TillDone footer surfaces during resumed execution. Without
+      // this, /run-resume runs were invisible to the status bar.
+      engine.setUiCallbacks(
+        {
+          notify: (msg, type) => ctx.ui.notify(msg, type ?? "info"),
+          setStatus: (key, text) => ctx.ui.setStatus(key, text),
+        },
+        runId,
+      );
       void engine.resumeRun(runId);
       ctx.ui.notify(`Run ${runId} resuming...`, "info");
     },

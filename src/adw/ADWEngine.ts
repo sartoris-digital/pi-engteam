@@ -114,14 +114,16 @@ export class ADWEngine {
   }
 
   /**
-   * Phase 5.6 round-2 H2: public hook for triggering a footer refresh
-   * outside of step boundaries. Loads the run state itself so external
-   * callers (e.g., src/index.ts onSubprocessEvent for TaskUpdate) don't
-   * need to know how to assemble a RunState. Best-effort — silently
-   * no-ops on missing state, missing tasks, or missing callbacks.
+   * Phase 5.6 round-2 H2 + round-4 H1: public hook for triggering a
+   * footer refresh outside of step boundaries. Owner-gated — if a
+   * different run currently owns the UI callbacks, this is a no-op so
+   * a stale run's TaskUpdate audit can't overwrite an active run's
+   * footer. Best-effort otherwise (missing state, missing tasks, missing
+   * callbacks all silently no-op).
    */
   async refreshTillDoneFooterForRun(runId: string): Promise<void> {
     if (!this.uiCallbacks) return;
+    if (this.uiCallbacksOwner && this.uiCallbacksOwner !== runId) return;
     const state = await loadRunState(this.config.runsDir, runId).catch(() => null);
     if (!state) return;
     return this.refreshTillDoneFooter(state);
@@ -131,9 +133,15 @@ export class ADWEngine {
    * Phase 5.6 §9.2: refresh the Pi TUI footer widget showing TillDone
    * task progress alongside agent activity. Best-effort — a missing
    * tasks.json or callback is silently a no-op.
+   *
+   * Round-4 H1: owner-gated. If the UI callbacks were re-bound to a
+   * newer run while this refresh was queued (or via a stale step-
+   * boundary call from an aborted run), don't write to the new run's
+   * status keys.
    */
   private async refreshTillDoneFooter(state: RunState): Promise<void> {
     if (!this.uiCallbacks) return;
+    if (this.uiCallbacksOwner && this.uiCallbacksOwner !== state.runId) return;
     const myToken = ++this.footerRefreshSeq;
     try {
       const tasks = await loadTasks(this.config.runsDir, state.runId);
