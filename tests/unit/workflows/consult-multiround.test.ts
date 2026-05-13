@@ -109,3 +109,19 @@ describe("buildConsultWorkflow multi-round — Phase 6", () => {
     expect(wfNeg.steps.map((s) => s.name)).not.toContain("position-eng-r2");
   });
 });
+
+describe("parseConsultArgs --rounds parsing — round-1 L1", () => {
+  it("consumes signed --rounds tokens so they don't leak into the topic", async () => {
+    const { parseConsultArgs } = await import("../../../src/commands/workflow-shortcuts.js");
+    const parsed = parseConsultArgs("Should we ship X? --rounds -1");
+    expect(parsed.topic).toBe("Should we ship X?");
+    expect(parsed.rounds).toBe(1); // clamped from -1
+  });
+
+  it("accepts --rounds N>=1 normally", async () => {
+    const { parseConsultArgs } = await import("../../../src/commands/workflow-shortcuts.js");
+    const parsed = parseConsultArgs("Topic --rounds 3");
+    expect(parsed.topic).toBe("Topic");
+    expect(parsed.rounds).toBe(3);
+  });
+});

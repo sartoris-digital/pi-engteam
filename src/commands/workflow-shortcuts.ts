@@ -197,7 +197,20 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
       const wf = buildConsultWorkflow(parsed.teams, consultWorkflowName, parsed.rounds);
       engine.registerWorkflow(wf);
 
-      const run = await engine.startRun({ workflow: wf.name, goal: parsed.topic, budget: {} });
+      // Phase 6 round-1 H1: scale maxIterations to the DAG level count
+      // for this round budget. Levels per consult run:
+      //   dispatch (1) + positions × rounds + adversarials × rounds + synthesis (1)
+      //   = 2 × rounds + 2
+      // Plus a small headroom buffer so the budget guard doesn't fire on
+      // the last legitimate level. Default RunState budget (8) is too
+      // small for rounds ≥ 4.
+      const requiredIterations = 2 * parsed.rounds + 2;
+      const maxIterations = Math.max(8, requiredIterations + 2);
+      const run = await engine.startRun({
+        workflow: wf.name,
+        goal: parsed.topic,
+        budget: { maxIterations },
+      });
       await bootstrapConsultRun(join(runsDir, run.runId));
 
       // Resolve selected short-names to long-form lead agent names for the
@@ -273,7 +286,10 @@ export function parseConsultArgs(raw: string): ConsultArgs {
   let teams: Array<"eng" | "valid" | "invest"> | undefined;
   const warning: string | undefined = undefined;
 
-  const roundsMatch = s.match(/--rounds\s+(\d+)/);
+  // Round-1 L1: match an optional sign on the digit run so a `--rounds -1`
+  // user error is consumed (and clamped to 1) instead of leaking into
+  // the topic string.
+  const roundsMatch = s.match(/--rounds\s+(-?\d+)/);
   if (roundsMatch) {
     const requested = parseInt(roundsMatch[1], 10);
     // Phase 6: multi-round consult is supported. Clamp to >=1 (the
