@@ -44,7 +44,12 @@ const WORKER_NAMES = [
   "performance-analyst",
 ];
 
-const FORBIDDEN_LEAD_TOOLS = ["Write", "Edit", "Bash"];
+// Phase 6 round-4 H3 (closed): Lead agents now have Write+Edit so they
+// can produce consult artifacts (positions/, adversarial/, synthesis.md).
+// Layer A still hard-blocks expertise + tasks.json; Layer D constrains
+// writes to ${RUN_DIR}. Bash remains forbidden — Leads coordinate via
+// SendMessage, never execute commands.
+const FORBIDDEN_LEAD_TOOLS = ["Bash"];
 
 // ---------------------------------------------------------------------------
 // 1. AGENT_DEFS completeness
@@ -86,7 +91,7 @@ describe("AGENT_DEFS — completeness", () => {
 
 describe("Lead agents — tool constraints", () => {
   for (const name of LEAD_NAMES) {
-    it(`${name}: tools array excludes Write, Edit, Bash`, () => {
+    it(`${name}: tools array excludes Bash (Leads coordinate, don't execute)`, () => {
       const def = AGENT_DEFS.find(a => a.name === name);
       expect(def, `${name} not found in AGENT_DEFS`).toBeDefined();
       if (!def?.tools) return; // no tools array means no restrictions needed here (fail-safe)
@@ -95,10 +100,12 @@ describe("Lead agents — tool constraints", () => {
       }
     });
 
-    it(`${name}: tools array includes the 7 expected tools`, () => {
+    it(`${name}: includes the coordination tools + Write/Edit for consult artifacts`, () => {
       const def = AGENT_DEFS.find(a => a.name === name);
       expect(def?.tools).toBeDefined();
-      const expected = ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob"];
+      // Phase 6 round-4 H3: Leads + Orchestrator gained Write/Edit so
+      // they can produce consult position/adversarial/synthesis files.
+      const expected = ["SendMessage", "TaskUpdate", "TaskList", "VerdictEmit", "Read", "Grep", "Glob", "Write", "Edit"];
       for (const t of expected) {
         expect(def!.tools, `${name} must include ${t}`).toContain(t);
       }
