@@ -21,7 +21,7 @@ import { refactorCampaign } from "./workflows/refactor-campaign.js";
 import { docBackfill } from "./workflows/doc-backfill.js";
 import { specPlanBuildReview } from "./workflows/spec-plan-build-review.js";
 import { issueAnalyze } from "./workflows/issue-analyze.js";
-import { consult } from "./workflows/consult.js";
+import { consult, buildConsultWorkflow } from "./workflows/consult.js";
 import { registerIssueCommand } from "./commands/issue.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
@@ -731,7 +731,32 @@ export default async function (pi: ExtensionAPI) {
     ["issue-analyze", issueAnalyze],
     ["consult", consult],
   ]);
-  const engine = new ADWEngine({ runsDir: RUNS_DIR, workflows, team, observer });
+  const engine = new ADWEngine({
+    runsDir: RUNS_DIR,
+    workflows,
+    team,
+    observer,
+    // Phase 6 round-2 H2: rebuild ephemeral consult-<random> workflows
+    // from persisted RunState after a process restart. consultTeams +
+    // rounds.max are already stored on the run state by /consult.
+    resolveMissingWorkflow: (state) => {
+      if (!state.workflow.startsWith("consult-")) return undefined;
+      const ct = (state as unknown as { consultTeams?: string[] }).consultTeams;
+      const rounds = state.rounds?.max ?? 1;
+      // consultTeams are stored as long-form lead names; map back to short.
+      const teamToShort = (name: string): "eng" | "valid" | "invest" | undefined => {
+        if (name === "engineering-lead") return "eng";
+        if (name === "validation-lead") return "valid";
+        if (name === "investigation-lead") return "invest";
+        return undefined;
+      };
+      const shortTeams = (ct ?? [])
+        .map(teamToShort)
+        .filter((s): s is "eng" | "valid" | "invest" => s !== undefined);
+      const teams = shortTeams.length > 0 ? shortTeams : undefined;
+      return buildConsultWorkflow(teams, state.workflow, rounds);
+    },
+  });
   // Phase 5.6 round-2 H2: bind the forward-declared ref so the TeamRuntime's
   // onSubprocessEvent hook can trigger TillDone footer refreshes mid-step.
   engineRef = engine;

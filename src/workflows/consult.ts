@@ -149,11 +149,19 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
       const prompt = promptLines.join("\n");
       try {
         const verdict = await dispatch(ctx, leadAgent, prompt, stepName);
+        // Round-2 H1: only record the position artifact path on PASS.
+        // Recording a fallback path on FAIL/NEEDS_MORE pollutes the
+        // run state with a file that was never written; downstream
+        // adversarial/synthesis prompts then reference a non-existent
+        // file and either silently use stale data or emit confused FAIL.
+        const isPass = verdict.verdict === "PASS";
         return {
-          success: verdict.verdict === "PASS",
+          success: isPass,
           verdict: verdict.verdict,
           issues: verdict.issues,
-          artifacts: { [stepName]: verdict.artifacts?.[0] ?? `positions/${leadAgent}${roundSuffix(round)}.md` },
+          artifacts: isPass
+            ? { [stepName]: verdict.artifacts?.[0] ?? `positions/${leadAgent}${roundSuffix(round)}.md` }
+            : undefined,
         };
       } catch (err) {
         return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
@@ -201,11 +209,16 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
       ].join("\n");
       try {
         const verdict = await dispatch(ctx, leadAgent, prompt, stepName);
+        // Round-2 H1: only record on PASS so failed adversarial steps
+        // don't leave bogus artifact paths in run state.
+        const isPass = verdict.verdict === "PASS";
         return {
-          success: verdict.verdict === "PASS",
+          success: isPass,
           verdict: verdict.verdict,
           issues: verdict.issues,
-          artifacts: { [stepName]: verdict.artifacts?.[0] ?? `adversarial/${leadAgent}${roundSuffix(round)}.md` },
+          artifacts: isPass
+            ? { [stepName]: verdict.artifacts?.[0] ?? `adversarial/${leadAgent}${roundSuffix(round)}.md` }
+            : undefined,
         };
       } catch (err) {
         return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
@@ -252,11 +265,14 @@ function makeSynthesisStep(rounds: number, allShorts: string[]): Step {
       ].join("\n");
       try {
         const verdict = await dispatch(ctx, "orchestrator", prompt, "synthesis");
+        const isPass = verdict.verdict === "PASS";
         return {
-          success: verdict.verdict === "PASS",
+          success: isPass,
           verdict: verdict.verdict,
           issues: verdict.issues,
-          artifacts: { synthesis: verdict.artifacts?.[0] ?? "synthesis.md" },
+          artifacts: isPass
+            ? { synthesis: verdict.artifacts?.[0] ?? "synthesis.md" }
+            : undefined,
         };
       } catch (err) {
         return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };

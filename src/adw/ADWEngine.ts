@@ -37,6 +37,16 @@ type ADWConfig = {
   workflows: Map<string, Workflow>;
   team: TeamRuntime;
   observer: Observer;
+  /**
+   * Phase 6 round-2 H2: optional fallback that runs when the engine
+   * encounters a runId whose workflow is not in the in-memory registry
+   * (e.g., after a process restart for a /consult run whose ephemeral
+   * `consult-<random>` name didn't survive). The resolver receives the
+   * persisted RunState and may return a freshly-built Workflow which
+   * is then registered. Returning undefined preserves the existing
+   * "Workflow not found" error.
+   */
+  resolveMissingWorkflow?: (state: RunState) => Workflow | undefined;
 };
 
 type StartRunParams = {
@@ -381,7 +391,17 @@ export class ADWEngine {
     state = { ...state, status: "running" };
     await saveRunState(this.config.runsDir, state);
 
-    const workflow = this.config.workflows.get(state.workflow);
+    let workflow = this.config.workflows.get(state.workflow);
+    if (!workflow && this.config.resolveMissingWorkflow) {
+      // Phase 6 round-2 H2: rebuild ephemeral workflows (e.g., consult)
+      // from persisted RunState after a process restart. The resolver
+      // gets the full state including consultTeams + rounds.max.
+      const rebuilt = this.config.resolveMissingWorkflow(state);
+      if (rebuilt) {
+        this.registerWorkflow(rebuilt);
+        workflow = rebuilt;
+      }
+    }
     if (!workflow) throw new Error(`Workflow '${state.workflow}' not found`);
 
     if (this.isDagWorkflow(workflow)) {

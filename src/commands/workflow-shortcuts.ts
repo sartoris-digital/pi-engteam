@@ -197,19 +197,26 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
       const wf = buildConsultWorkflow(parsed.teams, consultWorkflowName, parsed.rounds);
       engine.registerWorkflow(wf);
 
-      // Phase 6 round-1 H1: scale maxIterations to the DAG level count
-      // for this round budget. Levels per consult run:
-      //   dispatch (1) + positions × rounds + adversarials × rounds + synthesis (1)
-      //   = 2 × rounds + 2
-      // Plus a small headroom buffer so the budget guard doesn't fire on
-      // the last legitimate level. Default RunState budget (8) is too
-      // small for rounds ≥ 4.
+      // Phase 6 round-1 H1: scale maxIterations to the DAG level count.
+      // Levels = dispatch (1) + 2 × rounds × position-and-adversarial-levels
+      //         + synthesis (1) = 2 × rounds + 2.
+      // Default RunState budget (8) is too small for rounds ≥ 4.
       const requiredIterations = 2 * parsed.rounds + 2;
       const maxIterations = Math.max(8, requiredIterations + 2);
+      // Phase 6 round-2 M1: scale maxWallSeconds for multi-round runs.
+      // BudgetGuard ticks elapsed wall time per STEP (not per level), so
+      // a 5-round × 3-lead consult accumulates 30+ step-second ticks.
+      // The default 3600s ceiling is comfortable for typical LLM step
+      // durations but tighten down for short runs would budget-fail
+      // legitimate consults. Use a generous per-step allowance.
+      const leadCount = (parsed.teams ?? ["eng", "valid", "invest"]).length;
+      const stepCount = 1 /* dispatch */ + 2 * parsed.rounds * leadCount + 1 /* synthesis */;
+      const PER_STEP_WALL_SEC = 180; // ~3 min/step average
+      const maxWallSeconds = Math.max(3600, stepCount * PER_STEP_WALL_SEC);
       const run = await engine.startRun({
         workflow: wf.name,
         goal: parsed.topic,
-        budget: { maxIterations },
+        budget: { maxIterations, maxWallSeconds },
       });
       await bootstrapConsultRun(join(runsDir, run.runId));
 
