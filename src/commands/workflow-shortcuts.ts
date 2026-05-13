@@ -173,13 +173,14 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
         );
         return;
       }
-      // Codex round-4 H-3: reject --rounds > 1 outright. The DAG engine does
-      // not yet implement multi-round revision (deferred to Phase 4.5);
-      // accepting a budget the workflow ignores misleads the user into
-      // believing rounds=2 will re-orchestrate when it won't.
-      if (parsed.rounds > 1) {
+      // Phase 6: multi-round consult is now supported. parsed.rounds=1
+      // produces the original 3-level DAG; rounds=N produces N copies
+      // of (positions → adversarials) followed by a single synthesis.
+      // A hard upper bound prevents runaway runs.
+      const MAX_CONSULT_ROUNDS = 5;
+      if (parsed.rounds > MAX_CONSULT_ROUNDS) {
         ctx.ui.notify(
-          `--rounds ${parsed.rounds} is not supported in v1. Multi-round consult ships in Phase 4.5. Re-run without --rounds (or --rounds 1).`,
+          `--rounds ${parsed.rounds} exceeds the maximum of ${MAX_CONSULT_ROUNDS}. Re-run with a smaller value.`,
           "error",
         );
         return;
@@ -193,7 +194,7 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
       // of the run (and on resume, since the name persists in RunState).
       const { randomUUID } = await import("crypto");
       const consultWorkflowName = `consult-${randomUUID().slice(0, 8)}`;
-      const wf = buildConsultWorkflow(parsed.teams, consultWorkflowName);
+      const wf = buildConsultWorkflow(parsed.teams, consultWorkflowName, parsed.rounds);
       engine.registerWorkflow(wf);
 
       const run = await engine.startRun({ workflow: wf.name, goal: parsed.topic, budget: {} });
@@ -270,20 +271,15 @@ export function parseConsultArgs(raw: string): ConsultArgs {
   let s = raw.trim();
   let rounds = 1;
   let teams: Array<"eng" | "valid" | "invest"> | undefined;
-  let warning: string | undefined;
+  const warning: string | undefined = undefined;
 
   const roundsMatch = s.match(/--rounds\s+(\d+)/);
   if (roundsMatch) {
     const requested = parseInt(roundsMatch[1], 10);
-    // H1: rounds>1 is reserved for Phase 4.5 multi-round revision — accept the
-    // budget so /run-status can surface intent, but warn that v1 only runs
-    // round 1 (positions + adversarials + synthesis).
-    if (Number.isFinite(requested) && requested > 1) {
-      rounds = requested;
-      warning = `--rounds ${requested} accepted as round budget; multi-round revision ships in Phase 4.5. v1 runs round 1 only.`;
-    } else {
-      rounds = Math.max(1, requested || 1);
-    }
+    // Phase 6: multi-round consult is supported. Clamp to >=1 (the
+    // shortcut handler enforces the upper bound). Invalid/zero/negative
+    // values fall back to 1.
+    rounds = Number.isFinite(requested) && requested > 0 ? requested : 1;
     s = s.replace(roundsMatch[0], "").trim();
   }
 
