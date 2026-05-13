@@ -736,23 +736,33 @@ export default async function (pi: ExtensionAPI) {
     workflows,
     team,
     observer,
-    // Phase 6 round-2 H2: rebuild ephemeral consult-<random> workflows
-    // from persisted RunState after a process restart. consultTeams +
-    // rounds.max are already stored on the run state by /consult.
+    // Phase 6 round-2 H2 + round-3 M1: rebuild ephemeral consult-<random>
+    // workflows from persisted RunState after a process restart.
+    // consultTeams + rounds.max are stored on the run state by /consult.
+    // Inputs are validated to defend against a tampered state.json:
+    // workflow name must match `consult-[A-Za-z0-9]+`, rounds.max must
+    // be a finite integer in [1, MAX_CONSULT_ROUNDS], consultTeams must
+    // be a subset of the known long-form lead names.
     resolveMissingWorkflow: (state) => {
-      if (!state.workflow.startsWith("consult-")) return undefined;
-      const ct = (state as unknown as { consultTeams?: string[] }).consultTeams;
-      const rounds = state.rounds?.max ?? 1;
-      // consultTeams are stored as long-form lead names; map back to short.
-      const teamToShort = (name: string): "eng" | "valid" | "invest" | undefined => {
+      const MAX_CONSULT_ROUNDS = 5;
+      const CONSULT_NAME_RE = /^consult-[A-Za-z0-9]+$/;
+      if (!CONSULT_NAME_RE.test(state.workflow)) return undefined;
+
+      const rawRounds = state.rounds?.max;
+      const rounds = Number.isFinite(rawRounds) && typeof rawRounds === "number"
+        ? Math.max(1, Math.min(MAX_CONSULT_ROUNDS, Math.floor(rawRounds)))
+        : 1;
+
+      const ct = (state as unknown as { consultTeams?: unknown }).consultTeams;
+      const teamToShort = (name: unknown): "eng" | "valid" | "invest" | undefined => {
         if (name === "engineering-lead") return "eng";
         if (name === "validation-lead") return "valid";
         if (name === "investigation-lead") return "invest";
         return undefined;
       };
-      const shortTeams = (ct ?? [])
-        .map(teamToShort)
-        .filter((s): s is "eng" | "valid" | "invest" => s !== undefined);
+      const shortTeams = Array.isArray(ct)
+        ? ct.map(teamToShort).filter((s): s is "eng" | "valid" | "invest" => s !== undefined)
+        : [];
       const teams = shortTeams.length > 0 ? shortTeams : undefined;
       return buildConsultWorkflow(teams, state.workflow, rounds);
     },

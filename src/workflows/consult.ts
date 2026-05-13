@@ -149,18 +149,25 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
       const prompt = promptLines.join("\n");
       try {
         const verdict = await dispatch(ctx, leadAgent, prompt, stepName);
-        // Round-2 H1: only record the position artifact path on PASS.
-        // Recording a fallback path on FAIL/NEEDS_MORE pollutes the
-        // run state with a file that was never written; downstream
-        // adversarial/synthesis prompts then reference a non-existent
-        // file and either silently use stale data or emit confused FAIL.
-        const isPass = verdict.verdict === "PASS";
+        // Round-2 H1 + round-3 H3: require a non-empty artifact path on
+        // PASS. A bare PASS with no artifact means the Lead never wrote
+        // their position file; downstream adversarial/synthesis would
+        // then reference a non-existent path. Downgrade to FAIL.
+        const hasArtifact = (verdict.artifacts?.length ?? 0) > 0;
+        if (verdict.verdict === "PASS" && !hasArtifact) {
+          return {
+            success: false,
+            verdict: "FAIL",
+            error: `Position step ${stepName} claimed PASS but emitted no artifact path; downgraded to FAIL.`,
+          };
+        }
+        const isPass = verdict.verdict === "PASS" && hasArtifact;
         return {
           success: isPass,
           verdict: verdict.verdict,
           issues: verdict.issues,
           artifacts: isPass
-            ? { [stepName]: verdict.artifacts?.[0] ?? `positions/${leadAgent}${roundSuffix(round)}.md` }
+            ? { [stepName]: verdict.artifacts![0] }
             : undefined,
         };
       } catch (err) {
@@ -183,16 +190,43 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
     dependsOn,
     run: async (ctx: StepContext): Promise<StepResult> => {
       const prelude = await preludeFor(ctx);
-      const positionPaths = (allShorts ?? ["eng", "valid", "invest"]).map((s) => {
+      // Phase 6 round-3 H2: list only positions that registered an
+      // artifact for THIS round. A position step that failed never
+      // wrote a file; pointing the adversarial at it would produce a
+      // confused FAIL on missing-file. The artifacts map is keyed by
+      // step name and is populated only on PASS.
+      const shorts = allShorts ?? ["eng", "valid", "invest"];
+      const positionPaths: string[] = [];
+      const missingLeads: string[] = [];
+      for (const s of shorts) {
+        const stepKey = positionStepName(s, round);
         const lead = s === "eng" ? "engineering-lead" : s === "valid" ? "validation-lead" : "investigation-lead";
-        return positionFilePath(lead, round);
-      });
+        const recorded = ctx.run.artifacts?.[stepKey];
+        if (recorded) {
+          positionPaths.push(recorded.startsWith("<run>/") ? recorded : positionFilePath(lead, round));
+        } else {
+          missingLeads.push(lead);
+        }
+      }
+      if (positionPaths.length === 0) {
+        // Nothing to critique — degrade explicitly rather than write
+        // an empty adversarial file.
+        return {
+          success: false,
+          verdict: "FAIL",
+          error: `No round-${round} positions were produced; cannot run adversarial round.`,
+        };
+      }
+      const missingNote = missingLeads.length > 0
+        ? `Note: round-${round} positions from these Leads were not produced and are unavailable: ${missingLeads.join(", ")}. Critique only the available positions.`
+        : null;
       const prompt = [
         prelude,
         `You are ${leadAgent}. Adversarial round ${round}: critique your peers' round-${round} positions.`,
         ``,
         `TOPIC: ${ctx.run.goal}`,
         ``,
+        ...(missingNote ? [missingNote, ``] : []),
         `Read every round-${round} position:`,
         ...positionPaths.map((p) => `- ${p}`),
         ``,
@@ -209,9 +243,20 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
       ].join("\n");
       try {
         const verdict = await dispatch(ctx, leadAgent, prompt, stepName);
-        // Round-2 H1: only record on PASS so failed adversarial steps
-        // don't leave bogus artifact paths in run state.
-        const isPass = verdict.verdict === "PASS";
+        // Round-2 H1 + round-3 H3: only record artifacts on PASS, AND
+        // require a non-empty verdict.artifacts entry on PASS. A bare
+        // PASS with no artifact path means the Lead claimed success but
+        // never wrote the expected file; downgrade to FAIL so the
+        // downstream synthesis doesn't reference a non-existent artifact.
+        const hasArtifact = (verdict.artifacts?.length ?? 0) > 0;
+        const isPass = verdict.verdict === "PASS" && hasArtifact;
+        if (verdict.verdict === "PASS" && !hasArtifact) {
+          return {
+            success: false,
+            verdict: "FAIL",
+            error: `Adversarial step ${stepName} claimed PASS but emitted no artifact path; downgraded to FAIL.`,
+          };
+        }
         return {
           success: isPass,
           verdict: verdict.verdict,
@@ -265,13 +310,22 @@ function makeSynthesisStep(rounds: number, allShorts: string[]): Step {
       ].join("\n");
       try {
         const verdict = await dispatch(ctx, "orchestrator", prompt, "synthesis");
-        const isPass = verdict.verdict === "PASS";
+        // Round-3 H3: require artifact on PASS.
+        const hasArtifact = (verdict.artifacts?.length ?? 0) > 0;
+        if (verdict.verdict === "PASS" && !hasArtifact) {
+          return {
+            success: false,
+            verdict: "FAIL",
+            error: `Synthesis claimed PASS but emitted no artifact path; downgraded to FAIL.`,
+          };
+        }
+        const isPass = verdict.verdict === "PASS" && hasArtifact;
         return {
           success: isPass,
           verdict: verdict.verdict,
           issues: verdict.issues,
           artifacts: isPass
-            ? { synthesis: verdict.artifacts?.[0] ?? "synthesis.md" }
+            ? { synthesis: verdict.artifacts![0] }
             : undefined,
         };
       } catch (err) {

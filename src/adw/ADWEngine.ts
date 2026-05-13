@@ -800,11 +800,20 @@ export class ADWEngine {
       // maxIterations gate actually fires; a level represents one unit of
       // forward progress (parallel siblings + sequential after them).
       state = { ...state, iteration: state.iteration + 1 };
+      // Phase 6 round-3 H1: on resume, skip steps that already have a
+      // PASS verdict in RunState.steps. Non-PASS (FAIL/NEEDS_MORE) and
+      // unrun steps re-execute. Without this, /run-resume on a multi-
+      // round consult after a process restart would re-run dispatch and
+      // all prior PASSed levels, costing the user real LLM calls + time.
+      const passedNames = new Set(
+        state.steps.filter((r) => r.verdict === "PASS").map((r) => r.name),
+      );
+      const parallelToRun = level.parallel.filter((s) => !passedNames.has(s.name));
       const parallelResults = await Promise.allSettled(
-        level.parallel.map((s) => this.runDagStep(runId, state, workflow, s)),
+        parallelToRun.map((s) => this.runDagStep(runId, state, workflow, s)),
       );
       for (let i = 0; i < parallelResults.length; i++) {
-        const step = level.parallel[i];
+        const step = parallelToRun[i];
         const r = parallelResults[i];
         const result: StepResult = r.status === "fulfilled"
           ? r.value.result
@@ -816,6 +825,7 @@ export class ADWEngine {
       }
 
       for (const step of level.sequential) {
+        if (passedNames.has(step.name)) continue; // resume skip
         const fresh2 = await loadRunState(this.config.runsDir, runId);
         if (fresh2?.phase === "cancelling" || fresh2?.phase === "cancelled") {
           state = { ...state, status: "aborted", phase: "cancelled" };
