@@ -867,7 +867,14 @@ export default async function (pi: ExtensionAPI) {
       } catch {
         console.warn("[pi-engineering] Could not auto-migrate data dir. Please run: mv ~/.pi/engteam ~/.pi/engineering-team");
       }
-      // Cleanup: mark any lingering "running" runs as aborted so plan mode doesn't persist after restarts
+      // Phase 6 round-4 H1: an interrupted run (Pi process killed mid-
+      // execution) used to be force-marked "aborted" here, which made
+      // /run-resume reject the run since resumable statuses are
+      // pending/running/paused/waiting_user. Now: leave "waiting_user"
+      // alone (it's already resumable) and downgrade "running" to
+      // "paused" so the user can /run-resume <runId> after restart.
+      // The phase field is also restored to "active" so a stale
+      // "cancelling" doesn't immediately end the resumed run.
       try {
         const { readFile, writeFile } = await import("fs/promises");
         const { join } = await import("path");
@@ -875,11 +882,14 @@ export default async function (pi: ExtensionAPI) {
         const runId = (await readFile(activeFile, "utf8")).trim();
         const stateFile = join(RUNS_DIR, runId, "state.json");
         const state = JSON.parse(await readFile(stateFile, "utf8"));
-        if (state.status === "running" || state.status === "waiting_user") {
-          state.status = "aborted";
+        const wasRunning = state.status === "running";
+        if (wasRunning) {
+          state.status = "paused";
           state.updatedAt = new Date().toISOString();
+          // Clear a stale cancelling phase that wasn't reached at shutdown.
+          if (state.phase === "cancelling") state.phase = "active";
           await writeFile(stateFile, JSON.stringify(state, null, 2));
-          console.log(`[pi-engineering] Cleaned up stale run ${runId.slice(0, 8)} (was ${state.status})`);
+          console.log(`[pi-engineering] Run ${runId.slice(0, 8)} interrupted — marked paused. Resume with /run-resume ${runId}`);
         }
       } catch { /* no active run or already ended */ }
       console.log("[pi-engineering] Extension loaded. Run /run-start <workflow> \"<goal>\" to begin.");

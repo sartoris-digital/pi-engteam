@@ -126,18 +126,46 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
           `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${filePath}"].`,
         );
       } else {
-        const priorAdvPaths = (allShorts ?? ["eng", "valid", "invest"]).map((s) => {
+        // Phase 6 round-4 H3: derive prior position + adversarial paths
+        // from ctx.run.artifacts (PASS-recorded only) instead of the
+        // deterministic helper. If a prior step failed and produced no
+        // file, the agent must not be told to read it.
+        const shorts = allShorts ?? ["eng", "valid", "invest"];
+        const priorAdvPaths: string[] = [];
+        const missingPriorAdvLeads: string[] = [];
+        for (const s of shorts) {
+          const stepKey = adversarialStepName(s, round - 1);
           const lead = s === "eng" ? "engineering-lead" : s === "valid" ? "validation-lead" : "investigation-lead";
-          return adversarialFilePath(lead, round - 1);
-        });
-        const priorOwnPos = positionFilePath(leadAgent, round - 1);
+          const recorded = ctx.run.artifacts?.[stepKey];
+          if (recorded) {
+            priorAdvPaths.push(recorded.startsWith("<run>/") ? recorded : adversarialFilePath(lead, round - 1));
+          } else {
+            missingPriorAdvLeads.push(lead);
+          }
+        }
+        const priorOwnPosKey = positionStepName(short, round - 1);
+        const priorOwnPosRecorded = ctx.run.artifacts?.[priorOwnPosKey];
+        if (!priorOwnPosRecorded) {
+          // Without our own prior position to revise from, we can't run
+          // a meaningful round-N revision. Surface this as a step failure
+          // so the orchestrator + synthesis see a clear cause.
+          return {
+            success: false,
+            verdict: "FAIL",
+            error: `Round-${round} position for ${leadAgent} cannot run: round-${round - 1} position was not produced.`,
+          };
+        }
+        const priorMissingNote = missingPriorAdvLeads.length > 0
+          ? `Note: round-${round - 1} adversarials from these Leads were not produced: ${missingPriorAdvLeads.join(", ")}. Read only the available critiques.`
+          : null;
         promptLines.push(
           `You are ${leadAgent}. Consult round ${round}: REVISE your position in light of round ${round - 1}'s adversarial critiques.`,
           ``,
           `TOPIC: ${ctx.run.goal}`,
           ``,
+          ...(priorMissingNote ? [priorMissingNote, ``] : []),
           `Your job:`,
-          `1. Read your round-${round - 1} position: ${priorOwnPos}`,
+          `1. Read your round-${round - 1} position: ${priorOwnPosRecorded}`,
           `2. Read every peer's round-${round - 1} adversarial:`,
           ...priorAdvPaths.map((p) => `   - ${p}`),
           `3. Decide what changes. Concede where a critique landed. Sharpen where you stand by your prior position. Be explicit about which round-${round - 1} points you're addressing.`,

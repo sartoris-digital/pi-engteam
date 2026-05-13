@@ -213,15 +213,12 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
       const stepCount = 1 /* dispatch */ + 2 * parsed.rounds * leadCount + 1 /* synthesis */;
       const PER_STEP_WALL_SEC = 180; // ~3 min/step average
       const maxWallSeconds = Math.max(3600, stepCount * PER_STEP_WALL_SEC);
-      const run = await engine.startRun({
-        workflow: wf.name,
-        goal: parsed.topic,
-        budget: { maxIterations, maxWallSeconds },
-      });
-      await bootstrapConsultRun(join(runsDir, run.runId));
-
-      // Resolve selected short-names to long-form lead agent names for the
-      // dispatch step prompt and any future resume-time filtering.
+      // Resolve selected short-names to long-form lead agent names BEFORE
+      // startRun so we can pass them as initialMetadata (atomic with the
+      // first state.json write). Phase 6 round-4 H4: prior code saved
+      // consultTeams + rounds AFTER startRun in a separate write, leaving
+      // a crash window where resume saw a consult-* workflow without
+      // metadata and rebuilt with defaults.
       const leadFor = (s: "eng" | "valid" | "invest"): string => {
         if (s === "eng") return "engineering-lead";
         if (s === "valid") return "validation-lead";
@@ -231,19 +228,16 @@ export function registerWorkflowShortcuts(pi: ExtensionAPI, engine: ADWEngine, r
         ? parsed.teams.map(leadFor)
         : ["engineering-lead", "validation-lead", "investigation-lead"];
 
-      // M1: persist round budget on the run state for autopilot/UI surfacing.
-      // Codex round-3 M: also persist consultTeams so the dispatch step's
-      // prompt + any resume-time workflow rebuild see the user-selected
-      // subset rather than defaulting to all three leads.
-      const { loadRunState, saveRunState } = await import("../adw/RunState.js");
-      const cur = await loadRunState(runsDir, run.runId);
-      if (cur) {
-        await saveRunState(runsDir, {
-          ...cur,
+      const run = await engine.startRun({
+        workflow: wf.name,
+        goal: parsed.topic,
+        budget: { maxIterations, maxWallSeconds },
+        initialMetadata: {
           rounds: { current: 0, max: parsed.rounds },
           consultTeams,
-        } as unknown as typeof cur);
-      }
+        },
+      });
+      await bootstrapConsultRun(join(runsDir, run.runId));
 
       // Phase 5.6 round-2 H1: wire UI callbacks for TillDone footer.
       engine.setUiCallbacks(

@@ -54,6 +54,13 @@ type StartRunParams = {
   goal: string;
   budget: Parameters<typeof createRunState>[0]["budget"];
   initialArtifacts?: string[];
+  /**
+   * Phase 6 round-4 H4: optional metadata persisted in the initial
+   * state.json write so a crash between startRun and any follow-up
+   * save() can't leave the run with missing resume info. Used by
+   * /consult to atomically persist consultTeams + rounds.max.
+   */
+  initialMetadata?: { rounds?: { current: number; max: number }; consultTeams?: string[] };
 };
 
 type UiCallbacks = {
@@ -329,6 +336,17 @@ export class ADWEngine {
       budget: params.budget,
     });
     state = { ...state, currentStep: workflow.steps[0].name, phase: "active" };
+    // Phase 6 round-4 H4: fold initialMetadata into the FIRST state
+    // write so a crash before any follow-up save() can't leave the run
+    // unresumable. /consult passes consultTeams + rounds atomically.
+    if (params.initialMetadata) {
+      if (params.initialMetadata.rounds) {
+        state = { ...state, rounds: params.initialMetadata.rounds };
+      }
+      if (params.initialMetadata.consultTeams) {
+        state = { ...state, consultTeams: params.initialMetadata.consultTeams } as RunState;
+      }
+    }
     await saveRunState(this.config.runsDir, state);
 
     const { writeFile } = await import("fs/promises");
@@ -797,18 +815,23 @@ export class ADWEngine {
       }
 
       // Codex round-2 H-1: increment iteration per DAG level so checkBudget's
-      // maxIterations gate actually fires; a level represents one unit of
-      // forward progress (parallel siblings + sequential after them).
-      state = { ...state, iteration: state.iteration + 1 };
       // Phase 6 round-3 H1: on resume, skip steps that already have a
       // PASS verdict in RunState.steps. Non-PASS (FAIL/NEEDS_MORE) and
-      // unrun steps re-execute. Without this, /run-resume on a multi-
-      // round consult after a process restart would re-run dispatch and
-      // all prior PASSed levels, costing the user real LLM calls + time.
+      // unrun steps re-execute.
+      // Phase 6 round-4 H2: derive the runnable set BEFORE incrementing
+      // iteration. A fully-skipped level (all parallel + sequential
+      // already PASSed) was previously burning a budget tick on resume,
+      // which could trip maxIterations before the remaining work ran.
       const passedNames = new Set(
         state.steps.filter((r) => r.verdict === "PASS").map((r) => r.name),
       );
       const parallelToRun = level.parallel.filter((s) => !passedNames.has(s.name));
+      const sequentialToRun = level.sequential.filter((s) => !passedNames.has(s.name));
+      if (parallelToRun.length === 0 && sequentialToRun.length === 0) {
+        // Nothing to do at this level — don't tick iteration/budget.
+        continue;
+      }
+      state = { ...state, iteration: state.iteration + 1 };
       const parallelResults = await Promise.allSettled(
         parallelToRun.map((s) => this.runDagStep(runId, state, workflow, s)),
       );
@@ -824,8 +847,7 @@ export class ADWEngine {
         if (result.verdict !== "PASS") anyFail = true;
       }
 
-      for (const step of level.sequential) {
-        if (passedNames.has(step.name)) continue; // resume skip
+      for (const step of sequentialToRun) {
         const fresh2 = await loadRunState(this.config.runsDir, runId);
         if (fresh2?.phase === "cancelling" || fresh2?.phase === "cancelled") {
           state = { ...state, status: "aborted", phase: "cancelled" };
