@@ -26,32 +26,47 @@ export type DomainPolicyMap = Record<string, DomainPolicy>;
 
 export const DEFAULT_DOMAINS: DomainPolicyMap = {
   // --- Orchestrator tier ---
+  // Phase 6.5 round-1 C1: force_block so an out-of-domain Write/Edit is
+  // hard-blocked at Layer D regardless of the default teams.yaml mode
+  // (which is "warn" out of the box). Without this, a Lead/Orchestrator
+  // Write outside its declared upsert would warn-and-proceed.
   orchestrator: {
     read: ["."],
     upsert: ["${RUN_DIR}/conversation.jsonl", "${RUN_DIR}/synthesis.md"],
     delete: [],
+    force_block: true,
   },
 
   // --- Lead tier ---
+  // Phase 6.5 round-1 C1: force_block enforced.
+  // Phase 6.5 round-1 L1: removed EXPERTISE_DIR entries from upserts.
+  // Layer A's isProtectedPath already hard-blocks expertise file writes
+  // regardless of Layer D policy; carrying them in the policy was
+  // dead/contradictory authority that misled readers about what the
+  // role can actually do.
   "planning-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}", "specs/", "${EXPERTISE_DIR}/planning.md"],
+    upsert: ["${RUN_DIR}", "specs/"],
     delete: [],
+    force_block: true,
   },
   "engineering-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}", "${EXPERTISE_DIR}/engineering.md"],
+    upsert: ["${RUN_DIR}"],
     delete: [],
+    force_block: true,
   },
   "validation-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}", "${EXPERTISE_DIR}/validation.md"],
+    upsert: ["${RUN_DIR}"],
     delete: [],
+    force_block: true,
   },
   "investigation-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}", "${EXPERTISE_DIR}/investigation.md"],
+    upsert: ["${RUN_DIR}"],
     delete: [],
+    force_block: true,
   },
 
   // --- Worker tier (explicit) ---

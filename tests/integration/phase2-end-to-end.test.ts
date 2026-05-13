@@ -11,7 +11,7 @@ import { join } from "path";
 import { AGENT_DEFS } from "../../src/index.js";
 import { loadTeamsConfig } from "../../src/safety/teams-config.js";
 import { checkDomain } from "../../src/safety/DomainLock.js";
-import type { DomainPolicy } from "../../src/safety/default-domains.js";
+import { DEFAULT_DOMAINS, type DomainPolicy } from "../../src/safety/default-domains.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -211,6 +211,41 @@ describe("checkDomain — infrastructure write blocked for implementer", () => {
     const allowedPaths = result.structured.allowed_paths as { upsert: string[] };
     expect(allowedPaths.upsert).toEqual(expect.arrayContaining(["src/", "tests/", "scripts/"]));
   });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. Lead + Orchestrator Layer D — force_block hard-blocks outside-RUN_DIR
+//     writes regardless of teams.yaml mode (Phase 6.5 round-1 C1 / M1)
+// ---------------------------------------------------------------------------
+
+describe("Lead + Orchestrator Layer D — force_block outside-RUN_DIR", () => {
+  const cases: Array<{ agent: string; outsidePath: string }> = [
+    { agent: "engineering-lead", outsidePath: "/tmp/forged-by-engineering-lead.md" },
+    { agent: "validation-lead", outsidePath: "/tmp/forged-by-validation-lead.md" },
+    { agent: "investigation-lead", outsidePath: "/tmp/forged-by-investigation-lead.md" },
+    { agent: "planning-lead", outsidePath: "/tmp/forged-by-planning-lead.md" },
+    { agent: "orchestrator", outsidePath: "/tmp/forged-by-orchestrator.md" },
+  ];
+  for (const { agent, outsidePath } of cases) {
+    it(`${agent}: Write to ${outsidePath} blocks via force_block even with mode='warn'`, () => {
+      const policy = DEFAULT_DOMAINS[agent];
+      expect(policy, `missing default policy for ${agent}`).toBeDefined();
+      expect(policy!.force_block, `${agent} must declare force_block`).toBe(true);
+      const result = checkDomain({
+        agent,
+        operation: "Write",
+        path: outsidePath,
+        policy: policy!,
+        mode: "warn", // simulate default teams.yaml mode
+      });
+      expect(result.allowed).toBe(false);
+      if (result.allowed) return;
+      // force_block overrides caller mode.
+      expect(result.mode).toBe("block");
+      expect(result.structured.agent).toBe(agent);
+      expect(result.structured.operation).toBe("Write");
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------
