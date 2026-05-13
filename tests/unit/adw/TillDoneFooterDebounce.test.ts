@@ -213,5 +213,44 @@ describe("refreshTillDoneFooterForRun debounce — Phase 5.7", () => {
     expect(undefinedClears.length).toBeGreaterThanOrEqual(1);
     // The LAST tilldone call must be the clear, not a stale string.
     expect(tilldoneCalls.at(-1)![1]).toBeUndefined();
+    // Round-4 M1: prove invalidation actually works. After the undefined
+    // clear, NO subsequent string-valued tilldone setStatus may fire.
+    // Without the seq bump in cancelPendingFooterTimer, an in-flight
+    // refresh that resolved post-clear would slip a stale string write
+    // through, violating this invariant.
+    const clearIdx = tilldoneCalls.findIndex((c) => c[1] === undefined);
+    const postClearWrites = tilldoneCalls.slice(clearIdx + 1).filter((c) => typeof c[1] === "string");
+    expect(postClearWrites).toHaveLength(0);
+  });
+
+  it("abortRun also drains pending footer state (round-4 L1)", async () => {
+    // Defense-in-depth: abortRun is a separate terminal path from
+    // executeRun's normal completion. Verify it also clears the tilldone
+    // key and invalidates pending refreshes via clearUiStatus.
+    const dir = await mkdtemp(join(tmpdir(), "tilldone-abort-"));
+    const engine = new ADWEngine({
+      runsDir: dir,
+      workflows: new Map(),
+      team: makeMockTeam(),
+      observer: makeMockObserver(),
+    });
+    const setStatus = vi.fn();
+
+    // Bootstrap state directly (no workflow needed for abortRun).
+    const { createRunState, saveRunState } = await import("../../../src/adw/RunState.js");
+    const state = await createRunState({ runId: "rA", workflow: "wf", goal: "g", budget: {} });
+    await saveRunState(dir, { ...state, currentStep: "step", phase: "active" });
+
+    engine.setUiCallbacks({ notify: vi.fn(), setStatus }, "rA");
+    engine.refreshTillDoneFooterForRun("rA");
+    await new Promise((res) => setTimeout(res, 260));
+
+    await engine.abortRun("rA");
+    await new Promise((res) => setTimeout(res, 200));
+
+    const tilldoneCalls = setStatus.mock.calls.filter((c) => c[0] === "tilldone");
+    const undefinedClears = tilldoneCalls.filter((c) => c[1] === undefined);
+    expect(undefinedClears.length).toBeGreaterThanOrEqual(1);
+    expect(tilldoneCalls.at(-1)![1]).toBeUndefined();
   });
 });

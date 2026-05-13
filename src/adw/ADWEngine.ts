@@ -988,5 +988,10 @@ export class ADWEngine {
       payload: { status: "aborted" },
       summary: `Run ${runId} aborted`,
     });
+    // Phase 5.7 round-4 L1: route through the same terminal UI cleanup
+    // as executeRun's normal completion. Without this, an abort path
+    // leaves any pending TillDone refresh timer alive and the tilldone
+    // status key set to a stale rendered string.
+    this.clearUiStatus(runId);
   }
 }
