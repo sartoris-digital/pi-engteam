@@ -1,6 +1,26 @@
 // src/secrets/Vault.ts
 import Database from "better-sqlite3";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { encrypt, decrypt } from "./Crypto.js";
+
+// When this module is loaded from the bundled extension at
+// ~/.pi/agent/extensions/pi-engineering.js, there is no node_modules
+// tree, so better-sqlite3 cannot resolve its native addon via `bindings`.
+// install.sh / postinstall.mjs copies the compiled binary alongside the
+// bundle; we pass its absolute path through better-sqlite3's official
+// `nativeBinding` option, which short-circuits the `require('bindings')`
+// lookup at lib/database.js:47.
+function resolveSideloadedSqliteBinding(): string | undefined {
+  try {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const candidate = join(moduleDir, "better_sqlite3.node");
+    return existsSync(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 type SecretRow = {
   name: string;
@@ -17,8 +37,11 @@ export class Vault {
   private db: Database.Database;
   private masterKey: Buffer;
 
-  constructor(opts: { dbPath: string; masterKey: Buffer }) {
-    this.db = new Database(opts.dbPath);
+  constructor(opts: { dbPath: string; masterKey: Buffer; nativeBinding?: string }) {
+    const nativeBinding = opts.nativeBinding ?? resolveSideloadedSqliteBinding();
+    this.db = nativeBinding
+      ? new Database(opts.dbPath, { nativeBinding })
+      : new Database(opts.dbPath);
     this.masterKey = opts.masterKey;
   }
 

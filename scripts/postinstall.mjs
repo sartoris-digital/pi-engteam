@@ -12,7 +12,7 @@
 
 import { copyFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { basename, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -22,6 +22,7 @@ const ROOT = join(__dirname, "..");
 const HOME = homedir();
 const PI_DIR = join(HOME, ".pi");
 const ENGINEERING_DIR = join(PI_DIR, "engineering-team");
+const EXTENSION_DIR = join(PI_DIR, "agent", "extensions");
 const AGENTS_DIR = join(PI_DIR, "agent", "agents");
 const VERIFIER_SCRIPTS_DIR = join(ENGINEERING_DIR, "verifier-scripts");
 
@@ -94,9 +95,54 @@ async function installServer() {
   if (existsSync(nativeSrc)) {
     await copyFile(nativeSrc, join(ENGINEERING_DIR, "better_sqlite3.node"));
     console.log(`[pi-engineering] installed native addon → ${join(ENGINEERING_DIR, "better_sqlite3.node")}`);
+    // The extension bundle (Vault) needs the same binary at ~/.pi/agent/extensions
+    // so its `nativeBinding` resolver in src/secrets/Vault.ts finds it.
+    if (existsSync(EXTENSION_DIR)) {
+      await copyFile(nativeSrc, join(EXTENSION_DIR, "better_sqlite3.node"));
+      console.log(`[pi-engineering] installed native addon → ${join(EXTENSION_DIR, "better_sqlite3.node")}`);
+    }
   } else {
-    console.warn("[pi-engineering] postinstall: better_sqlite3.node not found — /observe will fail");
+    console.warn("[pi-engineering] postinstall: better_sqlite3.node not found — /observe and /secret-* will fail");
   }
+}
+
+/** Walk `node_modules/@napi-rs` and `node_modules/.pnpm` for the host's compiled
+ *  keyring binary and copy it next to the extension bundle. pnpm installs only
+ *  the matching platform optionalDependency, so a single `.node` is present. */
+async function installKeyringNative() {
+  if (!existsSync(EXTENSION_DIR)) return; // ~/.pi/agent/extensions not present yet
+
+  async function findKeyringNode(dir, depth) {
+    if (depth > 5) return null;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch { return null; }
+    for (const entry of entries) {
+      const child = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const hit = await findKeyringNode(child, depth + 1);
+        if (hit) return hit;
+      } else if (/^keyring\..+\.node$/.test(entry.name)) {
+        return child;
+      }
+    }
+    return null;
+  }
+
+  const searchRoots = [
+    join(ROOT, "node_modules", "@napi-rs"),
+    join(ROOT, "node_modules", ".pnpm"),
+  ];
+  for (const root of searchRoots) {
+    const hit = await findKeyringNode(root, 0);
+    if (hit) {
+      const dest = join(EXTENSION_DIR, basename(hit));
+      await copyFile(hit, dest);
+      console.log(`[pi-engineering] installed keyring native → ${dest}`);
+      return;
+    }
+  }
+  console.warn("[pi-engineering] postinstall: @napi-rs/keyring native .node not found — /secret-* will silently degrade in bundled-install mode");
 }
 
 /** Copy agents/*.md → ~/.pi/agent/agents/engineering-*.md. */
@@ -167,6 +213,7 @@ async function main() {
   console.log("[pi-engineering] postinstall: building server and installing files...");
   await buildServer(); // best-effort; skipped if tsup (devDep) is unavailable
   await installServer(); // always attempt — uses pre-built dist/server.cjs if build was skipped
+  await installKeyringNative();
   await installAgents();
   await installVerifierScripts();
   await installLearnerScaffold();
