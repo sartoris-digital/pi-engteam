@@ -45,13 +45,16 @@ async function buildServer() {
     return false;
   }
 
+  // better-sqlite3's JS wrapper MUST be bundled (the install dir has no
+  // node_modules); the compiled .node binary is sideloaded by server/index.ts
+  // via the `nativeBinding` option, so the bundled `require('bindings')` path
+  // is never executed at runtime.
   const result = spawnSync(
     process.execPath,
     [
       tsupCli,
       "--entry.server", "server/index.ts",
       "--format", "cjs",
-      "--external", "better-sqlite3",
       "--no-splitting",
       "--no-config",
       "--out-dir", "dist",

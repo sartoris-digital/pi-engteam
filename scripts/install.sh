@@ -48,4 +48,4 @@ for md in "$SCRIPT_DIR/../agents/"*.md; do
 done
 
 echo ""
-echo "pi-engineering installed. Restart Pi and run /team-start to boot the team."
+echo "pi-engineering installed. Restart Pi, then run /workflows or /plan \"<goal>\"."
