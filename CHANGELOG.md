@@ -6,9 +6,11 @@ This log is organized by user-visible capability rather than by commit. Each sec
 
 ---
 
-## Unreleased — multi-agent evolution
+## 2.0.0 — multi-agent evolution
 
-Forty-one phase commits between Phases 4.5 and 6.5 lifted the extension from a single-workflow runner into a full cross-team adversarial system. Capability summary:
+Forty-one phase commits between Phases 4.5 and 6.5 lifted the extension from a single-workflow runner into a full cross-team adversarial system. The major bump reflects the new cross-team consult workflow, the parallel-DAG executor, multi-round revision, the TillDone footer + system reminders, and the per-agent expertise system — none of which were present in 1.0.0.
+
+Capability summary:
 
 ### Cross-team consult workflow
 
