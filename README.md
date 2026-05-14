@@ -1,6 +1,6 @@
 # pi-engineering
 
-A [Pi coding agent](https://pi.dev) extension that wires a multi-agent engineering team into your Pi session. Agents communicate over a message bus, execute structured workflows, and are kept safe by a three-layer safety guard with cryptographic approval tokens.
+A [Pi coding agent](https://pi.dev) extension that wires a multi-agent engineering team into your Pi session. Agents communicate over a message bus, execute structured workflows, and are kept safe by a four-layer safety guard with cryptographic approval tokens. Runs on the Pi Agent SDK — credentials are resolved through Pi's `ModelRegistry`, so any configured provider (Claude Code subscription, GitHub Copilot, OpenAI, …) works transparently.
 
 ## Table of Contents
 
@@ -26,13 +26,17 @@ pi-engineering gives Pi a persistent team of specialist agents — planner, impl
 
 **Key capabilities:**
 
-- 12 built-in workflows (plan → build → review, spec → design → plan → build → review, issue analysis, debug, triage, migrate, refactor, and more)
-- 16 specialist agents, each with a focused system prompt and scoped tool access
-- Inter-agent messaging via a typed pub/sub message bus
-- Three-layer safety guard: hard blockers, plan-mode gate, and approval-token gate
-- SQLite-backed observability server with a web dashboard
+- 12 built-in workflows (plan → build → review, spec → design → plan → build → review, issue analysis, debug, triage, migrate, refactor, docs, fix-loop, and more)
+- 23 agents organised into a three-tier hierarchy: an Orchestrator routes to four team Leads (planning, engineering, validation, investigation), who delegate to 18 specialist workers
+- Cross-team adversarial `/consult` workflow — parallel Lead positions, optional revision rounds, synthesised verdict
+- Inter-agent messaging via a typed pub/sub message bus; agents are spawned on-demand as Pi subprocesses per step (no boot step required)
+- Four-layer safety guard: hard blockers (Layer A), plan-mode (Layer B), default-deny classification (Layer C), and per-agent domain lock (Layer D)
+- Cryptographic approval-token gate (HMAC-SHA256) for destructive operations; Judge is the sole signing authority
+- Built-in secrets vault with leak-scrub and a Verifier→Learner pipeline that promotes new verifier scripts behind staged Judge approval
+- SQLite-backed observability server with a web dashboard and a real-time TillDone footer in Pi's TUI
 - Memory Core: automatic session summarisation into daily logs with wisdom capture, and optional Obsidian vault sync
-- Live step-progress labels in Pi's TUI: every agent session shows `agentName [✓ step1 · ● step2 · ○ step3]` while a workflow runs
+- Per-provider rate-limit guard (Anthropic, OpenAI, Google, Mistral) sourced from `~/.pi/engineering-team/rate-limits.json`
+- Runs on the **Pi Agent SDK** — credentials are resolved through Pi's `ModelRegistry`, so Claude Code subscription, GitHub Copilot, OpenAI, or any other configured provider works transparently with no separate API key
 - Loads directly from TypeScript source via Pi's built-in transpiler (`pi install`) or as a pre-built ESM bundle (`pnpm engineering:install`)
 
 ---
@@ -42,19 +46,24 @@ pi-engineering gives Pi a persistent team of specialist agents — planner, impl
 ```
 Pi coding agent
 └── pi-engineering extension (src/index.ts via jiti on pi install; dist/index.js on build install)
-    ├── ADWEngine          workflow orchestration / run state machine
-    ├── TeamRuntime        agent session lifecycle + tool injection + step-progress labels
+    ├── ADWEngine          workflow orchestration / run state machine / DAG resolver
+    ├── TeamRuntime        per-step agent subprocess spawn + system-prompt assembly + tool injection
     ├── MessageBus         typed pub/sub (agent → agent or broadcast)
-    ├── SafetyGuard        three-layer tool-call interceptor
+    ├── SafetyGuard        four-layer tool-call interceptor (hard / plan-mode / classification / domain-lock)
+    ├── RateLimitGuard     per-provider token+request budget gate
+    ├── SecretsVault       OS-keyring-backed vault + leak scrubber
+    ├── MemoryCore         session summariser + wisdom buffer + Obsidian sync
     ├── Observer           event emission to disk + optional HTTP sink
-    └── Commands           /team-start, /team-stop, /run-*, /observe, /doctor
-        └── Workflow shortcuts (/plan, /fix, /debug, …)
+    └── Commands           /run-*, /plan, /fix, /debug, /spec, /issue, /consult,
+                           /workflows, /learn, /observe, /engineering-doctor, /secret-*
 
 Observability server (dist/server.cjs — CJS, spawned as child process)
     ├── Fastify HTTP API   /health, /runs, /runs/:id/events, /stats
     ├── EventWatcher       tails runs/<runId>/events.jsonl → SQLite
     └── SQLite DB          ~/.pi/engineering-team/server/engineering-team.sqlite
 ```
+
+Agents are not pre-booted at extension load. Each step's `TeamRuntime.deliver()` spawns a fresh Pi subprocess (`pi -p --no-session --model <model> --append-system-prompt <prompt> <message>`), passes the assembled system prompt + run context via env vars, waits for the subprocess to emit a `VerdictEmit` payload to disk, and then exits. This keeps agent state ephemeral and gives the controller deterministic teardown semantics.
 
 ### Directory layout at runtime
 
@@ -121,7 +130,7 @@ Pi clones the repo, runs `npm install`, and automatically executes `scripts/post
 | Installs native addon | `better_sqlite3.node` → `~/.pi/engineering-team/better_sqlite3.node` |
 | Installs agents | `agents/*.md` → `~/.pi/agent/agents/engineering-*.md` |
 
-Pi loads the extension directly from `src/index.ts` via its built-in TypeScript transpiler — no separate build step required. Restart Pi, then run `/team-start` to boot the team.
+Pi loads the extension directly from `src/index.ts` via its built-in TypeScript transpiler — no separate build step required. Restart Pi and the team is registered automatically; run `/workflows` to list the available shortcuts or jump straight into `/plan "<goal>"`.
 
 ### Install from source (pnpm)
 
@@ -147,21 +156,19 @@ bash scripts/uninstall.sh
 
 ## Commands
 
-### Team lifecycle
-
-| Command | Description |
-|---------|-------------|
-| `/team-start` | Boot all agents into idle state. Required before running any workflow. |
-| `/team-stop` | Gracefully dispose all agent sessions. |
+The extension surfaces 31 slash commands. There is no longer a team-start / team-stop step — agents are spawned per workflow step as needed.
 
 ### Run management
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `/run-start` | `/run-start <workflow> "<goal>" [maxIter] [maxCost]` | Start a workflow run. |
-| `/run-resume` | `/run-resume <runId>` | Resume a paused run from where it stopped. |
-| `/run-abort` | `/run-abort <runId>` | Abort a running or paused run. |
-| `/run-status` | `/run-status <runId>` | Show current state, step, iteration, and budget. |
+| `/run-start` | `/run-start <workflow> "<goal>" [maxIter] [maxCost]` | Start a workflow run by ID. |
+| `/run-status` | `/run-status <runId>` | Show current status, step, iteration, budget, and TillDone task progress for a run. |
+| `/run-resume` | `/run-resume <runId>` | Resume a paused or interrupted run. |
+| `/run-cancel` | `/run-cancel <runId>` | Request graceful cancellation at the next step boundary. Run state is preserved. |
+| `/run-abort` | `/run-abort <runId>` | Deprecated alias for `/run-cancel`. |
+| `/run-rollback` | `/run-rollback <runId>` | Wipe a run's directory, leaving only `cancelled.log`. Use when `/run-cancel` didn't take. |
+| `/run-plan-mode` | `/run-plan-mode on\|off` | Toggle plan mode (read-only) for the active run. |
 
 ### Workflow shortcuts
 
@@ -201,7 +208,10 @@ Shortcuts let you invoke workflows with a natural-language goal. Each command ta
 /docs "All exported functions in src/api/"
 ```
 
-Run `/workflows` to print the full list with examples in your Pi session.
+| `/workflows` | — | Print the full list of workflows with example usage. |
+| `/consult <topic>` | (built per-call) | Cross-team adversarial review. Parallel Lead positions, optional revision rounds, synthesised verdict. Flags: `[teams=eng,valid,invest] [--rounds N]`. |
+
+Run `/workflows` in your Pi session to print this list with full examples.
 
 Once a shortcut starts a run it prints the run ID and three ways to follow progress:
 
@@ -222,6 +232,23 @@ Watch progress:
 | `/observe` | Start the observability server on port 4747. |
 | `/observe stop` | Stop the observability server. |
 | `/engineering-doctor` | Check installation health: extension, runs dir, agent files, safety config. |
+| `/learn [runId]` | Process verifier gap logs into new verifier scripts. With no runId, picks the latest run. |
+
+### Secrets vault
+
+The vault is an OS-keyring-backed store (via `@napi-rs/keyring`) used by the `UseSecret` tool. Agents never see raw values — they reference secrets by name and the runtime injects them at execution time.
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `/secret-set` | `/secret-set <NAME> [--note "..."]` | Store a secret in the vault. |
+| `/secret-list` | — | List secret names and metadata (never values). |
+| `/secret-rm` | `/secret-rm <NAME>` | Delete a secret. |
+| `/secret-rotate` | `/secret-rotate <NAME>` | Replace the value of an existing secret. |
+| `/secret-export` | `/secret-export "<path>"` | Encrypted vault backup. |
+| `/secret-import` | `/secret-import <path>` | Import from an encrypted export. |
+| `/secret-scrub` | `/secret-scrub <NAME>` | Vault a leaked secret **and** retroactively scrub it from all run and log files. |
+
+The scrubber also runs proactively: a regex set in `src/secrets/patterns.ts` (Anthropic `sk-ant-*`, OpenAI `sk-proj-*` / `sk-*`, GitHub `github_pat_*` / `ghp_*` / `gho_*`, etc.) is matched against every captured event so leaked credentials are caught at write time, not after-the-fact.
 
 ---
 
@@ -332,35 +359,64 @@ The engine checks budget at the start of each iteration. Exhaustion halts the ru
 
 ## Agent Roster
 
-The team is defined in `agents/*.md`. Each file becomes an agent definition installed to `~/.pi/agent/agents/engineering-*.md`.
+The team is defined in `agents/*.md` and registered in `src/index.ts` (`AGENT_DEFS`). Each file becomes an agent definition installed to `~/.pi/agent/agents/engineering-*.md`. Agents are spawned on demand by `TeamRuntime.deliver()` as one-shot `pi -p` subprocesses; there is no boot step.
 
-### Core team — spawned at `/team-start`
+The roster is organised into a three-tier hierarchy:
+
+```
+orchestrator (top-level router)
+├── planning-lead       ↳ planner · architect · discoverer · codebase-cartographer · knowledge-retriever
+├── engineering-lead    ↳ implementer · root-cause-debugger · performance-analyst
+├── validation-lead     ↳ reviewer · tester · security-auditor
+└── investigation-lead  ↳ incident-investigator · bug-triage · observability-archivist · issue-analyst
+
+cross-functional (no team)
+├── judge       — sole approval-token signer
+├── verifier    — read-only claim atomiser, runs verifier-scripts
+└── learner     — promotes new verifier-scripts behind Judge approval
+```
+
+### Orchestrator + Leads
 
 | Agent | Model | Role |
 |-------|-------|------|
-| `planner` | claude-opus-4-6 | Decomposes goals into tasks, writes `plan.md`, selects workflow steps. Runs a 6-lens requirements gap analysis (missing questions, undefined guardrails, scope risks, unvalidated assumptions, missing acceptance criteria, edge cases) before writing the plan. |
-| `implementer` | claude-sonnet-4-6 | Writes code, scaffolds features, applies project conventions, requests approval for destructive ops |
-| `reviewer` | claude-opus-4-6 | Deep code inspection: logic errors, bad abstractions, hidden coupling, regression risk. Requires 3 evidence gates — fresh test output, LSP diagnostics, and acceptance-criteria coverage — before issuing any verdict. |
+| `orchestrator` | claude-opus-4.6 | Top-level router. Classifies requests, decomposes into team-shaped tasks, dispatches to Leads in parallel by default, synthesises Lead verdicts back to the user. Never addresses workers directly. |
+| `planning-lead` | claude-opus-4.6 | Coordinates planning workers; produces a single team position from their VerdictEmits. |
+| `engineering-lead` | claude-opus-4.6 | Coordinates engineering workers; escalates scope expansion back to the Orchestrator. |
+| `validation-lead` | claude-opus-4.6 | Coordinates validation workers; a security-auditor Critical/High FAIL is blocking and escalated intact. |
+| `investigation-lead` | claude-opus-4.6 | Coordinates investigation workers; incident syntheses must include a Timeline section. |
 
-### Specialist agents — spawned by workflows on demand
+Leads delegate; they do not execute. Their `Write`/`Edit` access is restricted by Layer D to the consult-artifact directories `<run>/positions/`, `<run>/adversarial/`, and (orchestrator only) `<run>/synthesis.md`.
 
-| Agent | Role |
-|-------|------|
-| `issue-analyst` | Fetches issue tickets from GitHub Issues, Azure DevOps, or Jira; detects tracker type; extracts requirements and writes `issue-brief.md` (used by `/issue`) |
-| `discoverer` | Reads a goal and produces a structured set of 3–5 discovery questions (used by `/spec` discover step) |
-| `architect` | System design, ADR authoring, service boundary and API design |
-| `codebase-cartographer` | Builds mental model of existing code, maps modules and dependencies |
-| `bug-triage` | Classifies bugs P0–P3, deduplicates, assigns ownership area |
-| `incident-investigator` | Pulls logs, traces, and metrics; builds probable-cause hypothesis tree using the same 7-stage competing-hypothesis protocol as `root-cause-debugger`, with a Timeline section in its output. |
-| `judge` | Final verdict authority; the only agent that can call `GrantApproval` |
-| `knowledge-retriever` | Fetches and summarizes code, docs, ADRs, and tickets |
-| `observability-archivist` | Retrieves run history, event logs, and traces |
-| `performance-analyst` | Latency, N+1, memory, and concurrency review |
-| `root-cause-debugger` | Deep code-path tracing across services, commit correlation. Uses a 7-stage competing-hypothesis protocol: Observe → Hypothesize → Gather evidence → Rebuttal → Rank → Synthesize → Probe. |
-| `security-auditor` | Static analysis, secrets scanning, auth and dependency review |
-| `tester` | Unit, integration, and regression test authoring; coverage gap analysis |
+### Specialist workers
 
-Each agent receives a system prompt from its markdown file plus a team context footer injected at runtime that lists available tools and teammates.
+| Agent | Model | Team | Role |
+|-------|-------|------|------|
+| `planner` | claude-opus-4.6 | planning | Decomposes goals into tasks, writes `plan.md`. Runs a 6-lens requirements gap analysis before producing the plan. |
+| `architect` | claude-opus-4.6 | planning | Writes ADR-style spec.md (Problem · Approach · Acceptance Criteria · Key Interfaces · Out of Scope · Open Questions). |
+| `discoverer` | claude-haiku-4.5 | planning | Generates 3–5 discovery questions across SCOPE / CONSTRAINTS / SUCCESS / CONTEXT for `/spec`. |
+| `codebase-cartographer` | claude-sonnet-4.6 | planning | Builds mental model of existing code, maps modules, dependencies, hotspots. |
+| `knowledge-retriever` | claude-sonnet-4.6 | planning | Fetches and summarises code, docs, ADRs, and tickets into `context-pack.md`. |
+| `implementer` | claude-sonnet-4.6 | engineering | Writes code with TDD; calls `RequestApproval` for any destructive op. |
+| `root-cause-debugger` | claude-opus-4.6 | engineering | 7-stage competing-hypothesis protocol: Observe → Hypothesise → Gather → Rebut → Rank → Synthesise → Probe. Produces `fix-plan.md`. |
+| `performance-analyst` | claude-sonnet-4.6 | engineering | Latency, N+1, memory, concurrency review with file:line references. |
+| `reviewer` | claude-opus-4.6 | validation | Deep inspection; requires 3 evidence gates (fresh test output, LSP diagnostics, acceptance-criteria coverage) before any verdict. |
+| `tester` | claude-sonnet-4.6 | validation | TDD: writes failing test, validates fix, confirms `pnpm test` is clean. |
+| `security-auditor` | claude-opus-4.6 | validation | Static analysis, secrets scanning, auth + dependency review. Read-only; Critical/High findings force FAIL. |
+| `incident-investigator` | claude-opus-4.6 | investigation | Same 7-stage protocol as root-cause-debugger, with a Timeline section. |
+| `bug-triage` | claude-haiku-4.5 | investigation | Classifies P0–P3, deduplicates, assigns owner area. |
+| `observability-archivist` | claude-sonnet-4.6 | investigation | Reads run event streams, builds trace timelines, surfaces anomalies. |
+| `issue-analyst` | claude-haiku-4.5 | investigation | Fetches tickets from GitHub / ADO / Jira CLIs, writes `issue-brief.md`. |
+
+### Cross-functional
+
+| Agent | Model | Role |
+|-------|-------|------|
+| `judge` | claude-opus-4.6 | Final verdict authority. The only agent that can call `GrantApproval`. Before voting PASS: runs `git diff`, confirms tests pass, verifies all reviewer issues are addressed. |
+| `verifier` | claude-sonnet-4.6 | Read-only verifier. Atomises worker claims and runs deterministic scripts under `~/.pi/engineering-team/verifier-scripts/` via `uv run --script`. Restricted to allowlisted Bash by Layer D. |
+| `learner` | claude-opus-4.6 | Privileged on-demand agent that converts verifier gap logs into staged verifier-script upgrades. Three safety gates: domain lock, Judge approval per script, fixture validation before promotion. |
+
+Each agent receives its system prompt from its markdown file plus a team-context footer injected at runtime that lists available tools and teammates. Per-agent tool allowlists in `AGENT_DEFS` are enforced by Layer D at the `tool_call` boundary, not just as prompt metadata.
 
 ---
 
@@ -436,7 +492,7 @@ Tokens are HMAC-SHA256 signed and verified by the SafetyGuard on every tool call
 
 ## Safety System
 
-Three layers of protection, evaluated in order on every tool call.
+Four layers of protection, evaluated in order on every tool call.
 
 ### Layer A — Hard blockers (always on)
 
@@ -447,18 +503,27 @@ Certain patterns are always blocked regardless of approval tokens:
 - `git push --force` to `main` or `master`
 - Writing to `.env`, `.env.*`, `launchd`, `systemd` configs
 - Writing to device files
+- Worker writes to `<run>/tasks.json` (controller-owned)
+- All Lead and Orchestrator writes outside their consult-artifact paths (`force_block`)
+- Unsafe agent names at the runtime boundary (must match `[a-z][a-z0-9-]*`)
 
 ### Layer B — Plan-mode gate
 
 When `planMode` is enabled in a run's state, agents are restricted to read-only tools: `Read`, `Grep`, `Glob`, `Bash` with safe verbs (`cat`, `ls`, `git status/diff/log`). Any write or execute attempt is blocked.
 
-### Layer C — Default-deny for destructive operations
+### Layer C — Default-deny classification
 
 `Bash` execution and file mutations (`Write`, `Edit`) require a valid approval token unless the command is classified as safe.
 
 **Safe commands** (no approval needed): `cat`, `ls`, `find`, `grep`, `git status/diff/log/blame/branch`, test runners, linters, type checkers.
 
 **Destructive commands** (approval required): `npm install` with new packages, `git push`, `git checkout -b`, file redirects, arbitrary script execution.
+
+### Layer D — Per-agent domain lock
+
+Each agent in `AGENT_DEFS` declares an explicit tool allowlist. Layer D enforces it at the `tool_call` boundary inside the agent subprocess — declaring `tools: [...]` on an AgentDefinition is **not** prompt metadata, it's a hard runtime gate. An unknown agent name fails closed for `Bash`, `Write`, `Edit`, `Find`, `UseSecret`, `RequestApproval`, and `GrantApproval`.
+
+Domain policies (per-team write-path restrictions, consult-artifact scopes, verifier-script allowlist for the `verifier` agent) live in `teams.yaml` / `teams.local.yaml` and are loaded at controller boot and inside every subprocess.
 
 ### Approval flow
 
@@ -653,26 +718,38 @@ Override the model for any agent or set budget downshift rules:
 
 ```
 src/
-├── index.ts                 ← extension entry point
+├── index.ts                 ← extension entry point (AGENT_DEFS lives here)
 ├── types.ts                 ← shared types (TeamMessage, RunState, VerdictPayload, …)
 ├── config.ts                ← safety + model routing config loader
 ├── commands/
-│   ├── team-start.ts
-│   ├── team-stop.ts
 │   ├── run-start.ts
 │   ├── run-resume.ts
-│   ├── run-abort.ts
+│   ├── run-cancel.ts
+│   ├── run-abort.ts         ← deprecated alias for /run-cancel
+│   ├── run-rollback.ts
+│   ├── run-plan-mode.ts
 │   ├── run-status.ts
-│   ├── workflow-shortcuts.ts
+│   ├── workflow-shortcuts.ts  ← /plan, /fix, /debug, /workflows, /consult, etc.
 │   ├── spec.ts              ← /spec command + input hook
 │   ├── spec-utils.ts        ← parseQuestionsFile, formatAnswers
 │   ├── issue.ts             ← /issue command (tracker detection + issue-analyze)
+│   ├── issue-tracker.ts     ← tracker auto-detection
+│   ├── learn.ts             ← /learn — verifier-script promotion entrypoint
 │   ├── observe.ts
-│   └── doctor.ts
+│   ├── doctor.ts
+│   ├── secret-set.ts
+│   ├── secret-list.ts
+│   ├── secret-rm.ts
+│   ├── secret-rotate.ts
+│   ├── secret-export.ts
+│   ├── secret-import.ts
+│   ├── secret-scrub.ts
+│   └── secret-shared.ts     ← shared vault helpers
 ├── ui/
 │   └── QuestionWizard.ts    ← tabbed TUI wizard component (used by /spec)
 ├── workflows/
 │   ├── types.ts             ← Workflow, Step, StepContext, StepResult
+│   ├── consult.ts           ← /consult — adversarial multi-team review
 │   ├── issue-analyze.ts     ← fetch ticket + write issue-brief.md
 │   ├── spec-plan-build-review.ts
 │   ├── plan-build-review.ts
@@ -688,24 +765,40 @@ src/
 ├── adw/
 │   ├── ADWEngine.ts         ← run lifecycle, step dispatch, verdict routing
 │   ├── ActiveRun.ts         ← active-run.json read/write/clear helpers
+│   ├── DagResolver.ts       ← parallel-step DAG validation + resolution
+│   ├── ConversationProjection.ts
+│   ├── TillDoneFooter.ts    ← live task-progress footer in Pi's TUI
 │   ├── RunState.ts          ← atomic state persistence
 │   └── BudgetGuard.ts       ← iteration / cost / time / token limits
 ├── team/
-│   ├── TeamRuntime.ts       ← agent session management + tool injection
+│   ├── TeamRuntime.ts       ← per-step agent subprocess spawn + tool injection
 │   ├── MessageBus.ts        ← typed pub/sub
+│   ├── modelProvider.ts     ← model-ID → provider (anthropic/openai/google/…)
 │   └── tools/
 │       ├── SendMessage.ts
 │       ├── VerdictEmit.ts
-│       ├── TaskList.ts
+│       ├── TaskList.ts      ← also exports TaskUpdate
 │       ├── RequestApproval.ts
 │       └── GrantApproval.ts
 ├── safety/
-│   ├── SafetyGuard.ts       ← three-layer tool-call interceptor
+│   ├── SafetyGuard.ts       ← four-layer tool-call interceptor
 │   ├── classifier.ts        ← command classification (safe/destructive/blocked)
 │   ├── approvals.ts         ← HMAC-SHA256 token sign/verify
+│   ├── DomainLock.ts        ← Layer D per-agent domain policies
+│   ├── HardBlockers.ts      ← Layer A hard-block registry
 │   ├── PlanMode.ts
 │   ├── paths.ts
 │   └── patterns.ts
+├── rateLimit/
+│   ├── RateLimitGuard.ts    ← per-provider token+request budget gate
+│   └── config.ts            ← loadRateLimitConfig from ~/.pi/.../rate-limits.json
+├── secrets/
+│   ├── Integration.ts       ← wires UseSecret tool + scrubber into Pi
+│   ├── UseSecret.ts         ← agent-facing tool
+│   ├── Vault.ts             ← OS-keyring-backed store
+│   ├── Scrubber.ts          ← scans run/log files for leaked patterns
+│   ├── patterns.ts          ← Anthropic / OpenAI / GitHub / etc. leak regex
+│   └── …                    ← export, import, list, set, rotate, rm command backends
 ├── observer/
 │   ├── Observer.ts          ← event emission
 │   ├── EventWriter.ts       ← JSONL writer
@@ -716,6 +809,8 @@ src/
 │   ├── snapshot.ts          ← writeSnapshot() — serialises flush payload to temp JSON
 │   ├── spawnFlush.ts        ← ensureScriptsInstalled(), spawnFlush() detached spawn
 │   └── config.ts            ← loadMemoryConfig(), MEMORY_DEFAULTS, expandTilde()
+├── learner/                 ← verifier-gap classification + staged-promotion logic
+├── verifier/                ← VerifierLoop runtime (read-only claim atomiser)
 └── assets/
     └── second-brain/
         └── scripts/
@@ -729,14 +824,16 @@ server/
 ├── index.ts                 ← server entry point (CJS, spawned as child process)
 ├── server.ts                ← Fastify app builder
 ├── routes.ts                ← REST endpoints
+├── dashboard.ts             ← HTML dashboard
 ├── storage.ts               ← SQLite CRUD
 ├── watcher.ts               ← EventWatcher (tails JSONL → SQLite)
 └── types.ts                 ← ServerOptions
 
-agents/                      ← agent markdown definitions
+agents/                      ← agent markdown definitions (23 files)
 scripts/
 ├── install.sh
-└── uninstall.sh
+├── uninstall.sh
+└── postinstall.mjs
 tsup.config.ts               ← two-target build (ESM extension + CJS server)
 ```
 
@@ -759,8 +856,10 @@ node scripts/postinstall.mjs  # build server + copy artifacts (runs automaticall
 
 ### Adding a new agent
 
-1. Create `agents/my-agent.md` with the agent's system prompt and tool permissions.
-2. If the agent needs to be auto-spawned at `/team-start`, add it to the agent list in `src/commands/team-start.ts`.
+1. Create `agents/my-agent.md` with the agent's system prompt and tool permissions (the markdown file is installed to `~/.pi/agent/agents/engineering-<name>.md` by `postinstall.mjs`).
+2. Add an entry to `AGENT_DEFS` in `src/index.ts` with `name`, `model`, `systemPrompt`, `team`, and (recommended) an explicit `tools: [...]` allowlist that Layer D will enforce.
+3. If the agent should be reachable via a Lead, mention it in that Lead's `systemPrompt` so it is included in the team-context footer.
+4. If the agent needs to write outside the default workspace, add a domain policy entry in `teams.yaml` / `teams.local.yaml`.
 
 ### Build system
 
@@ -779,47 +878,61 @@ Pi loads the extension in an isolated context without access to `node_modules`, 
 
 ## How It Works End-to-End
 
-Here is the full flow from `/team-start` to a completed run:
+Here is the full flow from a shortcut invocation to a completed run. Agents are not pre-booted — each step spawns its own Pi subprocess.
 
 ```
-1. /team-start
-   └── TeamRuntime spawns Pi agent sessions for each agent
-       └── Each session receives: system prompt + custom tools + team context
+1. Extension load
+   └── Pi loads src/index.ts via its built-in transpiler
+   └── AGENT_DEFS registered, slash commands registered, SafetyGuard installed,
+       RateLimitGuard initialised, MemoryCore hooks attached
+       (no team-start step — agents are spawned per-step on demand)
 
 2. /plan "add rate limiting to the API gateway"
-   └── Shortcut command parses goal
+   └── workflow-shortcuts.ts parses the goal
    └── ADWEngine.startRun({ workflow: "plan-build-review", goal, budget: {} })
        └── Creates RunState in ~/.pi/engineering-team/runs/<runId>/state.json
        └── Emits lifecycle:run_started event
 
 3. ADWEngine.executeRun(runId) — step: "plan"
-   └── TeamRuntime labels updated: "planner [● plan · ○ build · ○ review]" on all sessions
-   └── Builds StepContext (goal, runId, prior artifacts)
-   └── MessageBus delivers prompt to "planner" agent
-   └── SafetyGuard intercepts all tool calls in real time
-       └── Layer A: blocks rm -rf, sudo, force-push
-       └── Layer B: plan-mode allows read-only tools only
-   └── Planner calls TaskUpdate (writes plan), VerdictEmit("plan", "PASS", artifacts=["plan.md"])
+   └── TillDone footer shows "planner [● plan · ○ build · ○ review]" in Pi's TUI
+   └── ADWEngine builds StepContext (goal, runId, prior artifacts)
+   └── TeamRuntime.deliver("planner", message):
+       1. Builds the full system prompt (base + team context + expertise + system notes)
+       2. RateLimitGuard.acquire(provider) reserves capacity
+       3. spawn("pi", ["-p", "--no-session", "--model", "claude-opus-4.6",
+                       "--append-system-prompt", <file>, <message>], {env: …})
+       4. SafetyGuard (loaded inside the subprocess) intercepts every tool_call
+          ── Layer A: hard-block rm -rf / sudo / force-push / tasks.json writes
+          ── Layer B: plan-mode allow-list (Read/Grep/Glob/safe Bash) when active
+          ── Layer C: default-deny classification for Bash/Write/Edit
+          ── Layer D: per-agent tool allowlist + domain write paths
+       5. Planner calls TaskUpdate, then VerdictEmit("plan","PASS",artifacts=["plan.md"])
+       6. Subprocess exits; controller reads verdict from disk, releases the rate-limit ticket
    └── ADWEngine receives verdict → transitions to "build"
-   └── TeamRuntime labels updated: "planner [✓ plan · ● build · ○ review]" on all sessions
 
 4. Step: "build"
    └── StepContext includes plan.md artifact from previous step
-   └── MessageBus delivers prompt to "implementer" agent
+   └── TeamRuntime.deliver("implementer", …) spawns a fresh subprocess
    └── Implementer calls RequestApproval("bash", "npm install express-rate-limit", "new dep")
-   └── MessageBus notifies "judge" with approval request
+       → pending/<id>.json written; subprocess exits with NEEDS_MORE
+   └── ADWEngine routes a follow-up message to "judge"
    └── Judge calls GrantApproval(requestId) → signed HMAC token stored on disk
-   └── Implementer calls Bash("npm install express-rate-limit") with token
-   └── SafetyGuard Layer C: verifies HMAC + TTL → allows
-   └── Implementer calls VerdictEmit("build", "PASS", artifacts=["src/middleware/rateLimit.ts"])
+   └── ADWEngine resumes the implementer step; the new subprocess sees the token
+   └── Implementer calls Bash("npm install express-rate-limit") with tokenId
+       → SafetyGuard Layer C verifies HMAC + TTL + scope → allows
+   └── Implementer calls VerdictEmit("build","PASS",artifacts=["src/middleware/rateLimit.ts"])
 
 5. Step: "review"
    └── StepContext includes both artifacts
-   └── MessageBus delivers prompt to "reviewer" agent
-   └── Reviewer inspects code, calls VerdictEmit("review", "FAIL", issues=["missing test coverage", "…"])
+   └── TeamRuntime.deliver("reviewer", …) spawns a fresh subprocess
+   └── Reviewer runs its 3 evidence gates (test output, LSP diagnostics, acceptance coverage)
+   └── Reviewer calls VerdictEmit("review", "FAIL", issues=["missing test coverage", "…"])
    └── ADWEngine receives FAIL verdict → run ends with status "failed"
+       (or routes back into the fix loop if the workflow is plan-build-review-fix)
 
 6. Run complete
-   └── Observer has emitted events for every tool call, message, verdict, and budget check
-   └── /observe → dashboard at http://127.0.0.1:4747 shows full trace
+   └── Observer has emitted JSONL events for every tool call, message, verdict, budget tick
+   └── MemoryCore captures wisdom (learnings / decisions / gotchas) from VerdictEmits
+   └── /observe → dashboard at http://127.0.0.1:4747 shows the full trace
+   └── At session end the daily log is appended to second-brain/logs/YYYY-MM-DD.md
 ```
