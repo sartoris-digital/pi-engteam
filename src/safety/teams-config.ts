@@ -218,7 +218,54 @@ function expandHome(p: string): string {
 }
 
 function substitute(s: string, runDir: string, expertiseDir: string): string {
+  // `${RUN_ID}` is intentionally NOT substituted here — it's resolved
+  // per-call inside DomainLock from `PI_ENGINEERING_RUN_ID` (or the
+  // controller's active state) so policies can express tight per-run
+  // paths like `${RUN_DIR}/${RUN_ID}/synthesis.md` without exposing
+  // every run's synthesis.md to every dispatch.
   return s.replace(/\$\{RUN_DIR\}/g, runDir).replace(/\$\{EXPERTISE_DIR\}/g, expertiseDir);
+}
+
+/**
+ * Resolve the `${RUN_ID}` placeholder in a policy's path lists. Called
+ * by DomainLock for every tool_call so each agent dispatch sees its
+ * own run's paths, not whatever runId happened to be active at extension
+ * boot. If `runId` is falsy, the placeholders are stripped to empty
+ * strings (which produces obviously-invalid paths that won't match any
+ * real target — preferable to silently letting an unbound placeholder
+ * through).
+ */
+export function substituteRunIdInPolicy(
+  p: DomainPolicy,
+  runId: string | undefined,
+): DomainPolicy {
+  if (!hasRunIdPlaceholder(p)) return p;
+  const id = runId ?? "";
+  const sub = (s: string) => s.replace(/\$\{RUN_ID\}/g, id);
+  return {
+    read: p.read.map(sub),
+    upsert: p.upsert.map(sub),
+    delete: p.delete.map(sub),
+    force_block: p.force_block,
+    bash_policy: p.bash_policy
+      ? {
+          mode: "script-only",
+          runner: p.bash_policy.runner,
+          allowed_scripts: p.bash_policy.allowed_scripts.map(sub),
+        }
+      : undefined,
+  };
+}
+
+function hasRunIdPlaceholder(p: DomainPolicy): boolean {
+  const needle = "${RUN_ID}";
+  for (const s of p.read) if (s.includes(needle)) return true;
+  for (const s of p.upsert) if (s.includes(needle)) return true;
+  for (const s of p.delete) if (s.includes(needle)) return true;
+  if (p.bash_policy) {
+    for (const s of p.bash_policy.allowed_scripts) if (s.includes(needle)) return true;
+  }
+  return false;
 }
 
 function substitutePolicy(

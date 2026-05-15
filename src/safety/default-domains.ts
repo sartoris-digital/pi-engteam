@@ -32,13 +32,12 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
   // Write outside its declared upsert would warn-and-proceed.
   orchestrator: {
     read: ["."],
-    // `${RUN_DIR}/synthesis.md` resolves to the SHARED runs root, not the
-    // per-run subdirectory, so `<runs>/<runId>/synthesis.md` was blocked
-    // by Layer D's prefix match. The Lead tier sidesteps this by allowing
-    // `${RUN_DIR}` as a directory prefix that covers every per-run
-    // subdir; mirror that here for the orchestrator's consult-synthesis
-    // path. conversation.jsonl appended by the engine is also per-run.
-    upsert: ["${RUN_DIR}"],
+    // `${RUN_ID}` is substituted per tool_call inside DomainLock from
+    // PI_ENGINEERING_RUN_ID, so this is the active run's synthesis.md and
+    // conversation.jsonl only — every OTHER run's same-named files are
+    // out of policy. (Previously the placeholder was unsupported and we
+    // had to widen this to a directory prefix that covered every run.)
+    upsert: ["${RUN_DIR}/${RUN_ID}/synthesis.md", "${RUN_DIR}/${RUN_ID}/conversation.jsonl"],
     delete: [],
     force_block: true,
   },
@@ -50,27 +49,32 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
   // regardless of Layer D policy; carrying them in the policy was
   // dead/contradictory authority that misled readers about what the
   // role can actually do.
+  // Lead policies are scoped to the active run only via `${RUN_ID}`,
+  // resolved per tool_call inside DomainLock. The previous `${RUN_DIR}`
+  // (no run-id) granted cross-run write access — a Lead executing run B
+  // could overwrite run A's position files. With `${RUN_ID}` the Lead
+  // can only write into its own run's directory tree.
   "planning-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}", "specs/"],
+    upsert: ["${RUN_DIR}/${RUN_ID}", "specs/"],
     delete: [],
     force_block: true,
   },
   "engineering-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}"],
+    upsert: ["${RUN_DIR}/${RUN_ID}"],
     delete: [],
     force_block: true,
   },
   "validation-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}"],
+    upsert: ["${RUN_DIR}/${RUN_ID}"],
     delete: [],
     force_block: true,
   },
   "investigation-lead": {
     read: ["."],
-    upsert: ["${RUN_DIR}"],
+    upsert: ["${RUN_DIR}/${RUN_ID}"],
     delete: [],
     force_block: true,
   },

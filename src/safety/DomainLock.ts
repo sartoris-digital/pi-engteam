@@ -10,6 +10,7 @@ import { resolve, dirname, sep } from "path";
 import { parse as shellParse } from "shell-quote";
 import { normalizeToolEvent } from "./SafetyGuard.js";
 import type { DomainPolicy } from "./default-domains.js";
+import { substituteRunIdInPolicy } from "./teams-config.js";
 
 export type DomainOperation = "Read" | "Write" | "Edit" | "Bash" | "Grep" | "Glob" | "Find" | "Ls";
 
@@ -376,7 +377,14 @@ export function registerDomainLock(
     if (!["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Find", "Ls"].includes(toolName)) return undefined;
 
     const agent = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "unknown";
-    const policy = opts.getPolicyForAgent();
+    // Per-call ${RUN_ID} substitution lets policies express tight
+    // per-run paths (e.g. orchestrator's `${RUN_DIR}/${RUN_ID}/synthesis.md`)
+    // without leaking cross-run write access. The loadTeamsConfig pass
+    // resolves `${RUN_DIR}` and `${EXPERTISE_DIR}` at extension boot, but
+    // leaves `${RUN_ID}` for this point — the runId is delivery-scoped.
+    const runId = process.env["PI_ENGINEERING_RUN_ID"];
+    const rawPolicy = opts.getPolicyForAgent();
+    const policy = rawPolicy ? substituteRunIdInPolicy(rawPolicy, runId) : rawPolicy;
 
     if (!policy) {
       opts.emitEvent({
