@@ -5,6 +5,14 @@ import type { EngteamEvent } from "../types.js";
 const DEFAULT_ROTATION_BYTES = 50 * 1024 * 1024; // 50MB
 
 export class EventWriter {
+  // Codex round-3 MEDIUM #4: rotateIfNeeded reads size, then renames a
+  // sequence of files. Two concurrent write() calls both saw size over
+  // threshold and both ran rename loops — the second loop tried to rename
+  // files the first had already moved, dropping events and yielding torn
+  // event.N.jsonl numbering. Serialize all writes per-runId through an
+  // in-process queue chain so rotate runs once and writes append after.
+  private writeQueues = new Map<string, Promise<unknown>>();
+
   constructor(
     private runsDir: string,
     private rotationBytes = DEFAULT_ROTATION_BYTES,
@@ -40,13 +48,36 @@ export class EventWriter {
   }
 
   async write(runId: string, event: EngteamEvent): Promise<void> {
-    await this.ensureDir(runId);
-    await this.rotateIfNeeded(runId);
-    const line = JSON.stringify(event) + "\n";
-    await appendFile(this.getPath(runId), line, "utf8");
+    const prev = this.writeQueues.get(runId) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      await this.ensureDir(runId);
+      await this.rotateIfNeeded(runId);
+      const line = JSON.stringify(event) + "\n";
+      await appendFile(this.getPath(runId), line, "utf8");
+    }, async () => {
+      // Prior write rejected — proceed with this one rather than block forever.
+      await this.ensureDir(runId);
+      await this.rotateIfNeeded(runId);
+      const line = JSON.stringify(event) + "\n";
+      await appendFile(this.getPath(runId), line, "utf8");
+    });
+    const tracked = next.catch(() => undefined);
+    this.writeQueues.set(runId, tracked);
+    // Drop the entry once settled IF no later writer has chained on top.
+    void tracked.finally(() => {
+      if (this.writeQueues.get(runId) === tracked) {
+        this.writeQueues.delete(runId);
+      }
+    });
+    return next;
   }
 
-  async flush(_runId: string): Promise<void> {
-    // appendFile is synchronous at OS level; placeholder for explicit flush calls
+  async flush(runId: string): Promise<void> {
+    // Wait for any in-flight write to settle; appendFile is otherwise
+    // synchronous at OS level so we don't need an explicit fsync.
+    const pending = this.writeQueues.get(runId);
+    if (pending) {
+      try { await pending; } catch { /* drained by caller's own write */ }
+    }
   }
 }

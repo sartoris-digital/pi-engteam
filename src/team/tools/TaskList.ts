@@ -65,19 +65,42 @@ function normalizeTask(item: unknown): Task | null {
 export async function loadTasks(runsDir: string, runId: string): Promise<Task[]> {
   ensureSafeRunId(runId);
   const path = join(runsDir, runId, "tasks.json");
+  let raw: string;
   try {
-    const raw = JSON.parse(await readFile(path, "utf8"));
-    if (!Array.isArray(raw)) return [];
-    // Round-2 C2 defense-in-depth: drop records that don't conform.
-    const out: Task[] = [];
-    for (const item of raw) {
-      const normalized = normalizeTask(item);
-      if (normalized) out.push(normalized);
+    raw = await readFile(path, "utf8");
+  } catch (err) {
+    // ENOENT is the legitimate "no tasks yet" path — no log.
+    // Anything else (EACCES, EIO, EISDIR) is operator-visible.
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      // Codex round-3 MEDIUM #8: previously every error returned [],
+      // hiding a corrupt tasks.json from operators. The orchestrator
+      // then saw no reminders for unassigned/in-flight tasks. Log to
+      // stderr so the operator can diagnose, but still return [] so
+      // the run is not blocked.
+      console.error(
+        `[pi-team] tasks.json read failed for run ${runId}:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
-    return out;
-  } catch {
     return [];
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(
+      `[pi-team] tasks.json parse failed for run ${runId} — orchestrator reminders disabled until repaired:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: Task[] = [];
+  for (const item of parsed) {
+    const normalized = normalizeTask(item);
+    if (normalized) out.push(normalized);
+  }
+  return out;
 }
 
 export async function saveTasks(runsDir: string, runId: string, tasks: Task[]): Promise<void> {
