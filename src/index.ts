@@ -455,6 +455,54 @@ export default async function (pi: ExtensionAPI) {
       pi.registerTool(createGrantApprovalTool(subRunsDir, subRunId));
     }
 
+    // Per-subprocess audit log. Set up BEFORE the vault try block so the
+    // tool_call/tool_result drain has somewhere to write even if the vault
+    // open fails. Same path the secret resolver appends to (below) and the
+    // path TeamRuntime.ingestSubprocessEvents drains on the controller side.
+    const subEventDir = join(process.env["PI_ENGINEERING_RUNS_DIR"] ?? RUNS_DIR, process.env["PI_ENGINEERING_RUN_ID"] ?? "_subprocess");
+    const { mkdirSync: subMkdirSync, appendFileSync: subAppendFileSync } = await import("fs");
+    try { subMkdirSync(subEventDir, { recursive: true }); } catch { /* dir may already exist */ }
+    const subEventToken = process.env["PI_ENGINEERING_SUBPROC_EVENT_TOKEN"] ?? `pid-${process.pid}`;
+    const subEventFile = join(subEventDir, `events-subprocess-${subEventToken}.jsonl`);
+
+    // Forward every tool_call (and corresponding tool_result, where Pi
+    // emits one) the agent makes to the subprocess audit file. The
+    // controller drains this file in ingestSubprocessEvents and forwards
+    // each line through onSubprocessEvent → observer.emit, so each
+    // agent's Write/Edit/Bash/Read shows up in <runDir>/events.jsonl
+    // and the /observe dashboard. Without this, only secret-resolver
+    // events landed in the audit stream and the dashboard saw nothing
+    // tool-level between step.start and step.end.
+    const writeAuditLine = (line: object) => {
+      try {
+        subAppendFileSync(subEventFile, JSON.stringify({ ...line, ts: new Date().toISOString() }) + "\n");
+      } catch { /* best-effort; never fail an agent step on audit-write failure */ }
+    };
+    pi.on("tool_call", async (event: any) => {
+      const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
+      // Cap payload size — some tool args (large file contents) would
+      // otherwise blow the audit file up.
+      const args = event?.args ?? event?.params ?? undefined;
+      const argsStr = args !== undefined ? JSON.stringify(args).slice(0, 2000) : undefined;
+      writeAuditLine({
+        category: "tool_call",
+        type: "invoke",
+        payload: { toolName: rawName, args: argsStr },
+        summary: `tool_call:${rawName}`,
+      });
+      return undefined;
+    });
+    pi.on("tool_result", async (event: any) => {
+      const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
+      writeAuditLine({
+        category: "tool_result",
+        type: "return",
+        payload: { toolName: rawName, blocked: !!event?.blocked },
+        summary: `tool_result:${rawName}`,
+      });
+      return undefined;
+    });
+
     const subVaultDir = join(homedir(), ".pi", "engineering-team");
     const subVaultPath = join(subVaultDir, "secrets.db");
     const subSaltPath = join(subVaultDir, "secrets.salt");
@@ -480,30 +528,13 @@ export default async function (pi: ExtensionAPI) {
       // and runs for both process.exit() and natural drain-exit, so this
       // covers every termination path the controller can observe.
       process.on("exit", () => { try { subVault.close(); } catch { /* best-effort */ } });
-      // Phase 1.5: forward subprocess audit events to a per-pid NDJSON file so the
-       // controller can ingest them after the subprocess exits. Synchronous append is a
-       // known trade-off — best-effort, O(N) file appends — but it guarantees the last
-       // events flush before the subprocess terminates.
-      const subRunsDirForEvents = process.env["PI_ENGINEERING_RUNS_DIR"] ?? RUNS_DIR;
-      const subRunIdForEvents = process.env["PI_ENGINEERING_RUN_ID"] ?? "_subprocess";
-      const { mkdirSync, appendFileSync } = await import("fs");
-      const { join: pathJoin } = await import("path");
-      const eventDir = pathJoin(subRunsDirForEvents, subRunIdForEvents);
-      try { mkdirSync(eventDir, { recursive: true }); } catch {}
-      // Subprocess writes its audit events under the unique deliver-token (set
-      // by TeamRuntime). Falling back to pid is a debugging escape hatch for
-      // adhoc subprocess invocations not driven by TeamRuntime.
-      const eventToken = process.env["PI_ENGINEERING_SUBPROC_EVENT_TOKEN"] ?? `pid-${process.pid}`;
-      const eventFile = pathJoin(eventDir, `events-subprocess-${eventToken}.jsonl`);
+      // Secret-resolver events share the audit file the tool_call drain
+      // writes to (set up above before this try). One file per deliver
+      // token, drained by TeamRuntime.ingestSubprocessEvents after the
+      // subprocess exits.
       const subResolver = createSecretResolver({
         vault: subVault,
-        emitEvent: (evt) => {
-          try {
-            appendFileSync(eventFile, JSON.stringify({ ...evt, ts: new Date().toISOString() }) + "\n");
-          } catch {
-            // best-effort; subprocess audit events are not durable across crashes
-          }
-        },
+        emitEvent: (evt) => writeAuditLine(evt),
       });
       pi.registerTool(createUseSecretTool({ resolver: subResolver, spawnSubprocess: defaultSpawn }));
     } catch (err) {
