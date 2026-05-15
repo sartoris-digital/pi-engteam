@@ -81,11 +81,23 @@ const designStep: Step = {
   required: true,
   pauseAfter: "approving",
   run: async (ctx: StepContext): Promise<StepResult> => {
+    // Give the architect the absolute run-dir paths (mirrors the discover-step
+    // fix in 50fabd6). Without explicit paths the agent writes spec.md to the
+    // project cwd, which works only because the artifact verifier accepts cwd
+    // — the post-design /spec notify ("spec written → <runDir>/spec.md") then
+    // points the user at the wrong file.
+    const answersAbsPath = join(ctx.engine.getRunsDir(), ctx.run.runId, "answers.md");
+    const specAbsPath = join(ctx.engine.getRunsDir(), ctx.run.runId, "spec.md");
     const prompt = `You are writing a feature specification.
 
 GOAL: ${ctx.run.goal}
 
-Read answers.md for the user's discovery answers. Write spec.md with these exact sections:
+Read ${answersAbsPath} for the user's discovery answers.
+
+Write the spec to this EXACT absolute path:
+${specAbsPath}
+
+The file must have these exact sections:
 # Spec: [Feature Name]
 
 ## Problem
@@ -107,7 +119,7 @@ Read answers.md for the user's discovery answers. Write spec.md with these exact
 - [Unresolved decisions to be made during implementation]
 
 Be specific. No filler.
-Call VerdictEmit with step: "design", verdict: "PASS", artifacts: ["spec.md"]`;
+Call VerdictEmit with step: "design", verdict: "PASS", artifacts: ["${specAbsPath}"]`;
 
     try {
       const verdict = await waitForVerdict(ctx, "architect", prompt, "design");
@@ -115,7 +127,7 @@ Call VerdictEmit with step: "design", verdict: "PASS", artifacts: ["spec.md"]`;
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { spec: "spec.md" },
+        artifacts: { spec: specAbsPath },
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
@@ -128,13 +140,19 @@ const planStep: Step = {
   required: true,
   pauseAfter: "approving",
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const specArtifact = ctx.run.artifacts["spec"] ?? "spec.md";
+    const specArtifact = ctx.run.artifacts["spec"] ?? join(ctx.engine.getRunsDir(), ctx.run.runId, "spec.md");
+    const planAbsPath = join(ctx.engine.getRunsDir(), ctx.run.runId, "plan.md");
     const prompt = `You are writing an implementation plan.
 
 GOAL: ${ctx.run.goal}
 SPEC: ${specArtifact}
 
-Read the spec file. Write plan.md with:
+Read the spec at the path above.
+
+Write the plan to this EXACT absolute path:
+${planAbsPath}
+
+The plan must contain:
 1. A file structure table: file path and its single responsibility
 2. Checkbox tasks grouped by phase, each tagged [fast], [standard], or [reasoning]
    - fast: simple edits, field additions
@@ -144,7 +162,7 @@ Read the spec file. Write plan.md with:
 Format tasks as:
 - [ ] [standard] Description — file: path/to/file.ts
 
-Call VerdictEmit with step: "plan", verdict: "PASS", artifacts: ["plan.md"]`;
+Call VerdictEmit with step: "plan", verdict: "PASS", artifacts: ["${planAbsPath}"]`;
 
     try {
       const verdict = await waitForVerdict(ctx, "planner", prompt, "plan");
@@ -152,7 +170,7 @@ Call VerdictEmit with step: "plan", verdict: "PASS", artifacts: ["plan.md"]`;
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { plan: verdict.artifacts?.[0] ?? "plan.md" },
+        artifacts: { plan: verdict.artifacts?.[0] ?? planAbsPath },
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
