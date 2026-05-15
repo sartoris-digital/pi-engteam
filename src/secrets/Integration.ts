@@ -128,9 +128,25 @@ export function registerWatcher(pi: ExtensionAPI, config: IntegrationConfig): vo
     // both interactivePrompt modes auto-vault under the pattern's suggested
     // name. interactivePrompt=true emits a post-hoc notify; the "real" prompt
     // path returns when Pi adds a chooser API.
-    const decision = await processInput(event.text, cfg, async (match) => {
-      return { choice: "vault", vaultName: match.pattern.suggestedName };
-    });
+    //
+    // Codex round-3 MEDIUM: a thrown loadPatterns() (malformed JSON in
+    // secret-patterns.json, broken module export, etc.) previously
+    // propagated up to Pi as an unhandled rejection — and Pi continued
+    // forwarding the user message as if no watcher had run, fail-open.
+    // Fail closed here: any error inside processInput blocks the message
+    // and surfaces a repair hint.
+    let decision: Awaited<ReturnType<typeof processInput>>;
+    try {
+      decision = await processInput(event.text, cfg, async (match) => {
+        return { choice: "vault", vaultName: match.pattern.suggestedName };
+      });
+    } catch (err) {
+      ctx.ui.notify(
+        `Secret-watcher error (input refused for safety): ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+      return { action: "handled" as const };
+    }
 
     if (decision.action === "pass-through") {
       return { action: "continue" as const };

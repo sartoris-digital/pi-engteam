@@ -393,11 +393,43 @@ export class TeamRuntime {
       }
 
       try {
-        const data = await readFile(verdictFile, "utf8");
+        let data: string;
+        try {
+          data = await readFile(verdictFile, "utf8");
+        } catch (err) {
+          // ENOENT here is the legitimate "agent did not emit verdict"
+          // path. Any other read error (EACCES, EIO) should be visible to
+          // the operator so they can repair the run dir.
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+            console.error(
+              `[pi-team] verdict file read failed for ${to} (${runId}):`,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          return undefined;
+        }
         await unlink(verdictFile).catch(() => {});
-        const raw = JSON.parse(data);
+        let raw: unknown;
+        try {
+          raw = JSON.parse(data);
+        } catch (parseErr) {
+          // Codex round-3 MEDIUM: previously every verdict-load error
+          // collapsed to "no verdict", hiding broken JSON from operators.
+          // Log explicitly so a hung-agent producing malformed verdicts
+          // is visible in stderr.
+          console.error(
+            `[pi-team] verdict JSON parse failed for ${to} (${runId}); discarding verdict:`,
+            parseErr instanceof Error ? parseErr.message : String(parseErr),
+          );
+          return undefined;
+        }
         const payload = validateVerdictPayload(raw);
-        if (!payload) return undefined;
+        if (!payload) {
+          console.error(
+            `[pi-team] verdict schema invalid for ${to} (${runId}); discarding verdict.`,
+          );
+          return undefined;
+        }
 
         // Verify claimed artifacts actually exist on disk AND fall under
         // a sane root (cwd or per-run dir). Agents have been observed
