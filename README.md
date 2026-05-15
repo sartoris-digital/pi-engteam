@@ -156,7 +156,7 @@ bash scripts/uninstall.sh
 
 ## Commands
 
-The extension surfaces 31 slash commands. There is no longer a team-start / team-stop step — agents are spawned per workflow step as needed.
+The extension surfaces 32 slash commands. There is no longer a team-start / team-stop step — agents are spawned per workflow step as needed.
 
 ### Run management
 
@@ -178,7 +178,8 @@ Shortcuts let you invoke workflows with a natural-language goal. Each command ta
 |---------|----------|-------------|
 | `/issue <id>` | `issue-analyze` | Fetch a GitHub, Azure DevOps, or Jira ticket and extract structured requirements into `issue-brief.md`. Detects tracker from AGENTS.md / CLAUDE.md when not explicit. |
 | `/spec <goal>` | `spec-plan-build-review` | Discover requirements with an interactive wizard, write a spec and plan for human approval, then build and review. |
-| `/plan <goal>` | `plan-build-review` | Plan and implement a feature, then review for correctness. |
+| `/plan <goal>` | `plan-build-review` | Plan and implement a feature, then review for correctness. **Note**: Pi resolves duplicate slash-command registrations by suffixing later ones (`plan:1`, `plan:2`, …) and matches on the suffixed name. If another installed extension also registers `/plan` (e.g. `oh-my-pi`), our handler will be silently shadowed — use `/eng-plan` instead. |
+| `/eng-plan <goal>` | `plan-build-review` | Collision-free alias for `/plan`. Use this when other extensions also register `/plan`. |
 | `/plan-fix <goal>` | `plan-build-review-fix` | Plan and implement a feature with a self-healing review+fix loop. |
 | `/investigate <incident>` | `investigate` | Gather incident context, build a hypothesis tree, and gate on judge review. |
 | `/triage <bug>` | `triage` | Classify a bug report, assign severity, and route to the right owner. |
@@ -238,15 +239,27 @@ Watch progress:
 
 The vault is an OS-keyring-backed store (via `@napi-rs/keyring`) used by the `UseSecret` tool. Agents never see raw values — they reference secrets by name and the runtime injects them at execution time.
 
+All vault commands take their input via **non-interactive flags** rather than stdin prompts — Pi's TUI consumes stdin while a command handler runs, so a readline prompt would deadlock the session. For any secret that should not enter chat / terminal history, write it to a file with restricted permissions and use the `--from-file` form.
+
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `/secret-set` | `/secret-set <NAME> [--note "..."]` | Store a secret in the vault. |
+| `/secret-set` | `/secret-set <NAME> [--note "..."] (--value <secret> \| --from-file <path>)` | Store a secret. |
 | `/secret-list` | — | List secret names and metadata (never values). |
-| `/secret-rm` | `/secret-rm <NAME>` | Delete a secret. |
-| `/secret-rotate` | `/secret-rotate <NAME>` | Replace the value of an existing secret. |
-| `/secret-export` | `/secret-export "<path>"` | Encrypted vault backup. |
-| `/secret-import` | `/secret-import <path>` | Import from an encrypted export. |
-| `/secret-scrub` | `/secret-scrub <NAME>` | Vault a leaked secret **and** retroactively scrub it from all run and log files. |
+| `/secret-rm` | `/secret-rm <NAME> --yes` | Delete a secret (the `--yes` flag is the required confirmation). |
+| `/secret-rotate` | `/secret-rotate <NAME> (--value <secret> \| --from-file <path>)` | Replace the value of an existing secret. |
+| `/secret-export` | `/secret-export "<path>" (--passphrase <pp> \| --passphrase-from-file <p>) --yes` | Encrypted vault backup. |
+| `/secret-import` | `/secret-import <path> (--passphrase <pp> \| --passphrase-from-file <p>) [--on-conflict overwrite\|skip\|abort]` | Import from an encrypted export (default `--on-conflict skip`). |
+| `/secret-scrub` | `/secret-scrub <NAME> (--value <leaked> \| --from-file <path>)` | Vault a leaked secret **and** retroactively scrub it from all run and log files. |
+
+Example — store a token without it landing in chat history:
+
+```bash
+# Put the value in a file with restricted perms, then load it.
+umask 077 && printf '%s' "$YOUR_REAL_TOKEN" > /tmp/secret.txt
+# Inside Pi:
+/secret-set MY_API_KEY --note "Production API" --from-file /tmp/secret.txt
+shred -u /tmp/secret.txt
+```
 
 The scrubber also runs proactively: a regex set in `src/secrets/patterns.ts` (Anthropic `sk-ant-*`, OpenAI `sk-proj-*` / `sk-*`, GitHub `github_pat_*` / `ghp_*` / `gho_*`, etc.) is matched against every captured event so leaked credentials are caught at write time, not after-the-fact.
 
@@ -688,19 +701,25 @@ Created automatically on first run. Override any field:
 
 ### Model routing — `~/.pi/engineering-team/model-routing.json`
 
-Override the model for any agent or set budget downshift rules:
+Override the model for any agent by name. The override replaces `def.model` from `AGENT_DEFS` in `src/index.ts` for that delivery's `pi -p --model` argument and for the per-provider RateLimitGuard bucket.
+
+The model string is passed to `pi -p --model` verbatim, so use whatever format your Pi setup expects. Examples:
+- `zenmux/anthropic/claude-opus-4.6` if you have ZenMux configured as a gateway provider (matches Pi's models.json registry of `anthropic/claude-opus-4.6` under the `zenmux` provider).
+- `github-copilot/claude-sonnet-4.5` if you're routing through GitHub Copilot's OAuth.
+- `anthropic/claude-opus-4.7` if you have a direct Anthropic provider configured in Pi.
 
 ```json
 {
   "overrides": {
-    "implementer": "claude-sonnet-4-6"
-  },
-  "downshift": {
-    "costThreshold": 3.00,
-    "fallbackModel": "claude-haiku-4-5-20251001"
+    "judge": "github-copilot/claude-opus-4.5",
+    "implementer": "github-copilot/claude-sonnet-4.5"
   }
 }
 ```
+
+The `AGENT_DEFS` defaults assume a ZenMux setup. If your Pi is configured for a different provider you'll see `model_not_available_for_integrator` errors and agent subprocesses hanging at the 10-minute kill timeout — drop a `model-routing.json` like the example above to redirect.
+
+(The `downshift` field in the schema is config-only at the moment — no engine logic consumes it. Wiring it through `BudgetGuard` is a follow-up.)
 
 ### Environment variables
 
