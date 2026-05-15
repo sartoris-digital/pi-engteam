@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { generateRunSecret, signToken, hashArgs } from "../../safety/approvals.js";
+import { loadSafetyConfig } from "../../config.js";
 
 export function createGrantApprovalTool(runsDir: string, runId: string) {
   return defineTool({
@@ -19,6 +20,29 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
       ], { description: "once = single use (default), run-lifetime = valid for entire run" })),
     }),
     execute: async (_id, params) => {
+      // Codex round-4 HIGH: `allowRunLifetimeScope: false` is documented as
+      // a safety kill switch in README but the previous implementation
+      // never read it — any judge call with scope:"run-lifetime" got a
+      // reusable token regardless. Load the live config and reject the
+      // scope when disabled. Also clamp ttlSeconds to the configured cap
+      // so the documented `tokenTtlSeconds` ceiling is enforced.
+      const safety = await loadSafetyConfig();
+      const requestedScope = params.scope ?? "once";
+      if (requestedScope === "run-lifetime" && !safety.allowRunLifetimeScope) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              error: "run-lifetime scope is disabled by safety config (allowRunLifetimeScope=false). Use scope: \"once\" or enable the flag in ~/.pi/engineering-team/safety.json.",
+            }),
+          }],
+          details: {},
+        };
+      }
+      const ttlCap = safety.tokenTtlSeconds ?? 300;
+      const requestedTtl = params.ttlSeconds ?? ttlCap;
+      const ttl = Math.min(requestedTtl, ttlCap);
+
       const requestPath = join(runsDir, runId, "approvals", "pending", `${params.requestId}.json`);
       const request = JSON.parse(await readFile(requestPath, "utf8"));
 
@@ -34,9 +58,8 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
 
       const tokenId = crypto.randomUUID();
       const argsHash = hashArgs({ op: request.op, command: request.command });
-      const ttl = params.ttlSeconds ?? 300;
       const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-      const scope = params.scope ?? "once";
+      const scope = requestedScope;
       const signature = signToken(secret, tokenId, request.op, argsHash, expiresAt);
 
       const token = {
