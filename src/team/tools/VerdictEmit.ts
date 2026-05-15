@@ -3,6 +3,12 @@ import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import type { VerdictPayload } from "../../types.js";
 
+// Module-level flag prevents a second VerdictEmit call from stacking another
+// exit timer if an agent retries or fires the tool twice. First verdict wins
+// the timer; later calls still write the verdict file (last-writer-wins) but
+// do not reschedule the exit. Codex round-1 #3.
+let exitScheduled = false;
+
 export function createVerdictEmitTool(onVerdict: (v: VerdictPayload) => void) {
   return defineTool({
     name: "VerdictEmit",
@@ -49,6 +55,31 @@ export function createVerdictEmitTool(onVerdict: (v: VerdictPayload) => void) {
         writeFileSync(verdictFile, JSON.stringify(params));
       }
       onVerdict(params);
+
+      // Subprocess-mode fast-exit. The agent subprocess has fulfilled its sole
+      // purpose: the verdict file is on disk and TeamRuntime is waiting for
+      // `proc.on("close", …)` to fire. Pi `-p` mode does not consistently exit
+      // after the assistant's final tool call when our extension keeps any
+      // handles open (the per-subprocess Vault SQLite connection, secret
+      // resolver event sinks, the tool_call hook, etc.), so without this hook
+      // every step burns the full 10-minute kill timeout in TeamRuntime.
+      //
+      // Gate on the full subprocess-identity triple — agent mode flag, the
+      // verdict file path, and the agent name — so the controller Pi process
+      // can never trip this exit even if PI_ENGINEERING_AGENT_MODE leaks into
+      // its environment (Codex round-1 #1). Vault cleanup is handled by the
+      // process.on("exit") hook registered in src/index.ts's subprocess
+      // branch (Codex round-1 #5). 250ms grace lets Pi flush its final
+      // assistant response to stdout (Codex round-1 #2/#7).
+      const isAgent =
+        process.env["PI_ENGINEERING_AGENT_MODE"] === "1" &&
+        !!verdictFile &&
+        !!process.env["PI_ENGINEERING_AGENT_NAME"];
+      if (isAgent && !exitScheduled) {
+        exitScheduled = true;
+        setTimeout(() => process.exit(0), 250);
+      }
+
       return {
         content: [{ type: "text" as const, text: `Verdict recorded: ${params.verdict}` }],
         details: {},

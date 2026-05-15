@@ -4,7 +4,11 @@
 
 export function modelToProvider(model: string): string {
   if (!model) return "unknown";
-  const m = model.toLowerCase();
+  // Strip an explicit provider prefix (e.g. "anthropic/claude-opus-4.6",
+  // "openai/gpt-5", "zenmux/anthropic/claude-…"). The bare model id is enough
+  // to identify the upstream provider for rate-limit bucketing.
+  const stripped = model.split("/").pop() ?? model;
+  const m = stripped.toLowerCase();
 
   if (m.startsWith("claude-")) return "anthropic";
   if (m.startsWith("gpt-") || m.startsWith("o1-") || m.startsWith("o3-")) return "openai";
