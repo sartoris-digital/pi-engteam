@@ -1,35 +1,70 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readdir, readFile, writeFile, mkdir, copyFile, stat } from "fs/promises";
+import { readFile as readFileText } from "fs/promises";
 import { join, dirname } from "path";
 import { homedir } from "os";
-import { promptPassphrase } from "../secrets/Passphrase.js";
 import { loadVaultForCommand } from "./secret-shared.js";
 
 const DATA_DIR = join(homedir(), ".pi", "engineering-team");
 const RUNS_DIR = join(DATA_DIR, "runs");
 const SECOND_BRAIN_LOGS = join(DATA_DIR, "second-brain", "logs");
 
+const SCRUB_USAGE =
+  "Usage: /secret-scrub <NAME> (--value <leaked-value> | --from-file <path>)\n" +
+  "  --value <leaked-value>  Inline value to vault + scrub.\n" +
+  "  --from-file <path>      Read the leaked value from a file (preferred for secrets that should not enter chat history).";
+
 export function registerSecretScrubCommand(pi: ExtensionAPI): void {
   pi.registerCommand("secret-scrub", {
     description:
-      "Vault a leaked secret and retroactively scrub it from all run/log files. Usage: /secret-scrub <NAME>",
+      "Vault a leaked secret and retroactively scrub it from all run/log files. Usage: /secret-scrub <NAME> (--value <v> | --from-file <p>)",
     handler: async (args: string, ctx) => {
-      const name = args.trim();
+      // Pi's TUI captures stdin, so a readline-based "Value to scrub:"
+      // prompt would hang. Take the value via --value / --from-file.
+      let s = args;
+      let valueInline: string | undefined;
+      const valueMatch = s.match(/--value\s+(.+?)(?=\s+--from-file\s|\s*$)/);
+      if (valueMatch) {
+        valueInline = valueMatch[1].trim();
+        s = s.replace(valueMatch[0], "").trim();
+      }
+      let fromFile: string | undefined;
+      const fileMatch = s.match(/--from-file\s+(\S+)/);
+      if (fileMatch) {
+        fromFile = fileMatch[1];
+        s = s.replace(fileMatch[0], "").trim();
+      }
+      const name = s.trim();
       if (!name) {
-        ctx.ui.notify("Usage: /secret-scrub <NAME>", "error");
+        ctx.ui.notify(SCRUB_USAGE, "error");
+        return;
+      }
+      if ((valueInline !== undefined) === (fromFile !== undefined)) {
+        ctx.ui.notify(
+          (valueInline !== undefined && fromFile !== undefined)
+            ? "Pass exactly one of --value or --from-file, not both.\n\n" + SCRUB_USAGE
+            : "Provide the leaked value via --value or --from-file.\n\n" + SCRUB_USAGE,
+          "error",
+        );
         return;
       }
 
       let value: string;
-      try {
-        value = await promptPassphrase({ prompt: `Value to scrub for ${name}: `, confirm: false });
-      } catch (err) {
-        ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
-        return;
+      if (valueInline !== undefined) {
+        value = valueInline;
+      } else {
+        try {
+          value = (await readFileText(fromFile!, "utf8")).replace(/\n$/, "");
+        } catch (err) {
+          ctx.ui.notify(
+            `Failed to read --from-file path: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
+          return;
+        }
       }
-
       if (!value) {
-        ctx.ui.notify("Aborted: no value entered.", "error");
+        ctx.ui.notify("Refusing to scrub an empty value.", "error");
         return;
       }
 

@@ -1,19 +1,27 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { loadVaultForCommand, confirmAction } from "./secret-shared.js";
+import { loadVaultForCommand } from "./secret-shared.js";
 
 export function registerSecretRmCommand(pi: ExtensionAPI): void {
   pi.registerCommand("secret-rm", {
-    description: "Delete a secret from the vault. Usage: /secret-rm <NAME>",
+    description: "Delete a secret from the vault. Usage: /secret-rm <NAME> --yes",
     handler: async (args: string, ctx) => {
-      const name = args.trim();
+      // Pi's TUI consumes stdin so an interactive y/N prompt would hang
+      // the session. Require an explicit --yes flag instead so the
+      // delete is intentional but never blocks on a missing keystroke.
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const yesIdx = tokens.indexOf("--yes");
+      const confirmed = yesIdx !== -1;
+      if (confirmed) tokens.splice(yesIdx, 1);
+      const name = tokens.join(" ").trim();
       if (!name) {
-        ctx.ui.notify("Usage: /secret-rm <NAME>", "error");
+        ctx.ui.notify("Usage: /secret-rm <NAME> --yes", "error");
         return;
       }
-
-      const ok = await confirmAction(`Delete secret "${name}"?`);
-      if (!ok) {
-        ctx.ui.notify("Aborted.", "info");
+      if (!confirmed) {
+        ctx.ui.notify(
+          `Refusing to delete "${name}" without --yes. Run: /secret-rm ${name} --yes`,
+          "error",
+        );
         return;
       }
 
