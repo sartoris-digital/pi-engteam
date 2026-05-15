@@ -46,20 +46,16 @@ async function buildServer() {
     return false;
   }
 
-  // better-sqlite3's JS wrapper MUST be bundled (the install dir has no
-  // node_modules); the compiled .node binary is sideloaded by server/index.ts
-  // via the `nativeBinding` option, so the bundled `require('bindings')` path
-  // is never executed at runtime.
+  // Run tsup with the project's tsup.config.ts so the server target's
+  // `noExternal: ["fastify", "better-sqlite3"]` is applied. Previously this
+  // passed --no-config + CLI overrides, but tsup's CLI has no `--noExternal`
+  // flag, so the config's bundling intent was silently dropped and the
+  // emitted server.cjs had bare requires that crash at install location.
+  // Cost is a couple seconds extra because the extension target builds too,
+  // which is acceptable for a one-shot install hook.
   const result = spawnSync(
     process.execPath,
-    [
-      tsupCli,
-      "--entry.server", "server/index.ts",
-      "--format", "cjs",
-      "--no-splitting",
-      "--no-config",
-      "--out-dir", "dist",
-    ],
+    [tsupCli],
     { cwd: ROOT, stdio: "inherit" },
   );
 
@@ -96,11 +92,12 @@ async function installServer() {
     await copyFile(nativeSrc, join(ENGINEERING_DIR, "better_sqlite3.node"));
     console.log(`[pi-engineering] installed native addon → ${join(ENGINEERING_DIR, "better_sqlite3.node")}`);
     // The extension bundle (Vault) needs the same binary at ~/.pi/agent/extensions
-    // so its `nativeBinding` resolver in src/secrets/Vault.ts finds it.
-    if (existsSync(EXTENSION_DIR)) {
-      await copyFile(nativeSrc, join(EXTENSION_DIR, "better_sqlite3.node"));
-      console.log(`[pi-engineering] installed native addon → ${join(EXTENSION_DIR, "better_sqlite3.node")}`);
-    }
+    // so its `nativeBinding` resolver in src/secrets/Vault.ts finds it. mkdir -p
+    // unconditionally so the copy succeeds even on a brand-new install where
+    // Pi has never created ~/.pi/agent/extensions yet.
+    await mkdir(EXTENSION_DIR, { recursive: true });
+    await copyFile(nativeSrc, join(EXTENSION_DIR, "better_sqlite3.node"));
+    console.log(`[pi-engineering] installed native addon → ${join(EXTENSION_DIR, "better_sqlite3.node")}`);
   } else {
     console.warn("[pi-engineering] postinstall: better_sqlite3.node not found — /observe and /secret-* will fail");
   }
@@ -110,7 +107,9 @@ async function installServer() {
  *  keyring binary and copy it next to the extension bundle. pnpm installs only
  *  the matching platform optionalDependency, so a single `.node` is present. */
 async function installKeyringNative() {
-  if (!existsSync(EXTENSION_DIR)) return; // ~/.pi/agent/extensions not present yet
+  // mkdir -p so we always land the native binary even on first-ever installs
+  // before Pi has created ~/.pi/agent/extensions.
+  await mkdir(EXTENSION_DIR, { recursive: true });
 
   async function findKeyringNode(dir, depth) {
     if (depth > 5) return null;
