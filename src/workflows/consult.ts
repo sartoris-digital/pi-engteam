@@ -57,7 +57,7 @@ const dispatchStep: Step = {
       `Your job in this step:`,
       `1. Restate the topic precisely so each Lead understands the question.`,
       `2. Note any framing decisions (scope, constraints) the Leads should respect.`,
-      `3. Acknowledge that each Lead will independently write a position file at <run>/positions/<lead>.md.`,
+      `3. Acknowledge that each Lead will independently write a position file inside the run directory at positions/<lead>.md.`,
       ``,
       `Call VerdictEmit with step="dispatch", verdict="PASS".`,
     ].join("\n");
@@ -86,12 +86,32 @@ function adversarialStepName(short: string, round: number): string {
   return `adversarial-${short}${roundSuffix(round)}`;
 }
 
+// Returns the run-relative path the workflow uses to track the artifact in
+// state.artifacts. The agent prompt MUST receive the resolved absolute path
+// instead (see resolveInRun below) — the literal `<run>` placeholder used
+// here is for engine bookkeeping, not for the LLM.
 function positionFilePath(leadAgent: string, round: number): string {
-  return `<run>/positions/${leadAgent}${roundSuffix(round)}.md`;
+  return `positions/${leadAgent}${roundSuffix(round)}.md`;
 }
 
 function adversarialFilePath(leadAgent: string, round: number): string {
-  return `<run>/adversarial/${leadAgent}${roundSuffix(round)}.md`;
+  return `adversarial/${leadAgent}${roundSuffix(round)}.md`;
+}
+
+// Resolve a run-relative path against the live run directory. The agent's
+// cwd is the project root, so without this every "Write" the lead does
+// lands outside the run dir and the synthesis step can't find positions/.
+function resolveInRun(ctx: StepContext, relPath: string): string {
+  return join(ctx.engine.getRunsDir(), ctx.run.runId, relPath);
+}
+
+// Resolve an artifact path that may be absolute, relative to the run dir,
+// or use the legacy `<run>/` placeholder still recorded in older state.json
+// files. Returns an absolute path the agent can read directly.
+function resolveArtifactPath(ctx: StepContext, p: string): string {
+  if (p.startsWith("<run>/")) return resolveInRun(ctx, p.slice("<run>/".length));
+  if (p.startsWith("/")) return p;
+  return resolveInRun(ctx, p);
 }
 
 function makePositionStep(leadAgent: string, round: number = 1, allShorts?: string[]): Step {
@@ -110,6 +130,12 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
     dependsOn,
     run: async (ctx: StepContext): Promise<StepResult> => {
       const prelude = await preludeFor(ctx);
+      // Resolve every run-relative path to an absolute path the agent can
+      // write to directly. The Lead's cwd is the project root, so an
+      // unqualified "positions/<lead>.md" lands outside the run dir and the
+      // synthesis step can't find it. Same shape as the /spec discoverer fix.
+      const absFilePath = resolveInRun(ctx, filePath);
+      const absConversationPath = resolveInRun(ctx, "conversation.jsonl");
       const promptLines: string[] = [prelude];
       if (round === 1) {
         promptLines.push(
@@ -118,12 +144,14 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
           `TOPIC: ${ctx.run.goal}`,
           ``,
           `Your job:`,
-          `1. Read <run>/conversation.jsonl for the dispatch framing.`,
+          `1. Read ${absConversationPath} for the dispatch framing.`,
           `2. Optionally consult your domain workers via SendMessage.`,
-          `3. Write your team's specialty take to ${filePath}. Cover: assumptions, recommendations, risks specific to your domain, blind spots you see in adjacent teams.`,
+          `3. Write your team's specialty take to this EXACT absolute path:`,
+          `   ${absFilePath}`,
+          `   Cover: assumptions, recommendations, risks specific to your domain, blind spots you see in adjacent teams.`,
           `4. Be concrete. Cite specific files, tests, or behaviors when possible.`,
           ``,
-          `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${filePath}"].`,
+          `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${absFilePath}"].`,
         );
       } else {
         // Phase 6 round-4 H3: derive prior position + adversarial paths
@@ -158,6 +186,11 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
         const priorMissingNote = missingPriorAdvLeads.length > 0
           ? `Note: round-${round - 1} adversarials from these Leads were not produced: ${missingPriorAdvLeads.join(", ")}. Read only the available critiques.`
           : null;
+        // Resolve all prior paths to absolute. Stored artifacts may already
+        // be absolute (post-fix) or use the legacy <run>/ placeholder; handle
+        // both. The resolveArtifactPath helper expands <run>/.
+        const absPriorOwn = resolveArtifactPath(ctx, priorOwnPosRecorded);
+        const absPriorAdvPaths = priorAdvPaths.map((p) => resolveArtifactPath(ctx, p));
         promptLines.push(
           `You are ${leadAgent}. Consult round ${round}: REVISE your position in light of round ${round - 1}'s adversarial critiques.`,
           ``,
@@ -165,13 +198,15 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
           ``,
           ...(priorMissingNote ? [priorMissingNote, ``] : []),
           `Your job:`,
-          `1. Read your round-${round - 1} position: ${priorOwnPosRecorded}`,
+          `1. Read your round-${round - 1} position: ${absPriorOwn}`,
           `2. Read every peer's round-${round - 1} adversarial:`,
-          ...priorAdvPaths.map((p) => `   - ${p}`),
+          ...absPriorAdvPaths.map((p) => `   - ${p}`),
           `3. Decide what changes. Concede where a critique landed. Sharpen where you stand by your prior position. Be explicit about which round-${round - 1} points you're addressing.`,
-          `4. Write the revised position to ${filePath}. Lead with "Changes from round ${round - 1}" so the diff is visible at a glance, then the full revised position.`,
+          `4. Write the revised position to this EXACT absolute path:`,
+          `   ${absFilePath}`,
+          `   Lead with "Changes from round ${round - 1}" so the diff is visible at a glance, then the full revised position.`,
           ``,
-          `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${filePath}"].`,
+          `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${absFilePath}"].`,
         );
       }
       const prompt = promptLines.join("\n");
@@ -218,6 +253,11 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
     dependsOn,
     run: async (ctx: StepContext): Promise<StepResult> => {
       const prelude = await preludeFor(ctx);
+      // Adversarial output path resolved to absolute so the Lead writes
+      // inside the run dir (matching the position-step fix). Without this
+      // the file lands in the project cwd and the synthesis step's
+      // <run>/adversarial/ directory stays empty.
+      const absFilePath = resolveInRun(ctx, filePath);
       // Phase 6 round-3 H2: list only positions that registered an
       // artifact for THIS round. A position step that failed never
       // wrote a file; pointing the adversarial at it would produce a
@@ -231,7 +271,12 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
         const lead = s === "eng" ? "engineering-lead" : s === "valid" ? "validation-lead" : "investigation-lead";
         const recorded = ctx.run.artifacts?.[stepKey];
         if (recorded) {
-          positionPaths.push(recorded.startsWith("<run>/") ? recorded : positionFilePath(lead, round));
+          // Resolve to absolute path — recorded may be absolute (post-fix),
+          // <run>/ legacy, or relative.
+          const resolved = resolveArtifactPath(ctx, recorded.startsWith("<run>/") || recorded.startsWith("/")
+            ? recorded
+            : positionFilePath(lead, round));
+          positionPaths.push(resolved);
         } else {
           missingLeads.push(lead);
         }
@@ -255,10 +300,13 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
         `TOPIC: ${ctx.run.goal}`,
         ``,
         ...(missingNote ? [missingNote, ``] : []),
-        `Read every round-${round} position:`,
+        `Read every round-${round} position (absolute paths):`,
         ...positionPaths.map((p) => `- ${p}`),
         ``,
-        `Then write ${filePath} containing:`,
+        `Then write to this EXACT absolute path:`,
+        `   ${absFilePath}`,
+        ``,
+        `Contents:`,
         `- Explicit pushback on each peer's position. Where do you disagree, and why?`,
         `- Risks they missed.`,
         `- Blind spots in their framing.`,
@@ -267,7 +315,7 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
         ``,
         `Be direct, not polite. The goal is friction that exposes weak claims.`,
         ``,
-        `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${filePath}"].`,
+        `Call VerdictEmit with step="${stepName}", verdict="PASS", artifacts=["${absFilePath}"].`,
       ].join("\n");
       try {
         const verdict = await dispatch(ctx, leadAgent, prompt, stepName);
@@ -313,10 +361,15 @@ function makeSynthesisStep(rounds: number, allShorts: string[]): Step {
     dependsOn: lastRoundAdversarials,
     run: async (ctx: StepContext): Promise<StepResult> => {
       const prelude = await preludeFor(ctx);
-      const filePath = `<run>/synthesis.md`;
+      // Absolute paths for synthesis output + the position/adversarial
+      // directories the orchestrator reads. Same shape as the Lead-step
+      // fix — agents run with cwd = project root, not run dir.
+      const absSynthesisPath = resolveInRun(ctx, "synthesis.md");
+      const absPositionsDir = resolveInRun(ctx, "positions");
+      const absAdversarialDir = resolveInRun(ctx, "adversarial");
       const roundsNote = rounds === 1
-        ? `Read every file in <run>/positions/ and <run>/adversarial/.`
-        : `Read every file in <run>/positions/ and <run>/adversarial/. Note that ${rounds} rounds were run; files without a round suffix are round 1; "-r2"/"-r3"/… suffixes are later rounds. Track how positions EVOLVED across rounds — concessions, persistent disagreements, points that hardened.`;
+        ? `Read every file in ${absPositionsDir}/ and ${absAdversarialDir}/.`
+        : `Read every file in ${absPositionsDir}/ and ${absAdversarialDir}/. Note that ${rounds} rounds were run; files without a round suffix are round 1; "-r2"/"-r3"/… suffixes are later rounds. Track how positions EVOLVED across rounds — concessions, persistent disagreements, points that hardened.`;
       const prompt = [
         prelude,
         `You are the orchestrator. Final synthesis step (after ${rounds} round${rounds === 1 ? "" : "s"}).`,
@@ -325,7 +378,10 @@ function makeSynthesisStep(rounds: number, allShorts: string[]): Step {
         ``,
         roundsNote,
         ``,
-        `Write ${filePath} with these sections:`,
+        `Write to this EXACT absolute path:`,
+        `   ${absSynthesisPath}`,
+        ``,
+        `Contents — sections:`,
         `## Areas of agreement`,
         `## Contested points`,
         ...(rounds > 1 ? [`## How positions evolved across rounds`] : []),
@@ -334,7 +390,7 @@ function makeSynthesisStep(rounds: number, allShorts: string[]): Step {
         ``,
         `Be terse. No filler. Quote specific positions/critiques where they matter.`,
         ``,
-        `Call VerdictEmit with step="synthesis", verdict="PASS", artifacts=["${filePath}"].`,
+        `Call VerdictEmit with step="synthesis", verdict="PASS", artifacts=["${absSynthesisPath}"].`,
       ].join("\n");
       try {
         const verdict = await dispatch(ctx, "orchestrator", prompt, "synthesis");

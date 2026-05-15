@@ -17,6 +17,17 @@ const SHORTCUTS: ShortcutDef[] = [
     description: "Plan and implement a feature, then review for correctness. Usage: /plan <goal>",
     example: '/plan "Add email/password login with JWT tokens"',
   },
+  // /eng-plan is the stable alias to use when another extension also
+  // registers `plan` (e.g. oh-my-pi). Pi's resolver matches the first
+  // duplicate registration and suffixes later ones to plan:1/plan:2, so
+  // /plan can silently dispatch to a different extension's handler.
+  // /eng-plan never collides and always runs this workflow.
+  {
+    command: "eng-plan",
+    workflow: "plan-build-review",
+    description: "Plan and implement a feature, then review for correctness (collision-free alias for /plan). Usage: /eng-plan <goal>",
+    example: '/eng-plan "Add email/password login with JWT tokens"',
+  },
   {
     command: "plan-fix",
     workflow: "plan-build-review-fix",
