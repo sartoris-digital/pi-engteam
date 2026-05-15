@@ -163,8 +163,15 @@ async function installAgents() {
     return;
   }
 
+  // Install with `engineering-` prefix unless the source filename already
+  // has it (e.g. agents/engineering-lead.md must not become
+  // engineering-engineering-lead.md — /engineering-doctor and AGENT_DEFS
+  // look up the canonical engineering-lead.md path).
   await Promise.all(
-    files.map((f) => copyFile(join(srcDir, f), join(AGENTS_DIR, `engineering-${f}`))),
+    files.map((f) => {
+      const dest = f.startsWith("engineering-") ? f : `engineering-${f}`;
+      return copyFile(join(srcDir, f), join(AGENTS_DIR, dest));
+    }),
   );
   console.log(`[pi-engineering] installed ${files.length} agent(s) → ${AGENTS_DIR}`);
 }

@@ -77,13 +77,17 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
 
       // --- Wave 2 checks ---
 
-      // Lead agent .md files — installed at ~/.pi/agent/agents/engineering-<name>.md
-      // (not <cwd>/agents/ which only exists in the source repo). The other Agent
-      // checks above already use this path; aligning Leads with the same convention.
+      // Lead agent .md files — installed at ~/.pi/agent/agents/. Install
+      // scripts prepend `engineering-` only when the source filename doesn't
+      // already start with it (otherwise engineering-lead.md would become
+      // engineering-engineering-lead.md). Reproduce the same logic here so
+      // the doctor check looks at the canonical landed name.
       const leadNames = ["orchestrator", "planning-lead", "engineering-lead", "validation-lead", "investigation-lead"];
       const installedAgentsDir = join(home, ".pi", "agent", "agents");
+      const installedName = (name: string) =>
+        name.startsWith("engineering-") ? `${name}.md` : `engineering-${name}.md`;
       for (const name of leadNames) {
-        checks.push(await checkExists(join(installedAgentsDir, `engineering-${name}.md`), `Lead agent file: ${name}`));
+        checks.push(await checkExists(join(installedAgentsDir, installedName(name)), `Lead agent file: ${name}`));
       }
 
       // team: field present in every installed engineering-*.md file

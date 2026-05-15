@@ -28,7 +28,7 @@ import { registerObserveCommand } from "./commands/observe.js";
 import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
 import { registerSpecCommand } from "./commands/spec.js";
 import { registerLearnCommand } from "./commands/learn.js";
-import { loadSafetyConfig } from "./config.js";
+import { loadSafetyConfig, loadModelRouting } from "./config.js";
 import { loadTeamsConfig } from "./safety/teams-config.js";
 import { createSendMessageTool } from "./team/tools/SendMessage.js";
 import { createVerdictEmitTool } from "./team/tools/VerdictEmit.js";
@@ -553,6 +553,10 @@ export default async function (pi: ExtensionAPI) {
   }
 
   const safetyConfig = await loadSafetyConfig();
+  // Per-agent model overrides from ~/.pi/engineering-team/model-routing.json.
+  // Users with a different provider than the AGENT_DEFS default (e.g. Copilot
+  // instead of zenmux) can redirect agents without editing the extension.
+  const modelRouting = await loadModelRouting();
   const memoryConfig = await loadMemoryConfig();
   const memoryCore = new MemoryCore(memoryConfig, RUNS_DIR);
 
@@ -613,6 +617,7 @@ export default async function (pi: ExtensionAPI) {
     runsDir: RUNS_DIR,
     agentDefs: AGENT_DEFS,
     rateLimit: rateLimitGuard,
+    modelOverrides: modelRouting.overrides,
     expertiseFor: async (agentName: string) => {
       if (!expertiseCfg.enabled) return "";
       const [exp, ro] = await Promise.all([

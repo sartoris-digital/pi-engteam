@@ -71,10 +71,18 @@ if [ -d "$VERIFIER_SRC" ]; then
   echo "Installed verifier-scripts → $ENGINEERING_DIR/verifier-scripts/"
 fi
 
-# Agent markdown files
+# Agent markdown files — install with `engineering-` prefix unless the source
+# filename already starts with `engineering-` (e.g. agents/engineering-lead.md
+# would otherwise become engineering-engineering-lead.md and /engineering-doctor
+# would report it missing under the canonical name).
 for md in "$SCRIPT_DIR/../agents/"*.md; do
-  cp "$md" "$AGENTS_DIR/engineering-$(basename "$md")"
-  echo "Installed agent: $AGENTS_DIR/engineering-$(basename "$md")"
+  bn=$(basename "$md")
+  case "$bn" in
+    engineering-*) dest="$AGENTS_DIR/$bn" ;;
+    *)             dest="$AGENTS_DIR/engineering-$bn" ;;
+  esac
+  cp "$md" "$dest"
+  echo "Installed agent: $dest"
 done
 
 echo ""

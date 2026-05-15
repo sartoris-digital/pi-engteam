@@ -59,6 +59,13 @@ type TeamRuntimeConfig = {
   accountFor?: (def: AgentDefinition) => string | undefined;
   /** Phase 1.5: invoked once per subprocess audit event line ingested from disk */
   onSubprocessEvent?: (runId: string, agentName: string, line: SubprocessEventLine) => void;
+  /**
+   * Per-agent model override map (from ~/.pi/engineering-team/model-routing.json).
+   * Lets users redirect an agent's model without editing AGENT_DEFS source, e.g.
+   * `{ "judge": "github-copilot/claude-opus-4.5" }`. When an override exists for
+   * an agent name, it replaces `def.model` for that delivery's `pi -p --model` arg.
+   */
+  modelOverrides?: Record<string, string>;
 };
 
 // H2: validate verdict payload shape before propagating to the engine. A
@@ -227,7 +234,13 @@ export class TeamRuntime {
     // mutable state from the per-call path.
     const hostStepAtDispatch = opts?.hostStep ?? this.currentStepName;
 
-    const provider = modelToProvider(def.model);
+    // model-routing.json per-agent override (e.g. judge:
+    // "github-copilot/claude-opus-4.5"). When set, this takes priority over
+    // the AGENT_DEFS default model for both the pi -p invocation and the
+    // rate-limit provider bucket — so override + quota both behave as the
+    // user configured.
+    const effectiveModel = this.config.modelOverrides?.[to] ?? def.model;
+    const provider = modelToProvider(effectiveModel);
     const estimatedTokens = this.config.defaultEstimatedTokens ?? 4000;
     // Per-deliver event token: lets each subprocess write to its own audit file
     // and lets the controller drain ONLY that file. Avoids parallel-deliver
@@ -298,7 +311,7 @@ export class TeamRuntime {
       });
       await writeFile(systemPromptFile, fullPrompt);
 
-      const piArgs = ["-p", "--no-session", "--model", def.model, "--append-system-prompt", systemPromptFile, message.message];
+      const piArgs = ["-p", "--no-session", "--model", effectiveModel, "--append-system-prompt", systemPromptFile, message.message];
       const { command, args } = getPiInvocation(piArgs);
       let proc: ReturnType<typeof spawn> | undefined;
       const killTimeout = setTimeout(() => {
