@@ -1,12 +1,13 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readFile } from "fs/promises";
+import { PasswordInput } from "../ui/PasswordInput.js";
 import { loadVaultForCommand } from "./secret-shared.js";
 
 const USAGE =
-  'Usage: /secret-set <NAME> [--note "..."] (--value <secret> | --from-file <path>)\n' +
-  '  --value <secret>        Set the value inline.\n' +
-  '  --from-file <path>      Read the value from a file (use this for secrets that should not be visible in chat history).\n' +
-  'Exactly one of --value or --from-file must be provided. Interactive prompting is unavailable because Pi\'s TUI captures stdin.';
+  'Usage: /secret-set <NAME> [--note "..."] [--value <secret> | --from-file <path>]\n' +
+  '  --value <secret>        Set the value inline (visible in chat history).\n' +
+  '  --from-file <path>      Read the value from a file (preferred for one-off scripted secrets).\n' +
+  '  (no value flag)         Pop a TUI password prompt that masks the keystrokes — no chat-history leak, no file detour.';
 
 export function registerSecretSetCommand(pi: ExtensionAPI): void {
   pi.registerCommand("secret-set", {
@@ -38,6 +39,24 @@ export function registerSecretSetCommand(pi: ExtensionAPI): void {
           );
           return;
         }
+      } else if (typeof (ctx as any)?.ui?.custom === "function") {
+        // No flag → pop a TUI masked-input overlay. This is the no-history,
+        // no-file-detour path. ctx.ui.custom is provided by Pi when the host
+        // is a TUI session; in non-TUI hosts (rare) we fall through to the
+        // usage-error below so the user can pick a flag explicitly.
+        const result = await (ctx as any).ui.custom<{ value: string; cancelled: boolean }>(
+          (tui: any, theme: any, _keybindings: any, done: (r: { value: string; cancelled: boolean }) => void) =>
+            new PasswordInput(tui, theme, `Value for ${name}:`, done),
+          {
+            overlay: true,
+            overlayOptions: { width: "60%", maxHeight: "30%", anchor: "top-center", offsetY: 2 },
+          },
+        );
+        if (result.cancelled) {
+          ctx.ui.notify(`Aborted: secret-set ${name} cancelled.`, "info");
+          return;
+        }
+        value = result.value;
       } else {
         ctx.ui.notify(USAGE, "error");
         return;
@@ -112,8 +131,6 @@ function parseArgs(raw: string): ParsedArgs {
   if (valueInline !== undefined && fromFile !== undefined) {
     return { ...empty, name, note, valueInline, fromFile, error: "Pass exactly one of --value or --from-file, not both." };
   }
-  if (valueInline === undefined && fromFile === undefined) {
-    return { ...empty, name, note, valueInline, fromFile, error: "Provide the secret via --value or --from-file." };
-  }
+  // Neither flag is OK — the handler will pop a TUI masked-input overlay.
   return { name, note, valueInline, fromFile };
 }
