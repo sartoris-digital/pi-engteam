@@ -30,7 +30,18 @@ export function registerRunResumeCommand(pi: ExtensionAPI, engine: ADWEngine): v
         },
         runId,
       );
-      void engine.resumeRun(runId);
+      // Codex round-4 MEDIUM: previously `void engine.resumeRun(runId)`
+      // discarded async errors — a corrupt state.json, missing workflow,
+      // or terminal-status run printed a misleading "resuming..." with no
+      // follow-up. Attach a catch so failures surface to the UI with the
+      // actual error and a hint pointing at /run-status for diagnosis.
+      engine.resumeRun(runId).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(
+          `Run ${runId} resume failed: ${msg}\nInspect with: /run-status ${runId}`,
+          "error",
+        );
+      });
       ctx.ui.notify(`Run ${runId} resuming...`, "info");
     },
   });

@@ -329,11 +329,18 @@ export class ADWEngine {
     const runId = crypto.randomUUID();
     const workflow = this.config.workflows.get(params.workflow);
     if (!workflow) throw new Error(`Workflow '${params.workflow}' not found`);
+    // Codex round-4 MEDIUM: workflow.defaults (e.g. triage's $5/600s) was
+    // dead code — startRun only consulted params.budget so every workflow
+    // landed on the global default ($20/3600s). Merge: workflow defaults
+    // override the global RunState default, then params.budget overrides
+    // the workflow defaults. This preserves caller-supplied tuning while
+    // letting per-workflow budgets actually take effect.
+    const mergedBudget = { ...workflow.defaults, ...params.budget };
     let state = await createRunState({
       runId,
       workflow: params.workflow,
       goal: params.goal,
-      budget: params.budget,
+      budget: mergedBudget,
     });
     state = { ...state, currentStep: workflow.steps[0].name, phase: "active" };
     // Phase 6 round-4 H4: fold initialMetadata into the FIRST state
