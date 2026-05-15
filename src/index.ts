@@ -950,7 +950,50 @@ export default async function (pi: ExtensionAPI) {
       loadPatterns: () => loadPatterns(),
     });
   } catch (err) {
-    console.warn("[pi-engineering] Watcher unavailable (vault init failed):", err instanceof Error ? err.message : String(err));
+    // Codex round-3 HIGH: previously this catch ONLY warned and the
+    // process continued with no input watcher at all — meaning user
+    // input containing `sk-…` style tokens (or anything matching a
+    // pattern) reached agents in plaintext. Install a fail-closed
+    // fallback handler that scans input with the same pattern set and
+    // refuses messages containing a likely secret until the vault is
+    // repaired. The handler does NOT auto-vault (no storage to vault to)
+    // — it surfaces the failure so the operator fixes it.
+    console.warn(
+      "[pi-engineering] Vault unavailable — installing fail-closed secret-input guard:",
+      err instanceof Error ? err.message : String(err),
+    );
+    let fallbackPatterns: ReturnType<typeof loadPatterns> = [];
+    try {
+      fallbackPatterns = loadPatterns();
+    } catch (patErr) {
+      // If patterns ALSO fail to load we cannot make any informed
+      // judgment. Refuse all input as the safest stance.
+      console.error(
+        "[pi-engineering] Secret patterns also failed to load — refusing all input until repaired:",
+        patErr instanceof Error ? patErr.message : String(patErr),
+      );
+    }
+    pi.on("input", async (event: any, ctx: any) => {
+      const text = String(event?.text ?? "");
+      if (fallbackPatterns.length === 0) {
+        ctx.ui.notify(
+          "Secret vault and pattern set are both unavailable. Input is blocked until ~/.pi/engineering-team is repaired.",
+          "error",
+        );
+        return { action: "handled" as const };
+      }
+      for (const p of fallbackPatterns) {
+        p.regex.lastIndex = 0;
+        if (p.regex.test(text)) {
+          ctx.ui.notify(
+            `Detected likely ${p.suggestedName} in input but the secret vault is unavailable. Repair the vault (or use --no-secret-watcher) before sending this message.`,
+            "error",
+          );
+          return { action: "handled" as const };
+        }
+      }
+      return { action: "continue" as const };
+    });
   }
 
   pi.on("session_start", async (event: any, _ctx: any) => {

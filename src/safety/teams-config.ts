@@ -403,5 +403,17 @@ export async function loadTeamsConfig(opts: {
     parseErrors.push({ path: opts.projectPath, error: project.error });
   }
 
+  // Codex round-3 HIGH: when an EXISTING teams.yaml or teams.local.yaml is
+  // malformed we previously kept the built-in default mode (`warn`) and
+  // silently dropped the operator's intended block-mode overlay. A user
+  // editing teams.yaml to tighten an agent's domain would, on a typo,
+  // unknowingly relax enforcement instead. If any layer reported a parse
+  // error we now force mode to "block" until the file is fixed. The
+  // parseErrors array is still surfaced to callers so the UI can show
+  // exactly which file is broken.
+  if (parseErrors.length > 0) {
+    mode = "block";
+  }
+
   return { mode, domains: merged, parseErrors };
 }

@@ -329,7 +329,14 @@ export class TeamRuntime {
       // cleanup deterministically. The grace window is short because Pi
       // agents are batch workers — no interactive cleanup to wait on.
       let sigkillTimeout: NodeJS.Timeout | undefined;
+      // Codex round-3 HIGH: track when WE (the controller) chose to kill
+      // the child. Without this flag, the close handler treats a
+      // signal-terminated child (code===null) as success and goes on to
+      // read whatever verdict file the agent wrote before the signal —
+      // letting an agent that hangs past the timeout still ship a PASS.
+      let killedByTimeout = false;
       const killTimeout = setTimeout(() => {
+        killedByTimeout = true;
         try { proc?.kill("SIGTERM"); } catch { /* already exited */ }
         sigkillTimeout = setTimeout(() => {
           try { proc?.kill("SIGKILL"); } catch { /* already exited */ }
@@ -362,8 +369,19 @@ export class TeamRuntime {
             });
           }
           proc.on("close", (code, signal) => {
-            if (code === 0 || code === null) resolve();
-            else reject(new Error(`Agent subprocess exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`));
+            // Reject any signal-terminated exit (code===null with a real
+            // signal) so a timeout-killed child cannot be accepted as
+            // success. Also reject if WE killed it via the timeout path —
+            // belt-and-suspenders in case Node delivers code instead of
+            // signal on some platforms.
+            if (killedByTimeout || signal) {
+              reject(new Error(
+                `Agent subprocess terminated by signal ${signal ?? "(timeout)"} after agentTimeoutMs; verdict discarded.`,
+              ));
+              return;
+            }
+            if (code === 0) resolve();
+            else reject(new Error(`Agent subprocess exited with code ${code}`));
           });
           proc.on("error", reject);
         });
