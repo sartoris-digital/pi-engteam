@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { withRunStateLock } from "../../adw/RunState.js";
+import { withFileLock } from "../../util/file-lock.js";
 
 // Phase 5.5 §9.2: TillDone team metadata. The optional `team` field lets
 // the Orchestrator route tasks to the appropriate Lead. Tasks created
@@ -202,7 +203,17 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
       // sequence per runId so concurrent DAG-fanout TaskUpdates from
       // sibling steps don't last-writer-wins each other's task state.
       // Reuses the per-runId mutex established for RunState saves.
+      //
+      // Codex round-2 HIGH: the in-process mutex only protects siblings
+      // within the same Node process. Agent subprocesses each have their
+      // own lock map, so cross-process TaskUpdate calls from concurrent
+      // workers raced. Wrap the RMW in a cross-process file lock keyed
+      // on the tasks.json path. Layered with the in-process lock for
+      // controller-side serialization (cheaper than acquiring a file lock
+      // for every controller-only write).
       return withRunStateLock(runsDir, runId, async () => {
+      const tasksPath = join(runsDir, runId, "tasks.json");
+      return withFileLock(tasksPath, async () => {
       const tasks = await loadTasks(runsDir, runId);
       const existing = tasks.find(t => t.taskId === params.taskId);
       if (existing) {
@@ -252,6 +263,7 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
         content: [{ type: "text" as const, text: `Task ${params.taskId} updated: ${params.status}${params.team ? ` (team=${params.team})` : ""}` }],
         details: {},
       };
+      });
       });
     },
     renderCall(args, theme, context) {

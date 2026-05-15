@@ -63,10 +63,14 @@ async function findValidApproval(
     const approvalDir = join(runsDir, runId, "approvals");
     const secret = (await readFile(secretFile, "utf8")).trim();
 
-    const { readdir } = await import("fs/promises");
+    const { readdir, rename } = await import("fs/promises");
     const files = await readdir(approvalDir).catch(() => []);
 
     for (const file of files) {
+      // Codex round-2 HIGH: skip already-consumed tokens at the directory
+      // listing level. Consumed once-tokens are renamed to `.consumed` so
+      // sibling processes scanning the dir cannot pick them up after the
+      // rename has landed. Anything still ending in `.json` is a live token.
       if (!file.endsWith(".json")) continue;
       try {
         const tokenPath = join(approvalDir, file);
@@ -76,9 +80,35 @@ async function findValidApproval(
         if (token.argsHash !== argsHash) continue;
         if (!verifyToken(secret, token)) continue;
         if (token.scope === "once") {
-          token.consumed = true;
-          const { writeFile } = await import("fs/promises");
-          await writeFile(tokenPath, JSON.stringify(token, null, 2));
+          // Codex round-2 HIGH: atomic consume via rename. The previous
+          // load-mutate-write sequence let two concurrent tool_call
+          // callbacks both observe `consumed=false`, both pass the check,
+          // and both proceed — a once-scope approval would be honored
+          // twice (double-spend). Atomic rename to `<file>.consumed`
+          // serializes via the kernel: the loser sees ENOENT and falls
+          // through to the next token (or returns false).
+          const consumedPath = tokenPath + ".consumed";
+          try {
+            await rename(tokenPath, consumedPath);
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+              // Someone else just consumed it. Keep scanning — another
+              // matching token may exist.
+              continue;
+            }
+            // Any other rename error: refuse the approval rather than
+            // double-spend or silently allow.
+            continue;
+          }
+          // Best-effort: stamp the consumed file with the consumed=true
+          // flag for audit clarity. Failure does NOT undo consumption.
+          try {
+            const { writeFile } = await import("fs/promises");
+            token.consumed = true;
+            await writeFile(consumedPath, JSON.stringify(token, null, 2));
+          } catch {
+            // best-effort audit only
+          }
         }
         return true;
       } catch {
