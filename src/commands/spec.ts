@@ -23,7 +23,7 @@ export async function executeSpecWorkflow(
   runsDir: string,
   runId: string,
   ctx: UiContext,
-  opts: { prefilledAnswersPath?: string } = {},
+  opts: { prefilledAnswersPath?: string; autoApprove?: boolean } = {},
 ): Promise<void> {
   // Phase 1: run until discover step pauses awaiting wizard input
   await engine.executeUntilPause(runId);
@@ -86,13 +86,34 @@ export async function executeSpecWorkflow(
 
   // Phase 2: resume — runs until design step pauses awaiting approval
   await engine.executeUntilPause(runId);
-
   const specPath = join(runsDir, runId, "spec.md");
-  ctx.ui.notify(
-    `spec written → ${specPath}\n\nReview the spec, then type "approve" when ready to write the plan.`,
-    "info",
-  );
-  // Command returns. The input hook in index.ts takes over for subsequent approval phases.
+
+  if (!opts.autoApprove) {
+    ctx.ui.notify(
+      `spec written → ${specPath}\n\nReview the spec, then type "approve" when ready to write the plan.`,
+      "info",
+    );
+    // Command returns. The input hook in index.ts takes over for subsequent
+    // approval phases (one "approve" per gate).
+    return;
+  }
+
+  // --auto-approve: skip the design + plan approval gates entirely. The
+  // workflow then runs straight through build and review to terminal. This
+  // is intentionally only opt-in — by default we keep the human in the
+  // loop because spec/plan errors compound.
+  ctx.ui.notify(`spec written → ${specPath}\nAuto-approved (--auto-approve). Running plan…`, "info");
+  await engine.executeUntilPause(runId);
+
+  const planPath = join(runsDir, runId, "plan.md");
+  ctx.ui.notify(`plan written → ${planPath}\nAuto-approved. Running build → review…`, "info");
+  await engine.executeUntilPause(runId);
+
+  // After plan's approve gate, the workflow has build + review steps with no
+  // further pauseAfter — executeUntilPause runs to terminal. Surface the
+  // final status so the caller sees the outcome.
+  const final = await engine.executeUntilPause(runId);
+  ctx.ui.notify(`Run ${runId.slice(0, 8)} finished: ${final.status}`, final.status === "succeeded" ? "info" : "error");
 }
 
 export function registerSpecCommand(
@@ -104,10 +125,12 @@ export function registerSpecCommand(
 ): void {
   pi.registerCommand("spec", {
     description:
-      'Discover requirements, write spec and plan, then build and review. Usage: /spec <goal> [--answers <path>]',
+      'Discover requirements, write spec and plan, then build and review. Usage: /spec <goal> [--answers <path>] [--auto-approve]',
     handler: async (args, ctx) => {
       // --answers <path> bypasses the TUI wizard with pre-supplied answers.
-      // Required for headless / scripted runs and end-to-end testing.
+      // --auto-approve skips the design + plan approval gates so the run
+      // continues straight through to build and review without human input
+      // — required for fully unattended end-to-end testing.
       let goal = args;
       let prefilledAnswersPath: string | undefined;
       const answersMatch = goal.match(/--answers\s+(\S+)/);
@@ -115,10 +138,15 @@ export function registerSpecCommand(
         prefilledAnswersPath = answersMatch[1];
         goal = goal.replace(answersMatch[0], "").trim();
       }
+      let autoApprove = false;
+      if (/(^|\s)--auto-approve(\s|$)/.test(goal)) {
+        autoApprove = true;
+        goal = goal.replace(/(^|\s)--auto-approve(\s|$)/, " ").trim();
+      }
       goal = goal.trim();
       if (!goal) {
         ctx.ui.notify(
-          'Usage: /spec <goal in plain English> [--answers <path>]\nExample: /spec "Add dark mode toggle to settings"\nHeadless: /spec "<goal>" --answers /tmp/answers.md',
+          'Usage: /spec <goal in plain English> [--answers <path>] [--auto-approve]\nExample: /spec "Add dark mode toggle to settings"\nHeadless: /spec "<goal>" --answers /tmp/answers.md --auto-approve',
           "error",
         );
         return;
@@ -134,12 +162,15 @@ export function registerSpecCommand(
         budget: {},
       });
 
+      const flags: string[] = [];
+      if (prefilledAnswersPath) flags.push(`answers=${prefilledAnswersPath}`);
+      if (autoApprove) flags.push("auto-approve");
       ctx.ui.notify(
-        `▶ spec-plan-build-review started (run ${run.runId.slice(0, 8)})\nGoal: ${goal}\n${prefilledAnswersPath ? `Answers preloaded from ${prefilledAnswersPath}; wizard will be skipped.` : "Discovering requirements…"}`,
+        `▶ spec-plan-build-review started (run ${run.runId.slice(0, 8)})\nGoal: ${goal}\n${flags.length ? `Flags: ${flags.join(", ")}` : "Discovering requirements…"}`,
         "info",
       );
 
-      await executeSpecWorkflow(engine, runsDir, run.runId, ctx, { prefilledAnswersPath });
+      await executeSpecWorkflow(engine, runsDir, run.runId, ctx, { prefilledAnswersPath, autoApprove });
     },
   });
 }

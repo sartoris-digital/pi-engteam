@@ -281,9 +281,14 @@ async function dispatchLearnerForProposals(opts: {
     summary: `Classify and design proposals for ${opts.gaps.length} verifier gap(s)`,
     message:
       `You are the Learner. Read the following gaps and the existing scripts under ${opts.scriptsDir}. ` +
-      `For each addressable gap, produce a staged file under the .staging/ directory and a fixture under .fixtures/, ` +
+      `For each addressable gap, produce a staged Python script under .staging/ and a fixture under .fixtures/, ` +
       `then call VerdictEmit with one entry in 'artifacts' per staged script (filename only). ` +
       `Set 'handoffHint' to a JSON array of { gap, category, scriptName, approach, fixturePath, regressionCommand } objects.\n\n` +
+      `STRICT REQUIREMENTS on every proposal:\n` +
+      `- scriptName MUST be a Python script ending in .py — e.g. "verify_divide_guards.py". Shell, JS, or any non-Python extension will be rejected by the orchestrator's safe-name check (regex: /^[A-Za-z][A-Za-z0-9_.-]{0,62}\\.py$/).\n` +
+      `- scriptName must be a bare basename (no path separators, no dotfiles, no '..'). The orchestrator joins it under .staging/, so any path traversal causes the proposal to be silently discarded.\n` +
+      `- fixturePath must also be a bare basename ending in .json (or whatever your runScript helper expects), placed under .fixtures/.\n` +
+      `- Each proposal must be self-contained: the .py file under .staging/ is what the orchestrator will validate and promote unmodified.\n\n` +
       `GAPS:\n${opts.gaps.map((g, n) => `${n + 1}. step=${g.step} claim=${g.claim}`).join("\n")}\n`,
     ts: new Date().toISOString(),
   };
