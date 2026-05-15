@@ -481,10 +481,30 @@ export default async function (pi: ExtensionAPI) {
     // would otherwise be recorded verbatim and forwarded to the host
     // event stream. Codex round-1 finding #6. Snapshot the patterns
     // once at subprocess boot.
-    const subAuditPatterns = (() => {
-      try { return loadPatterns(); } catch { return []; }
-    })();
+    // Codex round-3 HIGH: previously this returned [] on loadPatterns()
+    // failure, which meant scrubSubAuditText passed raw text through and
+    // any secrets in Bash commands or tool args leaked to the audit log.
+    // Fail closed: record the load failure once at boot, and switch the
+    // scrubber into a conservative mode that ONLY records tool name +
+    // timestamp (drops all payload content). The operator sees the alarm
+    // and the secret never reaches disk.
+    let subAuditPatterns: ReturnType<typeof loadPatterns> = [];
+    let subAuditPatternsLoaded = false;
+    try {
+      subAuditPatterns = loadPatterns();
+      subAuditPatternsLoaded = true;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        "[pi-engineering] secret-pattern load failed; subprocess audit will redact ALL payloads:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
     const scrubSubAuditText = (raw: string): string => {
+      if (!subAuditPatternsLoaded) {
+        // Patterns unavailable — redact everything except top-level shape.
+        return "[REDACTED:patterns-unavailable]";
+      }
       let out = raw;
       for (const p of subAuditPatterns) {
         // Reset regex state in case it's stateful between calls.
@@ -496,6 +516,16 @@ export default async function (pi: ExtensionAPI) {
     const writeAuditLine = (line: object) => {
       try {
         const serialized = JSON.stringify({ ...line, ts: new Date().toISOString() });
+        if (!subAuditPatternsLoaded) {
+          // Audit only the keys/shape, never the values.
+          const shape = JSON.stringify({
+            ts: new Date().toISOString(),
+            note: "redacted-no-patterns",
+            keys: Object.keys(line),
+          });
+          subAppendFileSync(subEventFile, shape + "\n");
+          return;
+        }
         subAppendFileSync(subEventFile, scrubSubAuditText(serialized) + "\n");
       } catch { /* best-effort; never fail an agent step on audit-write failure */ }
     };

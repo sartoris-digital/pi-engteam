@@ -38,16 +38,37 @@ export function normalizeToolEvent(event: any): {
 }
 
 async function loadRunPlanMode(runsDir: string): Promise<boolean> {
+  // Codex round-3 HIGH: this function used to catch every error and return
+  // false (fail-open), which meant a corrupted or partially-written
+  // state.json would silently disable plan-mode enforcement for an active
+  // run. Distinguish the two failure shapes:
+  //   - ENOENT on active-run.txt → there is no active run → plan-mode is
+  //     correctly inert (return false).
+  //   - state.json exists but is unreadable / unparseable → we don't know
+  //     the planMode status → FAIL CLOSED (return true). The user can
+  //     repair state.json or end the run via /run-cancel to recover.
+  const activeFile = join(runsDir, "active-run.txt");
+  let runId: string;
   try {
-    const activeFile = join(runsDir, "active-run.txt");
-    const runId = (await readFile(activeFile, "utf8")).trim();
-    const stateFile = join(runsDir, runId, "state.json");
+    runId = (await readFile(activeFile, "utf8")).trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    // active-run.txt is present but unreadable (EPERM/EACCES) — fail closed.
+    return true;
+  }
+  if (!runId) return false;
+  const stateFile = join(runsDir, runId, "state.json");
+  try {
     const state = JSON.parse(await readFile(stateFile, "utf8"));
-    // Only enforce plan mode for actively running workflows — not for ended/failed/succeeded runs
     if (state.status !== "running" && state.status !== "waiting_user") return false;
     return state.planMode === true;
-  } catch {
-    return false;
+  } catch (err) {
+    // ENOENT here means active-run.txt referenced a run whose state file is
+    // gone — treat as "no active run" rather than fail-closed, since the
+    // session is effectively over.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    // JSON parse failure or read failure on an EXISTING file → fail closed.
+    return true;
   }
 }
 

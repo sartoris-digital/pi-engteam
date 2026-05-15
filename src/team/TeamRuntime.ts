@@ -322,8 +322,18 @@ export class TeamRuntime {
       const piArgs = ["-p", "--no-session", "--model", effectiveModel, "--append-system-prompt", systemPromptFile, message.message];
       const { command, args } = getPiInvocation(piArgs);
       let proc: ReturnType<typeof spawn> | undefined;
+      // Codex round-3 HIGH: SIGTERM alone leaves subprocesses ignoring the
+      // signal alive past the timeout, holding file descriptors and the
+      // events drain. Send SIGTERM first; if the child hasn't exited after
+      // a 10s grace, escalate to SIGKILL so the controller can finish
+      // cleanup deterministically. The grace window is short because Pi
+      // agents are batch workers — no interactive cleanup to wait on.
+      let sigkillTimeout: NodeJS.Timeout | undefined;
       const killTimeout = setTimeout(() => {
-        proc?.kill();
+        try { proc?.kill("SIGTERM"); } catch { /* already exited */ }
+        sigkillTimeout = setTimeout(() => {
+          try { proc?.kill("SIGKILL"); } catch { /* already exited */ }
+        }, 10_000);
       }, this.config.agentTimeoutMs ?? 10 * 60 * 1000);
 
       try {
@@ -359,6 +369,7 @@ export class TeamRuntime {
         });
       } finally {
         clearTimeout(killTimeout);
+        if (sigkillTimeout) clearTimeout(sigkillTimeout);
         try { await unlink(systemPromptFile); } catch {}
         await this.ingestSubprocessEvents(runId, to, eventToken);
       }
