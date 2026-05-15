@@ -6,6 +6,68 @@ This log is organized by user-visible capability rather than by commit. Each sec
 
 ---
 
+## 2.0.1 — runtime + interactive-Pi reliability pass
+
+A round of fixes surfaced by end-to-end testing inside an interactive Pi session (tmux-driven). Every workflow shortcut now actually completes and produces real artifacts; the secrets vault works in interactive Pi (it never did before); the install pipeline ships a server bundle that actually loads its native addons.
+
+### Bundle and install
+
+- `server.cjs` now bundles the `better-sqlite3` JS wrapper. The previous tsup config marked it external, so the emitted server crashed at install location with `Cannot find module 'better-sqlite3'` the moment `/observe` tried to spawn it. The compiled `.node` is still sideloaded via the official `nativeBinding` constructor option, not `require('bindings')` (`fix(server)` deefc7a).
+- `postinstall.mjs` no longer passes `--no-config` to tsup, which had silently dropped the `noExternal` settings and shipped a 15 KB stub on every install. `pnpm install` now produces the same 1.32 MB server bundle as `pnpm build` (`fix(postinstall)` d95ab57).
+- The extension bundle also bundles `better-sqlite3` and `@napi-rs/keyring`, with both native binaries (`better_sqlite3.node`, `keyring.<platform>.node`) sideloaded into `~/.pi/agent/extensions/`. Vault uses better-sqlite3's `nativeBinding` option; Keyring sets `NAPI_RS_NATIVE_LIBRARY_PATH` before requiring `@napi-rs/keyring`. An esbuild plugin replaces `@napi-rs/keyring/index.js` at build time with a 4-line shim so esbuild stops choking on the cross-platform `require('./keyring.<other-platform>.node')` ladder (`fix(bundle)` 34a3efc).
+- `install.sh` and `postinstall.mjs` now skip the `engineering-` prefix when the source file already starts with `engineering-`, so the engineering-lead agent is installed as `engineering-lead.md`, not `engineering-engineering-lead.md` (`fix` c5b67ec).
+- `install.sh` now copies `src/assets/verifier-scripts/*.py` to `~/.pi/engineering-team/verifier-scripts/` (the path `VerifierLoop` actually reads from); previously this path only worked on the `pi install` route, not `pnpm engineering:install` (`fix(bundle)` 34a3efc).
+
+### Agent subprocess execution
+
+- Each workflow step used to burn the full 10-minute kill timeout in `TeamRuntime` because the agent subprocess never exited after writing its verdict. `VerdictEmit` now fast-exits the subprocess (250 ms grace for stdout flush) when `PI_ENGINEERING_AGENT_MODE=1` and the verdict-file env var is set. Idempotent — multiple VerdictEmit calls don't stack timers. A `process.on("exit")` hook in the subprocess branch closes the better-sqlite3 Vault handle before exit so the WAL is checkpointed cleanly. A 3-step `/triage` workflow that previously took 30 minutes now completes in ~90 seconds (`fix(runtime)` b819cce).
+- `TeamRuntime.deliver` now verifies that every artifact claimed in a VerdictEmit payload actually exists on disk (checked against the project cwd and the per-run directory). Missing artifacts downgrade the verdict to FAIL with a clear "claimed but not found" message, so workflows can't silently progress on an agent lie (`fix` 50fabd6).
+
+### Model routing
+
+- `AGENT_DEFS` model strings now use an explicit provider prefix (`zenmux/anthropic/claude-...`) so Pi resolves the model unambiguously instead of pattern-matching against the first available provider (which was routing `claude-*-4.6` to GitHub Copilot — where it doesn't exist — and burning the 10-minute kill timeout on `model_not_available_for_integrator`) (`fix(runtime)` b819cce).
+- `~/.pi/engineering-team/model-routing.json` `overrides` map is now read at controller boot and threaded through `TeamRuntime` as `modelOverrides`. The override replaces `def.model` for both `pi -p --model` and the `RateLimitGuard` provider bucket. Users with a different gateway (e.g. GitHub Copilot via Pi OAuth) can redirect every agent without editing the extension source (`fix` c5b67ec).
+
+### Workflow execution
+
+- `/spec` discover step now writes `questions.md` to the absolute per-run path. Previously the prompt told the agent "save to the current run directory" without telling it WHICH directory, so the file landed in the project cwd and the pre-design check aborted with "discoverer did not write questions.md" (`fix` 50fabd6).
+- `/consult` Lead position + adversarial steps and the synthesis step were emitting FAIL because their prompts contained literal `<run>/...` placeholder paths that were never expanded. Every Lead-facing path is now resolved to the absolute run-dir path via `ctx.engine.getRunsDir() + ctx.run.runId`. After fix: 8/8 steps PASS with real position/adversarial/synthesis files written (`fix(consult)` fb78548).
+- Synthesis prompt explicitly carves the orchestrator out of its "delegate, do not execute" persona for this one step and spells out the required Read → Write → VerdictEmit sequence. The orchestrator was previously emitting PASS without ever calling Write because the synthesis text only landed in its chat response (`fix(consult)` 0b600d1).
+- Orchestrator domain policy in `default-domains.ts` now allows writes under `${RUN_DIR}` as a directory prefix (matching the Lead tier) instead of the literal `${RUN_DIR}/synthesis.md` path which resolved to the shared runs root and blocked all per-run synthesis writes (`fix(domain-lock)` 3f86d96).
+- `/eng-plan` registered as a collision-free alias for `/plan`. Pi's extension runner suffixes duplicate slash-command registrations to `plan:1`/`plan:2` and matches the suffixed name; if another installed extension also registers `/plan` (e.g. `oh-my-pi`), `/plan` silently dispatched to the wrong extension. `/eng-plan` never collides (`fix(consult)` fb78548).
+
+### Secrets vault
+
+- Every `/secret-*` command that used to prompt for input via `readline` now takes its input via non-interactive flags. Pi's TUI consumes stdin while a handler runs, so the previous readline prompts hung the session and Ctrl+C corrupted the TUI. `--value` / `--from-file` for `/secret-set` `/secret-rotate` `/secret-scrub`; `--yes` for `/secret-rm`; `--passphrase` / `--passphrase-from-file` plus `--yes` for `/secret-export`; same plus `--on-conflict overwrite|skip|abort` for `/secret-import`. The `--from-file` form keeps the secret value out of chat / terminal history (`fix(secrets)` 11d601f).
+
+### Doctor
+
+- `/engineering-doctor` now checks Lead agent files at `~/.pi/agent/agents/` (the installed location) instead of `<cwd>/agents/` (only exists in the source repo). Path-builder accounts for the file-naming convention so `engineering-lead` isn't reported missing under a double-prefixed path (`fix` 50fabd6, c5b67ec).
+
+### Verified end-to-end in interactive Pi
+
+The following workflows complete end-to-end in a tmux-driven Pi session and produce real on-disk artifacts:
+
+| Workflow         | Steps         | Wall   | Artifacts produced                          |
+|------------------|---------------|--------|---------------------------------------------|
+| `/triage`        | 3/3 PASS      | 90 s   | triage-summary.md, routing-recommendation.md|
+| `/verify`        | 5/5 PASS      | 238 s  | audit-gaps.md, tests/unit/util.test.ts, package.json |
+| `/investigate`   | 3/3 PASS      | 407 s  | context-pack.md, incident-report.md         |
+| `/debug`         | 4/4 PASS      | 624 s  | debug-traces.md, debug-code-context.md, debug-report.md |
+| `/fix`           | 5/5 PASS (loop) | 835 s | fix-plan.md, updated util.ts, tests       |
+| `/migrate`       | 5/5 PASS (loop) | 1053 s | migration-plan.md, security-report.md, migrations/ |
+| `/plan-fix`      | 4/4 PASS (loop) | 379 s | plan.md, updated source                    |
+| `/consult`       | 8/8 PASS      | 955 s  | positions/, adversarial/, synthesis.md     |
+| `/refactor`      | correct FAIL  | 58 s   | refactor-map.md                             |
+| `/docs`          | 4/5 PASS      | ~500 s | doc-audit-gaps.md, doc-backfill-plan.md, JSDoc edits |
+| `/issue 1`       | 1/1 PASS      | 19 s   | issue-brief.md (real GitHub issue fetched via gh) |
+| `/learn`         | pipeline runs | 90 s   | learning/report.md                          |
+| Secrets vault    | 7/7 commands  | local  | set/list/rm/rotate/export/import/scrub all non-interactive |
+
+`/spec` validates up to the wizard launch; full wizard completion needs a TUI input drive.
+
+---
+
 ## 2.0.0 — multi-agent evolution
 
 Forty-one phase commits between Phases 4.5 and 6.5 lifted the extension from a single-workflow runner into a full cross-team adversarial system. The major bump reflects the new cross-team consult workflow, the parallel-DAG executor, multi-round revision, the TillDone footer + system reminders, and the per-agent expertise system — none of which were present in 1.0.0.
