@@ -377,14 +377,26 @@ export function registerDomainLock(
     if (!["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Find", "Ls"].includes(toolName)) return undefined;
 
     const agent = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "unknown";
-    // Per-call ${RUN_ID} substitution lets policies express tight
-    // per-run paths (e.g. orchestrator's `${RUN_DIR}/${RUN_ID}/synthesis.md`)
-    // without leaking cross-run write access. The loadTeamsConfig pass
-    // resolves `${RUN_DIR}` and `${EXPERTISE_DIR}` at extension boot, but
-    // leaves `${RUN_ID}` for this point — the runId is delivery-scoped.
-    const runId = process.env["PI_ENGINEERING_RUN_ID"];
+    // Per-call ${RUN_ID} substitution. Symmetric with applyLayerD in
+    // SafetyGuard.ts — that's the path the production hard-blocker uses.
+    // This wrapper is kept for symmetry / future use of registerDomainLock
+    // as a standalone hook. Fail-closed semantics: when policy needs
+    // ${RUN_ID} but env is unset, substitute returns undefined and we
+    // block (Codex round-1 finding #2).
+    const runId = process.env["PI_ENGINEERING_RUN_ID"] || undefined;
     const rawPolicy = opts.getPolicyForAgent();
-    const policy = rawPolicy ? substituteRunIdInPolicy(rawPolicy, runId) : rawPolicy;
+    const policy = rawPolicy ? substituteRunIdInPolicy(rawPolicy, runId) : undefined;
+    if (rawPolicy && !policy) {
+      opts.emitEvent({
+        category: "safety",
+        type: "domain_block",
+        payload: { agent, reason: "missing-run-id", tool: toolName },
+      });
+      return {
+        block: true,
+        reason: `[Layer D] policy for '${agent}' uses \${RUN_ID} but PI_ENGINEERING_RUN_ID is unset`,
+      };
+    }
 
     if (!policy) {
       opts.emitEvent({

@@ -1,6 +1,14 @@
 import { spawn } from "child_process";
 import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
+
+// Resolve a path through symlinks for safe containment checks. Falls back
+// to the input when the file doesn't exist (so we can still detect
+// "claimed but missing" via the separate existsSync probe). Used by the
+// artifact verifier to refuse out-of-root claims like `/etc/hosts`.
+function safeRealResolve(p: string): string {
+  try { return realpathSync(p); } catch { return p; }
+}
 import { basename, isAbsolute, resolve } from "path";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -362,28 +370,46 @@ export class TeamRuntime {
         const payload = validateVerdictPayload(raw);
         if (!payload) return undefined;
 
-        // Verify claimed artifacts actually exist on disk. Agents have been
-        // observed emitting PASS with artifacts they never wrote (e.g. the
-        // /spec discoverer claimed questions.md but the file was written to
-        // cwd, not <runDir> where the next step looks). Downgrade to FAIL
-        // when any claimed artifact is missing so workflows don't progress
-        // on a lie. We check both cwd and runDir for relative paths since
-        // different workflows have different conventions.
+        // Verify claimed artifacts actually exist on disk AND fall under
+        // a sane root (cwd or per-run dir). Agents have been observed
+        // emitting PASS with artifacts they never wrote (e.g. the /spec
+        // discoverer claimed questions.md but the file was written to
+        // cwd, not <runDir> where the next step looks). A malicious or
+        // buggy agent could also claim absolute paths it didn't produce
+        // (e.g. `/etc/hosts`) — Codex round-1 finding #4. Real-resolve
+        // each candidate and require the resolved path to be inside one
+        // of the allowed roots, so symlink dodges and out-of-root claims
+        // both surface as FAIL.
         if (payload.artifacts && payload.artifacts.length > 0) {
           const runDir = join(this.config.runsDir, runId);
+          const allowedRoots = [this.config.cwd, runDir].map(safeRealResolve);
+          const isUnderAllowed = (target: string): boolean => {
+            const realTarget = safeRealResolve(target);
+            for (const root of allowedRoots) {
+              if (!root) continue;
+              if (realTarget === root) return true;
+              const sep = root.endsWith("/") ? root : root + "/";
+              if (realTarget.startsWith(sep)) return true;
+            }
+            return false;
+          };
           const missing: string[] = [];
           for (const art of payload.artifacts) {
             const candidates = isAbsolute(art)
               ? [art]
               : [resolve(this.config.cwd, art), resolve(runDir, art)];
-            if (!candidates.some(existsSync)) missing.push(art);
+            // Existence AND containment. Pure existsSync was Codex
+            // round-1 #4 — an agent could claim `/etc/hosts` and pass.
+            if (!candidates.some((c) => existsSync(c) && isUnderAllowed(c))) {
+              missing.push(art);
+            }
           }
           if (missing.length > 0) {
             const original = payload.verdict;
             payload.verdict = "FAIL";
             payload.issues = [
               ...(payload.issues ?? []),
-              `Agent emitted ${original} but claimed artifact(s) not found on disk (checked cwd and run dir): ${missing.join(", ")}. The agent must call Write/Edit before VerdictEmit, or the workflow must instruct the agent on the exact output path.`,
+              `Agent emitted ${original} but claimed artifact(s) not found or out of allowed roots (cwd, ${runDir}): ${missing.join(", ")}. The agent must call Write/Edit before VerdictEmit AND emit a path under one of the allowed roots.`,
             ];
             payload.artifacts = payload.artifacts.filter((a) => !missing.includes(a));
           }

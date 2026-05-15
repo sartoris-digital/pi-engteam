@@ -5,8 +5,47 @@ import type { TeamRuntime } from "../team/TeamRuntime.js";
 import type { AgentDefinition } from "../types.js";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { spawn } from "child_process";
 import { detectTracker } from "./issue-tracker.js";
 import { executeSpecWorkflow } from "./spec.js";
+
+// Codex round-1 finding #8: when /issue is invoked against a github ticket we
+// run gh inside the analyze worker. If gh is missing or unauthenticated the
+// worker fails 5 steps deep with a generic error and the user has to dig
+// through events.jsonl to find out why. Preflighting `gh auth status` here
+// surfaces the real cause immediately and points at the fix (`gh auth login`).
+async function checkGhAuth(): Promise<
+  { ok: true } | { ok: false; reason: "missing-binary" | "unauthenticated" | "error"; detail: string }
+> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("gh", ["auth", "status"], { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (err) {
+      resolve({ ok: false, reason: "missing-binary", detail: String(err) });
+      return;
+    }
+    let stderr = "";
+    let stdout = "";
+    child.stdout.on("data", (d) => { stdout += d.toString(); });
+    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        resolve({ ok: false, reason: "missing-binary", detail: "gh CLI not found on PATH" });
+      } else {
+        resolve({ ok: false, reason: "error", detail: err.message });
+      }
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true });
+      } else {
+        const out = (stderr + stdout).trim();
+        resolve({ ok: false, reason: "unauthenticated", detail: out || `gh auth status exited ${code}` });
+      }
+    });
+  });
+}
 
 export function parseIssueArgs(raw: string): { ticketRef: string; trackerFlag?: string } {
   const trackerMatch = raw.match(/--tracker\s+(github|ado|jira)/);
@@ -68,6 +107,34 @@ export function registerIssueCommand(
           "error",
         );
         return;
+      }
+
+      if (resolution.tracker === "github") {
+        const auth = await checkGhAuth();
+        if (!auth.ok) {
+          const lines: string[] = [];
+          if (auth.reason === "missing-binary") {
+            lines.push(
+              "GitHub CLI (gh) is not installed or not on PATH.",
+              "Install: https://cli.github.com — then run `gh auth login`.",
+            );
+          } else if (auth.reason === "unauthenticated") {
+            lines.push(
+              "GitHub CLI is installed but not authenticated.",
+              "Run: gh auth login",
+              "",
+              "Details:",
+              auth.detail,
+            );
+          } else {
+            lines.push(
+              "Could not verify GitHub CLI auth status.",
+              `Detail: ${auth.detail}`,
+            );
+          }
+          ctx.ui.notify(lines.join("\n"), "error");
+          return;
+        }
       }
 
       for (const def of agentDefs) {

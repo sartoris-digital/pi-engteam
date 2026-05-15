@@ -473,9 +473,30 @@ export default async function (pi: ExtensionAPI) {
     // and the /observe dashboard. Without this, only secret-resolver
     // events landed in the audit stream and the dashboard saw nothing
     // tool-level between step.start and step.end.
+    // Scrub well-known secret patterns from anything we write to the
+    // subprocess audit file. `UseSecret`'s injection happens at execute
+    // time, AFTER the tool_call hook fires, so UseSecret-injected values
+    // never reach this code path — but a literal token embedded in a
+    // Bash command (`bash -c 'curl -H "Authorization: sk-ant-…"'`)
+    // would otherwise be recorded verbatim and forwarded to the host
+    // event stream. Codex round-1 finding #6. Snapshot the patterns
+    // once at subprocess boot.
+    const subAuditPatterns = (() => {
+      try { return loadPatterns(); } catch { return []; }
+    })();
+    const scrubSubAuditText = (raw: string): string => {
+      let out = raw;
+      for (const p of subAuditPatterns) {
+        // Reset regex state in case it's stateful between calls.
+        p.regex.lastIndex = 0;
+        out = out.replace(p.regex, `[REDACTED:${p.suggestedName}]`);
+      }
+      return out;
+    };
     const writeAuditLine = (line: object) => {
       try {
-        subAppendFileSync(subEventFile, JSON.stringify({ ...line, ts: new Date().toISOString() }) + "\n");
+        const serialized = JSON.stringify({ ...line, ts: new Date().toISOString() });
+        subAppendFileSync(subEventFile, scrubSubAuditText(serialized) + "\n");
       } catch { /* best-effort; never fail an agent step on audit-write failure */ }
     };
     pi.on("tool_call", async (event: any) => {

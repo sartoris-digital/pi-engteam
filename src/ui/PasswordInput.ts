@@ -47,8 +47,10 @@ export class PasswordInput implements Component {
     }
     // Pi delivers a string for every keystroke. Filter to single printable
     // characters so escape sequences, arrows, etc. don't leak into the
-    // buffer as multibyte garbage. The hidden value is what the user sees
-    // (bullets) — we accept anything that looks like a printable glyph.
+    // buffer as multibyte garbage. Codex round-1 #7: also strip bracketed
+    // paste markers (`\x1b[200~…\x1b[201~`) and refuse any control byte
+    // inside a pasted blob, so an embedded Ctrl-C or backspace can't
+    // silently corrupt the buffer.
     if (data.length === 1) {
       const cp = data.charCodeAt(0);
       // Printable ASCII range. Reject control chars (NUL, BEL, etc.).
@@ -57,12 +59,27 @@ export class PasswordInput implements Component {
         this.tui.requestRender();
         return;
       }
+      return;
     }
-    // Multi-byte UTF-8 paste etc. — accept if it doesn't start with ESC.
-    if (data.length > 1 && data.charCodeAt(0) !== 0x1b) {
-      this.buffer += data;
-      this.tui.requestRender();
+    // Multi-byte input (paste, IME, etc.). Strip bracketed-paste markers
+    // first, then filter out any control byte from the remainder. The
+    // surviving characters are accepted whether single- or multi-byte
+    // (a paste of a base64 token, or a passphrase that contains
+    // non-ASCII glyphs).
+    let payload = data.replace(/\x1b\[200~/g, "").replace(/\x1b\[201~/g, "");
+    // Drop ESC-prefixed sequences entirely (cursor keys, function keys, …).
+    if (payload.charCodeAt(0) === 0x1b) return;
+    // Reject any control byte (NUL, BEL, BS, LF, CR, ESC, DEL, …) anywhere
+    // in the surviving payload. Allowing them produced silent corruption
+    // of the buffer when a paste contained Ctrl-C / Ctrl-Z / newlines.
+    let safe = "";
+    for (let i = 0; i < payload.length; i++) {
+      const cp = payload.charCodeAt(i);
+      if (cp >= 0x20 && cp !== 0x7f) safe += payload[i];
     }
+    if (safe.length === 0) return;
+    this.buffer += safe;
+    this.tui.requestRender();
   }
 
   render(_width: number): string[] {

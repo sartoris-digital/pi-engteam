@@ -228,20 +228,28 @@ function substitute(s: string, runDir: string, expertiseDir: string): string {
 
 /**
  * Resolve the `${RUN_ID}` placeholder in a policy's path lists. Called
- * by DomainLock for every tool_call so each agent dispatch sees its
+ * by `applyLayerD` for every tool_call so each agent dispatch sees its
  * own run's paths, not whatever runId happened to be active at extension
- * boot. If `runId` is falsy, the placeholders are stripped to empty
- * strings (which produces obviously-invalid paths that won't match any
- * real target — preferable to silently letting an unbound placeholder
- * through).
+ * boot.
+ *
+ * Returns the resolved policy when substitution succeeds.
+ * Returns `undefined` when the policy uses `${RUN_ID}` but `runId` is
+ * falsy — the caller MUST treat this as fail-closed (force-block) rather
+ * than silently substituting an empty string. Codex round-1 finding #2:
+ * an empty substitution turned `${RUN_DIR}/${RUN_ID}/synthesis.md` into
+ * `<RUN_DIR>//synthesis.md`, which path-normalization collapses into a
+ * permissive `<RUN_DIR>/synthesis.md` root.
+ *
+ * Policies without `${RUN_ID}` placeholders are returned unmodified
+ * (no cost).
  */
 export function substituteRunIdInPolicy(
   p: DomainPolicy,
   runId: string | undefined,
-): DomainPolicy {
+): DomainPolicy | undefined {
   if (!hasRunIdPlaceholder(p)) return p;
-  const id = runId ?? "";
-  const sub = (s: string) => s.replace(/\$\{RUN_ID\}/g, id);
+  if (!runId) return undefined;
+  const sub = (s: string) => s.replace(/\$\{RUN_ID\}/g, runId);
   return {
     read: p.read.map(sub),
     upsert: p.upsert.map(sub),

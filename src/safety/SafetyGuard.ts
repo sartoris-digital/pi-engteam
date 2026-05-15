@@ -9,6 +9,7 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { checkDomain } from "./DomainLock.js";
+import { substituteRunIdInPolicy } from "./teams-config.js";
 import type { DomainPolicyMap } from "./default-domains.js";
 
 // Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
@@ -103,15 +104,45 @@ async function applyLayerD(
 ): Promise<{ block: true; reason: string; layer: string; [k: string]: unknown } | undefined> {
   if (!["Write", "Edit", "Bash", "Read", "Grep", "Glob", "Find", "Ls"].includes(toolName)) return undefined;
   const agentName = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
-  const policy = agentName ? domainLock.policies[agentName] : undefined;
+  const rawPolicy = agentName ? domainLock.policies[agentName] : undefined;
   // Surface missing-policy as a warn so misspelled or new agents are visible to operators.
-  if (!policy) {
+  if (!rawPolicy) {
     domainLock.emitEvent({
       category: "safety",
       type: "domain_warn",
       payload: { agent: agentName || "unknown", reason: "no-policy", tool: toolName },
     });
     return undefined;
+  }
+  // Per-call `${RUN_ID}` substitution. The teams-config loader resolves
+  // `${RUN_DIR}` + `${EXPERTISE_DIR}` at extension boot, but `${RUN_ID}`
+  // is delivery-scoped — each agent subprocess sees its own run via
+  // `PI_ENGINEERING_RUN_ID`. Without this hop, policies using
+  // `${RUN_ID}` (orchestrator + every Lead) match nothing in production
+  // (Codex round-1 finding #1).
+  //
+  // Fail closed when the policy needs `${RUN_ID}` but the env is missing
+  // — silently substituting an empty string collapses
+  // `<RUN_DIR>/${RUN_ID}/synthesis.md` to `<RUN_DIR>/synthesis.md` and
+  // grants cross-run write access (Codex round-1 finding #2).
+  const runId = process.env["PI_ENGINEERING_RUN_ID"] || undefined;
+  const policy = substituteRunIdInPolicy(rawPolicy, runId);
+  if (!policy) {
+    domainLock.emitEvent({
+      category: "safety",
+      type: "domain_block",
+      payload: {
+        agent: agentName,
+        reason: "missing-run-id",
+        tool: toolName,
+        hint: "policy uses ${RUN_ID} but PI_ENGINEERING_RUN_ID is unset; refusing to apply policy",
+      },
+    });
+    return {
+      block: true,
+      reason: `[Layer D] policy for '${agentName}' uses \${RUN_ID} but PI_ENGINEERING_RUN_ID is unset; refusing to apply`,
+      layer: "D",
+    };
   }
   const filePath = (toolInput.file_path ?? toolInput.path ?? toolInput.pattern_path ?? "") as string;
   const result = checkDomain({
