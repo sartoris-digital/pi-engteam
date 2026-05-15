@@ -6,6 +6,34 @@ This log is organized by user-visible capability rather than by commit. Each sec
 
 ---
 
+## 2.0.2 — forward-looking polish
+
+Five follow-ups on top of the 2.0.1 reliability pass — each one a small forward-looking item identified during the test pass. Each was previously documented as deferred; all are now landed.
+
+### Headless and unattended `/spec` runs
+
+- `/spec <goal> --answers <path>` skips the QuestionWizard TUI and loads pre-supplied answers from disk. Empty / missing answers files abort the run with a clear message rather than degrading to an empty answers.md. Required for any non-interactive caller (scripted runs, batch tests). The wizard remains the default when the flag isn't passed (`feat(spec)` 3047c8c).
+- `/spec <goal> --auto-approve` skips the design + plan approval gates so the run flows discover → design → plan → build → review without human input. Opt-in only — by default the human-in-the-loop approve gates remain because spec/plan errors compound (`feat(spec)` e272189).
+- design + plan steps compose absolute run-dir paths for spec.md / plan.md (mirroring the discoverer's questions.md fix in 50fabd6). Previously the architect prompt just said "Write spec.md" and the agent wrote to the project cwd; the artifact verifier accepted it because cwd is one of the checked roots, but the post-design notify pointed users at `<runDir>/spec.md` which didn't actually exist (`feat(spec)` 3047c8c).
+
+### `/learn` proposal hygiene
+
+- Learner dispatch prompt now states the script-name requirements explicitly (must end `.py`, basename only, regex `/^[A-Za-z][A-Za-z0-9_.-]{0,62}\.py$/`) and warns that path-separator / dotfile names cause silent discard. Previously the agent had to infer the constraints from existing scripts — and on the first end-to-end test it produced a `.sh` file (`feat(spec)` e272189).
+
+### Subprocess observability
+
+- Each workflow step's agent subprocess now writes a `tool_call` and `tool_result` audit event for every tool invocation. Previously `events.jsonl` only contained controller-emitted lifecycle / verdict / message events — every Write / Edit / Bash / Read an agent made was invisible. The subprocess audit file is drained by `TeamRuntime.ingestSubprocessEvents` after the subprocess exits, and the host forwards the events through `onSubprocessEvent → observer.emit`. A /triage run that previously produced 11 events.jsonl entries now produces ~100, with full agent + tool detail. Sanitized payloads (toolName + JSON-stringified args clipped to 2 KB) keep the audit file size bounded (`feat(observability)` 5b9ee14).
+
+### Tighter domain policies
+
+- Domain-lock policies now support `${RUN_ID}` substitution. `loadTeamsConfig` resolves `${RUN_DIR}` and `${EXPERTISE_DIR}` at extension boot; `${RUN_ID}` is left as a placeholder and resolved per-call by `DomainLock` from `PI_ENGINEERING_RUN_ID`. Orchestrator and Lead policies are tightened from `${RUN_DIR}` (cross-run write access — every Lead could overwrite every run's positions) to `${RUN_DIR}/${RUN_ID}` (this run only) — cross-run writes are now impossible at Layer D. A short-circuit in `substituteRunIdInPolicy` keeps policies that don't use the placeholder cost-free (`feat(domain-lock)` a50a0d5).
+
+### Interactive secret entry
+
+- `/secret-set <NAME>` (no value flag) now pops a TUI masked-input overlay (`src/ui/PasswordInput.ts`) — the third option alongside `--value` (inline, visible in chat) and `--from-file` (preferred for scripted secrets). The overlay submits on Enter, cancels cleanly on Esc, and reports `{ value, cancelled }` so the caller distinguishes empty submission from cancellation. Falls through to the existing usage-error path when `ctx.ui.custom` is unavailable in non-TUI hosts. Verified live: secret stored without ever appearing in the chat scrollback (`feat(secrets)` a6f3dd1).
+
+---
+
 ## 2.0.1 — runtime + interactive-Pi reliability pass
 
 A round of fixes surfaced by end-to-end testing inside an interactive Pi session (tmux-driven). Every workflow shortcut now actually completes and produces real artifacts; the secrets vault works in interactive Pi (it never did before); the install pipeline ships a server bundle that actually loads its native addons.
