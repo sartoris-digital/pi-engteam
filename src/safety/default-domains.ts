@@ -32,7 +32,13 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
   // Write outside its declared upsert would warn-and-proceed.
   orchestrator: {
     read: ["."],
-    upsert: ["${RUN_DIR}/conversation.jsonl", "${RUN_DIR}/synthesis.md"],
+    // `${RUN_DIR}/synthesis.md` resolves to the SHARED runs root, not the
+    // per-run subdirectory, so `<runs>/<runId>/synthesis.md` was blocked
+    // by Layer D's prefix match. The Lead tier sidesteps this by allowing
+    // `${RUN_DIR}` as a directory prefix that covers every per-run
+    // subdir; mirror that here for the orchestrator's consult-synthesis
+    // path. conversation.jsonl appended by the engine is also per-run.
+    upsert: ["${RUN_DIR}"],
     delete: [],
     force_block: true,
   },
