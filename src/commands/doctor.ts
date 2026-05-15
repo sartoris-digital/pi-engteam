@@ -77,30 +77,37 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
 
       // --- Wave 2 checks ---
 
-      // Lead agent .md files
+      // Lead agent .md files — installed at ~/.pi/agent/agents/engineering-<name>.md
+      // (not <cwd>/agents/ which only exists in the source repo). The other Agent
+      // checks above already use this path; aligning Leads with the same convention.
       const leadNames = ["orchestrator", "planning-lead", "engineering-lead", "validation-lead", "investigation-lead"];
-      const agentsDir = join(process.cwd(), "agents");
+      const installedAgentsDir = join(home, ".pi", "agent", "agents");
       for (const name of leadNames) {
-        checks.push(await checkExists(join(agentsDir, `${name}.md`), `Lead agent file: ${name}`));
+        checks.push(await checkExists(join(installedAgentsDir, `engineering-${name}.md`), `Lead agent file: ${name}`));
       }
 
-      // team: field present in every agents/*.md file
+      // team: field present in every installed engineering-*.md file
       try {
-        const mdFiles = (await readdir(agentsDir)).filter(f => f.endsWith(".md"));
+        const mdFiles = (await readdir(installedAgentsDir))
+          .filter((f) => f.startsWith("engineering-") && f.endsWith(".md"));
         let missingTeam: string[] = [];
         for (const f of mdFiles) {
-          const content = await readFile(join(agentsDir, f), "utf8");
+          const content = await readFile(join(installedAgentsDir, f), "utf8");
           if (!content.includes("team:")) missingTeam.push(f);
         }
         checks.push({
           name: "team: field in all agent .md files",
           ok: missingTeam.length === 0,
           message: missingTeam.length === 0
-            ? `All ${mdFiles.length} agent files have team:`
+            ? `All ${mdFiles.length} engineering-*.md files have team:`
             : `Missing team: in ${missingTeam.join(", ")}`,
         });
       } catch {
-        checks.push({ name: "team: field in all agent .md files", ok: false, message: "Could not read agents/ directory" });
+        checks.push({
+          name: "team: field in all agent .md files",
+          ok: false,
+          message: `Could not read ${installedAgentsDir}`,
+        });
       }
 
       // loadTeamsConfig runs without error

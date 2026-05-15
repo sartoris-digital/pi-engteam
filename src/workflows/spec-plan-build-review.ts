@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 
@@ -28,6 +29,11 @@ const discoverStep: Step = {
   planMode: false,
   pauseAfter: "answering",
   run: async (ctx: StepContext): Promise<StepResult> => {
+    // The discoverer's cwd is the project root (not the run dir), so an
+    // unqualified "questions.md" gets written to the project, not where the
+    // pre-design check reads it. Give the agent the absolute path and tell
+    // it to emit that absolute path as the artifact.
+    const questionsAbsPath = join(ctx.engine.getRunsDir(), ctx.run.runId, "questions.md");
     const prompt = `You are gathering requirements for this feature goal:
 
 GOAL: ${ctx.run.goal}
@@ -47,8 +53,14 @@ Use this exact format:
 ## CONTEXT
 4. [question]
 
-Questions should be one sentence each. Save the file to questions.md in the current run directory.
-Call VerdictEmit with step: "discover", verdict: "PASS", artifacts: ["questions.md"]`;
+Questions should be one sentence each.
+
+IMPORTANT: Write the file to this EXACT absolute path:
+${questionsAbsPath}
+
+Do not use a relative path — use the absolute path above so the file lands in the run directory the workflow expects.
+
+Call VerdictEmit with step: "discover", verdict: "PASS", artifacts: ["${questionsAbsPath}"]`;
 
     try {
       const verdict = await waitForVerdict(ctx, "discoverer", prompt, "discover");

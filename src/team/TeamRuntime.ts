@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
-import { basename } from "path";
+import { basename, isAbsolute, resolve } from "path";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import type { AgentDefinition, TeamMessage, VerdictPayload } from "../types.js";
@@ -348,6 +348,34 @@ export class TeamRuntime {
         const raw = JSON.parse(data);
         const payload = validateVerdictPayload(raw);
         if (!payload) return undefined;
+
+        // Verify claimed artifacts actually exist on disk. Agents have been
+        // observed emitting PASS with artifacts they never wrote (e.g. the
+        // /spec discoverer claimed questions.md but the file was written to
+        // cwd, not <runDir> where the next step looks). Downgrade to FAIL
+        // when any claimed artifact is missing so workflows don't progress
+        // on a lie. We check both cwd and runDir for relative paths since
+        // different workflows have different conventions.
+        if (payload.artifacts && payload.artifacts.length > 0) {
+          const runDir = join(this.config.runsDir, runId);
+          const missing: string[] = [];
+          for (const art of payload.artifacts) {
+            const candidates = isAbsolute(art)
+              ? [art]
+              : [resolve(this.config.cwd, art), resolve(runDir, art)];
+            if (!candidates.some(existsSync)) missing.push(art);
+          }
+          if (missing.length > 0) {
+            const original = payload.verdict;
+            payload.verdict = "FAIL";
+            payload.issues = [
+              ...(payload.issues ?? []),
+              `Agent emitted ${original} but claimed artifact(s) not found on disk (checked cwd and run dir): ${missing.join(", ")}. The agent must call Write/Edit before VerdictEmit, or the workflow must instruct the agent on the exact output path.`,
+            ];
+            payload.artifacts = payload.artifacts.filter((a) => !missing.includes(a));
+          }
+        }
+
         // Round-3 H2: pass the host-set step name (captured at deliver
         // entry) so the projection can derive kind from a trusted source.
         this.config.onVerdictReceived?.(runId, to, payload, hostStepAtDispatch);
