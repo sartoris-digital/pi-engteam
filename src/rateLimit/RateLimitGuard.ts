@@ -27,6 +27,16 @@ function providerKey(provider: string, account?: string): string {
 }
 
 function prune(window: WindowEntry[], now: number, windowMs: number): void {
+  // Codex round-8 MEDIUM: detect backward clock jumps (NTP correction or
+  // suspend/resume that moved wall clock to the past). Any entry with
+  // ts > now is impossible under a forward-only clock, so the only
+  // explanation is that the wall clock moved backward. Reset the window
+  // entirely — better to lose rate-limit accounting for one cycle than
+  // to false-block dispatches for the duration of the jump.
+  if (window.length > 0 && window[window.length - 1].ts > now) {
+    window.length = 0;
+    return;
+  }
   // Half-open semantics: keep entries STRICTLY GREATER than (now - windowMs);
   // entries timestamped exactly at the boundary are evicted, so a request at t=0
   // no longer counts when re-checking at t=windowMs.

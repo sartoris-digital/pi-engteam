@@ -502,7 +502,11 @@ export class ADWEngine {
       const startedAt = new Date().toISOString();
       state = updateStep(state, state.currentStep, { startedAt });
 
-      const stepStart = Date.now();
+      // Codex round-8 MEDIUM: use monotonic clock for elapsed-time
+      // calculation. Date.now() can go backward under NTP correction or
+      // suspend/resume, which would reduce spent.wallSeconds via tickBudget.
+      // performance.now() is monotonic and immune to wall-clock jumps.
+      const stepStart = performance.now();
       this.config.team.setStepContext(
         state.currentStep,
         workflow.steps.map(s => s.name),
@@ -527,7 +531,7 @@ export class ADWEngine {
         this.config.team.markStepComplete(state.currentStep);
       }
 
-      const elapsed = (Date.now() - stepStart) / 1000;
+      const elapsed = Math.max(0, (performance.now() - stepStart) / 1000);
       state = tickBudget(state, elapsed, {
         costUsd: (result as any).costUsd,
         tokens: (result as any).tokens,
@@ -937,7 +941,8 @@ export class ADWEngine {
     void this.refreshTillDoneFooter(state);
     this.config.team.setStepContext(stepDef.name, workflow.steps.map((s) => s.name));
     const startedAt = new Date().toISOString();
-    const stepStart = Date.now();
+    // Codex round-8 MEDIUM: monotonic clock for elapsed; see line ~505.
+    const stepStart = performance.now();
     let result: StepResult;
     try {
       const ctx: StepContext = {
@@ -956,7 +961,7 @@ export class ADWEngine {
     } finally {
       this.config.team.markStepComplete(stepDef.name);
     }
-    const elapsed = (Date.now() - stepStart) / 1000;
+    const elapsed = Math.max(0, (performance.now() - stepStart) / 1000);
     return { result, elapsed, startedAt };
   }
 

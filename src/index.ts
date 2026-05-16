@@ -654,6 +654,16 @@ export default async function (pi: ExtensionAPI) {
   const sink = sinkUrl ? new HttpSink(sinkUrl, "global", RUNS_DIR) : undefined;
   const observer = new Observer(writer, sink, RUNS_DIR);
 
+  // Codex round-8 LOW: HttpSink runs a setInterval flush every 2s; without
+  // dispose at session_shutdown it would survive controller reload and
+  // continue polling against a stale Observer reference. Drain then stop.
+  if (sink) {
+    pi.on("session_shutdown", async () => {
+      try { await sink.flush(); } catch { /* best-effort */ }
+      try { sink.dispose(); } catch { /* best-effort */ }
+    });
+  }
+
   // Surface teams.yaml parse errors to operators at boot. Without this, corrupt
   // config silently falls back to defaults and is only visible via /engineering-doctor.
   for (const pe of teamsCfg.parseErrors) {
