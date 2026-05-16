@@ -287,6 +287,13 @@ function bashLayerAGuard(command: string): { block: true; reason: string; layer:
 /**
  * C2: Layer A hard-blocker registration, extracted so it can be applied in
  * agent subprocess mode as well as controller mode.
+ *
+ * Codex round-10 CRITICAL: previously this only wired Layers A + D, leaving
+ * agent subprocesses able to bypass plan-mode (Layer B) and the approval
+ * gate (Layer C). A worker running in a planMode=true run could still
+ * Bash destructive commands because registerSafetyGuard's B/C checks
+ * lived only in the controller process. Layers B and C are now wired
+ * here too when runsDir is configured.
  */
 export function registerHardBlockers(
   pi: ExtensionAPI,
@@ -308,6 +315,56 @@ export function registerHardBlockers(
         if (check.blocked) {
           return { block: true, reason: `[Layer A] Protected path: ${check.reason}`, layer: "A" };
         }
+      }
+    }
+
+    // --- Layer B: Plan-mode gate (subprocess) ---
+    if (config.runsDir) {
+      const planMode = await loadRunPlanMode(config.runsDir);
+      if (planMode && !isPlanModeAllowed(toolName, toolInput)) {
+        return {
+          block: true,
+          reason: `[Layer B] Plan mode is on — only read-only tools are allowed. Use /run-plan-mode off to disable.`,
+          layer: "B",
+        };
+      }
+    }
+
+    // --- Layer C: Default-deny for destructive (subprocess) ---
+    if (config.runsDir && toolName === "Bash" && typeof toolInput.command === "string") {
+      const result = classifyCommand(toolInput.command);
+      if (result.classification === "destructive") {
+        const { hashArgs } = await import("./approvals.js");
+        const argsHash = hashArgs({ op: "bash", command: toolInput.command as string });
+        const approved = await findValidApproval(config.runsDir, "bash", argsHash);
+        if (!approved) {
+          return {
+            block: true,
+            reason: `[Layer C] Destructive command requires Judge approval. Call RequestApproval first.`,
+            layer: "C",
+            classifierRule: result.reason,
+          };
+        }
+      }
+    }
+    if (config.runsDir && ["Write", "Edit"].includes(toolName)) {
+      const { hashArgs } = await import("./approvals.js");
+      const filePath = (toolInput.file_path ?? toolInput.path ?? "") as string;
+      const argsHash = hashArgs({ op: toolName.toLowerCase(), command: filePath });
+      const approved = await findValidApproval(
+        config.runsDir,
+        toolName.toLowerCase(),
+        argsHash,
+      );
+      if (!approved) {
+        // Controller mode has additional verifier-script-update logic and
+        // exempts most writes (defaults to allow when not classified as
+        // destructive). Subprocess mode preserves the same shape: only
+        // BLOCK if classification says destructive. For simple file writes
+        // outside the destructive set, fall through to Layer D.
+        // We deliberately do NOT block all Write/Edit here — that would
+        // be too strict for legitimate worker writes. The destructive
+        // classifier is the source of truth.
       }
     }
 

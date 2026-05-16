@@ -95,9 +95,13 @@ const writeStep: Step = {
   name: "write",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    // Codex round-10 HIGH: fence worker-supplied review issues.
+    const { fenceArray } = await import("../safety/prompt-fence.js");
     const planArtifact = ctx.run.artifacts["doc-backfill-plan"] ?? "doc-backfill-plan.md";
-    const reviewIssues =
-      ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n") ?? "";
+    const reviewIssuesRaw = ctx.run.steps.findLast(s => s.name === "review")?.issues;
+    const reviewIssues = reviewIssuesRaw && reviewIssuesRaw.length > 0
+      ? fenceArray(reviewIssuesRaw, "REVIEW_ISSUES")
+      : "";
 
     const prompt = `You are the implementer writing documentation.
 

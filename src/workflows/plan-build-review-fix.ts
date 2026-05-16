@@ -149,8 +149,13 @@ const fixStep: Step = {
   verify: true,
   agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const reviewIssues =
-      [...ctx.run.steps].reverse().find(s => s.name === "review")?.issues?.join("\n") ?? "No specific issues provided";
+    // Codex round-10 HIGH: fence worker-supplied review issues so the
+    // reviewer cannot inject instructions into the implementer's prompt.
+    const { fenceArray } = await import("../safety/prompt-fence.js");
+    const reviewIssuesRaw = [...ctx.run.steps].reverse().find(s => s.name === "review")?.issues;
+    const reviewIssues = reviewIssuesRaw && reviewIssuesRaw.length > 0
+      ? fenceArray(reviewIssuesRaw, "REVIEW_ISSUES")
+      : "No specific issues provided";
     const prompt = `GOAL: ${ctx.run.goal}
 REVIEW ISSUES:
 ${reviewIssues}

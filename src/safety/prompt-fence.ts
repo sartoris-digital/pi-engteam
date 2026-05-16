@@ -18,11 +18,19 @@ const MAX_FENCED_BYTES = 4000;
  * the payload are preserved (callers often want readable multi-line
  * output) but the fence makes it visually obvious where data ends and
  * instructions resume.
+ *
+ * Codex round-10 HIGH: previously a payload that contained the closer
+ * marker (e.g., `<<<UNTRUSTED_X_END>>>`) terminated the fence early so
+ * anything after it was rendered as instructions. We now (a) include a
+ * per-call nonce in both opener and closer so the worker cannot predict
+ * the literal token, and (b) neutralize any occurrence of `<<<UNTRUSTED`
+ * inside the payload by space-inserting between `<<<` and `UNTRUSTED`.
+ * Either defense alone closes the bypass; both layered prevents any
+ * attempt at lexical re-fencing from working.
  */
 export function fenceData(text: string, label: string): string {
   if (typeof text !== "string" || text.length === 0) return "";
-  // Strip control chars (C0) other than \n and \t. Backtick is kept; the
-  // fence is not markdown-based.
+  // Strip control chars (C0) other than \n and \t.
   let safe = "";
   for (let i = 0; i < text.length; i++) {
     const cp = text.charCodeAt(i);
@@ -30,6 +38,9 @@ export function fenceData(text: string, label: string): string {
     if (cp < 0x20 || cp === 0x7f) continue;
     safe += text[i];
   }
+  // Neutralize the fence-marker prefix. Any `<<<UNTRUSTED` in the payload
+  // becomes `<<< UNTRUSTED` so it cannot lexically match the opener/closer.
+  safe = safe.replace(/<<<UNTRUSTED/g, "<<< UNTRUSTED");
   // Cap bytes (UTF-8). Truncate with explicit marker so the reader knows
   // content was elided.
   const enc = new TextEncoder();
@@ -42,8 +53,12 @@ export function fenceData(text: string, label: string): string {
     safe = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   }
   const safeLabel = label.replace(/[^A-Za-z0-9_-]/g, "");
-  const opener = `<<<UNTRUSTED_${safeLabel}_BEGIN>>>`;
-  const closer = `<<<UNTRUSTED_${safeLabel}_END>>>`;
+  // Per-call nonce: even if the safe-replace above missed a unicode
+  // homoglyph or a future format change, the worker cannot guess the
+  // nonce so it cannot fabricate a closer that matches.
+  const nonce = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
+  const opener = `<<<UNTRUSTED_${safeLabel}_${nonce}_BEGIN>>>`;
+  const closer = `<<<UNTRUSTED_${safeLabel}_${nonce}_END>>>`;
   return (
     opener +
     "\n" +

@@ -64,9 +64,14 @@ const designStep: Step = {
   name: "design",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    // Codex round-10 HIGH: fence judge feedback so a judge cannot inject
+    // instructions into the architect's prompt via issues[].
+    const { fenceArray } = await import("../safety/prompt-fence.js");
     const mapArtifact = ctx.run.artifacts["refactor-map"] ?? "refactor-map.md";
-    const judgeFeedback =
-      ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n") ?? "";
+    const judgeIssuesArr = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
+    const judgeFeedback = judgeIssuesArr && judgeIssuesArr.length > 0
+      ? fenceArray(judgeIssuesArr, "JUDGE_FEEDBACK")
+      : "";
 
     const feedbackSection = judgeFeedback
       ? `\nJUDGE FEEDBACK (re-design required):\n${judgeFeedback}`
@@ -115,10 +120,14 @@ const implementStep: Step = {
   verify: true,
   agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const verifyHint =
-      ctx.run.steps.findLast(s => s.name === "verify")?.handoffHint ?? "";
-    const reviewIssues =
-      ctx.run.steps.findLast(s => s.name === "review")?.issues?.join("\n") ?? "";
+    // Codex round-10 HIGH: fence worker-supplied feedback fields.
+    const { fenceData, fenceArray } = await import("../safety/prompt-fence.js");
+    const verifyHintRaw = ctx.run.steps.findLast(s => s.name === "verify")?.handoffHint;
+    const verifyHint = verifyHintRaw ? fenceData(verifyHintRaw, "VERIFY_HANDOFF") : "";
+    const reviewIssuesRaw = ctx.run.steps.findLast(s => s.name === "review")?.issues;
+    const reviewIssues = reviewIssuesRaw && reviewIssuesRaw.length > 0
+      ? fenceArray(reviewIssuesRaw, "REVIEW_ISSUES")
+      : "";
 
     const prompt = `You are the implementer executing a refactor campaign.
 
