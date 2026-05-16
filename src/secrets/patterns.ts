@@ -126,6 +126,20 @@ function matchesEmptyString(re: RegExp): boolean {
   return m !== null && m[0].length === 0;
 }
 
+// Codex round-5 MEDIUM: user-supplied regexes can ReDoS the input hook
+// because Watcher.scan runs them synchronously on every keystroke. Reject
+// patterns with the textbook catastrophic-backtracking shapes — nested
+// quantifiers like `(a+)+`, `(a*)*`, `(a+)*` — and cap source length.
+// This is a heuristic (a true safe-regex check would require either a
+// dependency or a non-backtracking engine like RE2), but it catches the
+// shapes that show up in real-world ReDoS guides.
+const MAX_PATTERN_LENGTH = 512;
+const UNSAFE_NESTED_QUANTIFIER = /\([^)]*[+*][^)]*\)[+*]/;
+function isLikelyReDoS(source: string): boolean {
+  if (source.length > MAX_PATTERN_LENGTH) return true;
+  return UNSAFE_NESTED_QUANTIFIER.test(source);
+}
+
 function compileUserPattern(entry: RawUserPattern, idx: number): SecretPattern {
   const { name, regex, suggestedName, priority } = entry;
   if (typeof name !== "string" || !name) {
@@ -139,6 +153,12 @@ function compileUserPattern(entry: RawUserPattern, idx: number): SecretPattern {
   }
   if (typeof priority !== "number" || !Number.isFinite(priority)) {
     throw new Error(`secret-patterns.json[${idx}]: 'priority' must be a finite number`);
+  }
+  if (isLikelyReDoS(regex)) {
+    throw new Error(
+      `secret-patterns.json[${idx}] '${name}': regex looks like catastrophic backtracking ` +
+      `(nested quantifier or > ${MAX_PATTERN_LENGTH} chars). Rewrite without nested + / *.`,
+    );
   }
   let compiled: RegExp;
   try {

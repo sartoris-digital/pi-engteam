@@ -97,6 +97,42 @@ export function withRunStateLock<T>(
   return next;
 }
 
+// Codex round-5 MEDIUM: state.json was cast via `as RunState` with no
+// runtime validation. A crafted file with `budget:{}` or `steps:{}` would
+// reach downstream code (BudgetGuard's spent.costUsd access, ADWEngine's
+// state.steps.filter/findIndex) and crash.
+//
+// Strategy: validate the IDENTITY fields strictly (runId shape, workflow
+// and goal as strings) so we never load a state with the wrong identity,
+// but be permissive about the structured fields — fill in safe defaults
+// when steps/budget/etc. are missing or wrong-shaped. This preserves
+// compatibility with older state.json shapes from prior versions while
+// still preventing the crash modes the validator was added to stop.
+function normalizeLoadedState(raw: unknown): RunState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o["runId"] !== "string" || !isSafeRunId(o["runId"] as string)) return null;
+  if (typeof o["workflow"] !== "string") return null;
+  if (typeof o["goal"] !== "string") return null;
+  // Fill in defaults rather than rejecting — these fields existed in
+  // every version but minimal test fixtures and old crashed states may
+  // omit them.
+  const steps = Array.isArray(o["steps"]) ? o["steps"] : [];
+  const budget = (o["budget"] && typeof o["budget"] === "object" && !Array.isArray(o["budget"]))
+    ? { ...DEFAULT_BUDGET, ...(o["budget"] as Partial<Budget>) }
+    : DEFAULT_BUDGET;
+  if (!budget.spent || typeof budget.spent !== "object") {
+    budget.spent = { costUsd: 0, wallSeconds: 0, tokens: 0 };
+  }
+  return {
+    ...(o as Record<string, unknown>),
+    steps,
+    budget,
+  } as RunState;
+}
+
+const MAX_STATE_BYTES = 5 * 1024 * 1024; // 5MB hard cap — real states are <100KB
+
 export async function loadRunState(runsDir: string, runId: string): Promise<RunState | null> {
   // Round-2 C1: refuse traversal-shaped runIds. Returning null (vs throwing)
   // matches the existing "missing run" semantic so callers like
@@ -106,7 +142,21 @@ export async function loadRunState(runsDir: string, runId: string): Promise<RunS
   try {
     const stateFile = join(runsDir, runId, "state.json");
     const raw = await readFile(stateFile, "utf8");
-    return JSON.parse(raw) as RunState;
+    if (raw.length > MAX_STATE_BYTES) {
+      console.error(
+        `[pi-engineering] state.json for ${runId} exceeds ${MAX_STATE_BYTES} bytes — refusing to load.`,
+      );
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeLoadedState(parsed);
+    if (!normalized) {
+      console.error(
+        `[pi-engineering] state.json for ${runId} failed shape validation (missing/invalid runId, workflow, or goal) — refusing to load.`,
+      );
+      return null;
+    }
+    return normalized;
   } catch (err) {
     // M2: distinguish a missing run (ENOENT) from a corrupt/unreadable state file
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
