@@ -234,12 +234,50 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
       // on the tasks.json path. Layered with the in-process lock for
       // controller-side serialization (cheaper than acquiring a file lock
       // for every controller-only write).
+      // Codex round-6 MEDIUM: every subprocess gets TaskUpdate registered,
+      // and previously any worker could overwrite ANY task's status, owner,
+      // or team. Bind caller identity from the env and apply minimum-
+      // privilege rules:
+      //   - Only the orchestrator may reassign `team` on an existing task.
+      //   - Workers may only mutate tasks where they own them
+      //     (existing.owner === callerAgent) or no owner is set yet.
+      //   - Creating a brand-new task is open to any agent (they often
+      //     emit blocked/completed updates the orchestrator hasn't seen).
+      const callerAgent = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
       return withRunStateLock(runsDir, runId, async () => {
       const tasksPath = join(runsDir, runId, "tasks.json");
       return withFileLock(tasksPath, async () => {
       const tasks = await loadTasks(runsDir, runId);
       const existing = tasks.find(t => t.taskId === params.taskId);
       if (existing) {
+        // Identity checks only fire when callerAgent is actually set —
+        // controller-side TaskUpdate calls (no PI_ENGINEERING_AGENT_NAME
+        // env) and tests don't go through the agent boundary, so we
+        // don't gate them. Subprocess workers always have the env set,
+        // so the threat model is fully covered.
+        if (
+          callerAgent &&
+          callerAgent !== "orchestrator" &&
+          existing.owner &&
+          existing.owner !== callerAgent
+        ) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `TaskUpdate refused: task ${params.taskId} is owned by '${existing.owner}'. Only that agent (or the orchestrator) may mutate it.`,
+            }],
+            details: {},
+          };
+        }
+        if (callerAgent && params.team && params.team !== existing.team && callerAgent !== "orchestrator") {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `TaskUpdate refused: only the orchestrator may reassign team on task ${params.taskId}.`,
+            }],
+            details: {},
+          };
+        }
         existing.status = params.status;
         existing.updatedAt = new Date().toISOString();
         if (params.notes) existing.notes = params.notes;
@@ -250,7 +288,7 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
           taskId: params.taskId,
           status: params.status,
           notes: params.notes,
-          owner: params.owner,
+          owner: params.owner ?? (callerAgent || undefined),
           team: params.team,
           updatedAt: new Date().toISOString(),
         });

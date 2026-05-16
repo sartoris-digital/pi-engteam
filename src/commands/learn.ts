@@ -74,9 +74,18 @@ export function registerLearnCommand(
         return;
       }
 
+      // Codex round-6 HIGH: the learner orchestrator now requires a
+      // runId so it can verify the judge's GrantApproval actually minted
+      // a verifier-script-update token under that run before promoting.
+      // Synthesize a learner-scoped runId when /learn is invoked without
+      // one, and bind the TeamRuntime to it so the judge subprocess writes
+      // its approvals under the same dir we'll scan.
+      const effectiveRunId = runId || `_learner-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+      team.setRunId(effectiveRunId);
+
       const reportRunDir = runId
         ? join(runsDir, runId, "learning")
-        : join(runsDir, "_learner", new Date().toISOString().replace(/[:.]/g, "-"));
+        : join(runsDir, effectiveRunId);
 
       ctx.ui.notify(`Learner processing ${gapsPaths.length} gap file(s)…`, "info");
 
@@ -92,6 +101,8 @@ export function registerLearnCommand(
           changelogPath,
           gapsPaths,
           reportRunDir,
+          runsDir,
+          runId: effectiveRunId,
           // Codex P3.5 round-1 LOW-15: emit observability event on each promote.
           onPromote: (script, version) => {
             emitEvent?.({

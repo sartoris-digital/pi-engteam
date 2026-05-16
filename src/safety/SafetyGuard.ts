@@ -47,14 +47,23 @@ async function loadRunPlanMode(runsDir: string): Promise<boolean> {
   //   - state.json exists but is unreadable / unparseable → we don't know
   //     the planMode status → FAIL CLOSED (return true). The user can
   //     repair state.json or end the run via /run-cancel to recover.
-  const activeFile = join(runsDir, "active-run.txt");
+  // Codex round-6 HIGH: prefer PI_ENGINEERING_RUN_ID in subprocess mode so
+  // plan-mode enforcement reads run A's state file when run A's worker is
+  // executing — even if a sibling controller updated active-run.txt to
+  // point at run B in the interim.
+  const envRunId = process.env["PI_ENGINEERING_RUN_ID"];
   let runId: string;
-  try {
-    runId = (await readFile(activeFile, "utf8")).trim();
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    // active-run.txt is present but unreadable (EPERM/EACCES) — fail closed.
-    return true;
+  if (envRunId) {
+    runId = envRunId;
+  } else {
+    const activeFile = join(runsDir, "active-run.txt");
+    try {
+      runId = (await readFile(activeFile, "utf8")).trim();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      // active-run.txt is present but unreadable (EPERM/EACCES) — fail closed.
+      return true;
+    }
   }
   if (!runId) return false;
   const stateFile = join(runsDir, runId, "state.json");
@@ -78,8 +87,19 @@ async function findValidApproval(
   argsHash: string,
 ): Promise<boolean> {
   try {
-    const activeFile = join(runsDir, "active-run.txt");
-    const runId = (await readFile(activeFile, "utf8")).trim();
+    // Codex round-6 HIGH: previously read active-run.txt unconditionally —
+    // a destructive call from run A's subprocess would consult B's
+    // approvals if active-run.txt happened to point at B. In subprocess
+    // mode, PI_ENGINEERING_RUN_ID is the authoritative run identity;
+    // only fall back to active-run.txt for controller-mode callers.
+    const envRunId = process.env["PI_ENGINEERING_RUN_ID"];
+    let runId: string;
+    if (envRunId) {
+      runId = envRunId;
+    } else {
+      const activeFile = join(runsDir, "active-run.txt");
+      runId = (await readFile(activeFile, "utf8")).trim();
+    }
     const secretFile = join(runsDir, runId, ".secret");
     const approvalDir = join(runsDir, runId, "approvals");
     const secret = (await readFile(secretFile, "utf8")).trim();
@@ -99,6 +119,12 @@ async function findValidApproval(
         if (token.consumed) continue;
         if (token.op !== op) continue;
         if (token.argsHash !== argsHash) continue;
+        // Codex round-6 HIGH: bind token to the run it was issued under.
+        // verifyToken now includes runId in the HMAC, but defense-in-depth
+        // also explicit-compares — a token whose .runId field matches but
+        // signature doesn't would fail verifyToken; a token whose runId is
+        // missing/wrong (legacy or tampered) is rejected here.
+        if (token.runId !== runId) continue;
         if (!verifyToken(secret, token)) continue;
         if (token.scope === "once") {
           // Codex round-2 HIGH: atomic consume via rename. The previous

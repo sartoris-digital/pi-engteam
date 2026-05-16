@@ -207,7 +207,7 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
       const argsHash = hashArgs({ op: request.op, command: request.command });
       const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
       const scope = requestedScope;
-      const signature = signToken(secret, tokenId, request.op, argsHash, expiresAt);
+      const signature = signToken(secret, tokenId, request.op, argsHash, expiresAt, runId);
 
       const token = {
         tokenId,

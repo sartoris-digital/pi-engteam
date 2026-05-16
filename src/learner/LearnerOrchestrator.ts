@@ -50,6 +50,17 @@ export type LearnerConfig = {
   changelogPath: string;
   /** Explicit gap files; orchestrator reads each and aggregates. */
   gapsPaths: string[];
+  /**
+   * Run identity for the judge subprocess. Optional only for unit tests
+   * that mock the judge response — production callers MUST pass both, so
+   * the orchestrator can verify that GrantApproval actually minted a
+   * token in `<runsDir>/<runId>/approvals/` before promoting a verifier
+   * script. Codex round-6 HIGH closed the bypass where judge PASS alone
+   * authorized promotion. When BOTH are omitted, token verification is
+   * skipped (legacy test behaviour); production must always supply them.
+   */
+  runsDir?: string;
+  runId?: string;
   /** Where to write the report. The first gap's runDir is used by default. */
   reportRunDir?: string;
   onPromote?: (script: string, version: string) => void;
@@ -182,6 +193,8 @@ async function requestJudgeApproval(opts: {
   proposal: ProposedChange;
   diff: string;
   validation: FixtureValidation;
+  runsDir?: string;
+  runId?: string;
 }): Promise<{ approved: boolean; tokenId?: string }> {
   const justification = [
     `Verifier-script update for gap: ${opts.proposal.gap.claim}`,
@@ -209,10 +222,54 @@ async function requestJudgeApproval(opts: {
   };
   const verdict = await opts.team.deliver(opts.judgeAgentName, message);
   if (!verdict) return { approved: false };
-  // We accept either an explicit PASS verdict or a verdict whose handoffHint
-  // contains a tokenId. v1 contract: Judge agents emit PASS when granting.
-  const approved = verdict.verdict === "PASS";
-  return { approved, tokenId: undefined };
+  if (verdict.verdict !== "PASS") return { approved: false };
+
+  // Legacy test path: runsDir/runId omitted → skip token verification.
+  // Production callers (commands/learn.ts) always supply both.
+  if (!opts.runsDir || !opts.runId) {
+    return { approved: true, tokenId: undefined };
+  }
+
+  // Codex round-6 HIGH: judge PASS alone is NOT sufficient. The host-side
+  // rename in promote() bypasses SafetyGuard's verifier-script-update
+  // gate because no Pi Write/Edit hook fires for a controller-process
+  // rename. Require that GrantApproval actually minted a token in
+  // <runsDir>/<runId>/approvals/ for this script BEFORE returning
+  // approved=true.
+  const { hashArgs, verifyToken } = await import("../safety/approvals.js");
+  const expectedArgsHash = hashArgs({ op: "verifier-script-update", command: opts.proposal.scriptName });
+  let secret: string;
+  try {
+    secret = (await readFile(join(opts.runsDir, opts.runId, ".secret"), "utf8")).trim();
+  } catch {
+    return { approved: false };
+  }
+  const approvalsDir = join(opts.runsDir, opts.runId, "approvals");
+  const files = await readdir(approvalsDir).catch(() => [] as string[]);
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    try {
+      const tokenPath = join(approvalsDir, file);
+      const token = JSON.parse(await readFile(tokenPath, "utf8"));
+      if (token.consumed) continue;
+      if (token.op !== "verifier-script-update") continue;
+      if (token.argsHash !== expectedArgsHash) continue;
+      if (token.runId !== opts.runId) continue;
+      if (!verifyToken(secret, token)) continue;
+      // Atomic consume: rename to .consumed so a second promote can't replay.
+      const consumedPath = tokenPath + ".consumed";
+      try {
+        await rename(tokenPath, consumedPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        continue;
+      }
+      return { approved: true, tokenId: token.tokenId };
+    } catch {
+      continue;
+    }
+  }
+  return { approved: false };
 }
 
 // ── Step 7: atomic promotion + archive + CHANGELOG ──────────────────────────
@@ -417,6 +474,8 @@ export async function runLearner(cfg: LearnerConfig): Promise<LearnerResult> {
       proposal,
       diff,
       validation,
+      runsDir: cfg.runsDir,
+      runId: cfg.runId,
     });
 
     if (!approval.approved) {

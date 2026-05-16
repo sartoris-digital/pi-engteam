@@ -19,13 +19,27 @@ export function signToken(
   op: string,
   argsHash: string,
   expiresAt: string,
+  runId: string,
 ): string {
-  const payload = `${tokenId}:${op}:${argsHash}:${expiresAt}`;
+  // Codex round-6 HIGH: runId is now part of the HMAC payload so a token
+  // issued under run A cannot be honored when run B is the active run.
+  // Previous version omitted runId; coupled with the global active-run.txt
+  // lookup in findValidApproval, an attacker could exfiltrate a token
+  // from run A into run B's approvals dir and replay it.
+  const payload = `${runId}:${tokenId}:${op}:${argsHash}:${expiresAt}`;
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
 export function verifyToken(secret: string, token: ApprovalToken): boolean {
   if (new Date(token.expiresAt) < new Date()) return false;
-  const expected = signToken(secret, token.tokenId, token.op, token.argsHash, token.expiresAt);
+  if (typeof token.runId !== "string" || token.runId.length === 0) return false;
+  const expected = signToken(
+    secret,
+    token.tokenId,
+    token.op,
+    token.argsHash,
+    token.expiresAt,
+    token.runId,
+  );
   return expected === token.signature;
 }

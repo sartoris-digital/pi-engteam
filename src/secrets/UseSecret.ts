@@ -37,6 +37,29 @@ export function createUseSecretTool(opts: {
         throw new Error("UseSecret: missing or empty field 'command'. Provide the shell command as a non-empty string.");
       }
 
+      // Codex round-6 HIGH: a worker could previously invoke UseSecret to
+      // spawn a NESTED Pi instance with PI_ENGINEERING_AGENT_NAME=judge,
+      // gaining GrantApproval and self-approving destructive operations.
+      // UseSecret is a credentialed shell — block commands that would
+      // re-enter the Pi CLI or set the engineering-team env vars that
+      // control agent identity. This is a defence-in-depth filter; the
+      // attestation model (controller signs spawn identity) is a follow
+      // up. Reject if the command:
+      //   - Invokes `pi` (the CLI) as a leaf or quoted leaf word.
+      //   - Sets any PI_ENGINEERING_* env var inline.
+      const NESTED_PI_RE = /(^|[\s;&|`$(])pi(\s+-p\b|\s+--print\b|\s+exec\b|\s|$)/;
+      const ENG_ENV_RE = /\bPI_ENGINEERING_[A-Z_]+\s*=/;
+      if (NESTED_PI_RE.test(command)) {
+        throw new Error(
+          "UseSecret: command appears to invoke the Pi CLI (`pi -p ...`). Re-entering Pi from a credentialed shell is denied — it would let a worker self-assert as judge or orchestrator. If you need a nested workflow, use /spec, /consult, or /run-resume from the controller instead.",
+        );
+      }
+      if (ENG_ENV_RE.test(command)) {
+        throw new Error(
+          "UseSecret: command sets a PI_ENGINEERING_* env var inline. These vars control agent identity / trust boundaries and must not be redefined by workers.",
+        );
+      }
+
       let secretValue: string;
       try {
         secretValue = opts.resolver.resolve(name, { agent: agentName, target: "bash" });

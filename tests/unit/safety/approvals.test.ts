@@ -14,7 +14,7 @@ describe("approvals", () => {
     const op = "git-push";
     const argsHash = hashArgs({ branch: "main", remote: "origin" });
     const expiresAt = new Date(Date.now() + 300_000).toISOString();
-    const signature = signToken(secret, tokenId, op, argsHash, expiresAt);
+    const signature = signToken(secret, tokenId, op, argsHash, expiresAt, "run-1");
     const token: ApprovalToken = {
       tokenId, runId: "run-1", op, argsHash,
       scope: "once", expiresAt, signature,
@@ -28,7 +28,7 @@ describe("approvals", () => {
     const op = "git-push";
     const argsHash = hashArgs({ x: 1 });
     const expiresAt = new Date(Date.now() + 300_000).toISOString();
-    const signature = signToken(secret, tokenId, op, argsHash, expiresAt);
+    const signature = signToken(secret, tokenId, op, argsHash, expiresAt, "run-1");
     const token: ApprovalToken = {
       tokenId, runId: "run-1", op, argsHash,
       scope: "once", expiresAt, signature: signature + "tampered",
@@ -42,7 +42,7 @@ describe("approvals", () => {
     const op = "migration";
     const argsHash = hashArgs({ db: "prod" });
     const expiresAt = new Date(Date.now() - 1000).toISOString();
-    const signature = signToken(secret, tokenId, op, argsHash, expiresAt);
+    const signature = signToken(secret, tokenId, op, argsHash, expiresAt, "run-1");
     const token: ApprovalToken = {
       tokenId, runId: "run-1", op, argsHash,
       scope: "once", expiresAt, signature,
