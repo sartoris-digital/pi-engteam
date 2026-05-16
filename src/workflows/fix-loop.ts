@@ -63,11 +63,14 @@ const implementStep: Step = {
     const reviewIssues = ctx.run.steps.findLast(s => s.name === "review")?.issues;
     const judgeIssues = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
 
+    // Codex round-9 HIGH: fence worker-controlled fields (handoffHint,
+    // issues) so downstream prompt content cannot inject instructions.
+    const { fenceData, fenceArray } = await import("../safety/prompt-fence.js");
     const prompt = `GOAL: ${ctx.run.goal}
 FIX PLAN: ${ctx.run.artifacts["fix-plan"] ?? "See analyze step artifacts"}
-${testHint ? `\nFAILING TESTS:\n${testHint}` : ""}
-${reviewIssues ? `\nREVIEWER ISSUES:\n${reviewIssues.join("\n")}` : ""}
-${judgeIssues ? `\nJUDGE ISSUES:\n${judgeIssues.join("\n")}` : ""}
+${testHint ? `\nFAILING TESTS:\n${fenceData(testHint, "TEST_HANDOFF")}` : ""}
+${reviewIssues ? `\nREVIEWER ISSUES:\n${fenceArray(reviewIssues, "REVIEWER_ISSUES")}` : ""}
+${judgeIssues ? `\nJUDGE ISSUES:\n${fenceArray(judgeIssues, "JUDGE_ISSUES")}` : ""}
 
 Implement the fix. Call VerdictEmit with step="implement".`;
 

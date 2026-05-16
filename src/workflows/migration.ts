@@ -25,10 +25,13 @@ const planStep: Step = {
   name: "plan",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const securityFeedback =
-      ctx.run.steps.findLast(s => s.name === "security-review")?.issues?.join("\n") ?? "";
-    const judgeFeedback =
-      ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues?.join("\n") ?? "";
+    // Codex round-9 HIGH: fence worker-supplied feedback fields so a
+    // tester/judge cannot inject instructions via issues[].
+    const { fenceArray } = await import("../safety/prompt-fence.js");
+    const securityIssues = ctx.run.steps.findLast(s => s.name === "security-review")?.issues;
+    const judgeIssuesArr = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
+    const securityFeedback = securityIssues && securityIssues.length > 0 ? fenceArray(securityIssues, "SECURITY_ISSUES") : "";
+    const judgeFeedback = judgeIssuesArr && judgeIssuesArr.length > 0 ? fenceArray(judgeIssuesArr, "JUDGE_ISSUES") : "";
 
     const feedbackSection = [
       securityFeedback ? `\nSECURITY REVIEW FEEDBACK:\n${securityFeedback}` : "",

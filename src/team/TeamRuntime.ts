@@ -105,22 +105,48 @@ type TeamRuntimeConfig = {
 // subprocess otherwise polluted RunState steps[] with `verdict: undefined`
 // and downstream PASS-vs-FAIL decisions.
 const VALID_VERDICTS = new Set(["PASS", "FAIL", "NEEDS_MORE", "PARTIAL"]);
+// Codex round-9 MEDIUM: bound verdict payload size so a worker can't
+// exhaust controller memory (and prompt budget for downstream agents) by
+// emitting megabytes of learnings/gotchas. Also canonicalize the
+// returned object — keys that are not part of the schema are dropped
+// before the verdict flows to the observer / step record.
+const MAX_VERDICT_ARRAY = 64;
+const MAX_VERDICT_STRING = 4000;
+const MAX_VERDICT_STEP_LEN = 128;
+const MAX_HANDOFF_HINT_BYTES = 4000;
 function validateVerdictPayload(raw: unknown): VerdictPayload | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
-  if (typeof r.step !== "string" || r.step.length === 0) return undefined;
+  if (typeof r.step !== "string" || r.step.length === 0 || r.step.length > MAX_VERDICT_STEP_LEN) return undefined;
   if (typeof r.verdict !== "string" || !VALID_VERDICTS.has(r.verdict)) return undefined;
-  const isStringArr = (v: unknown): v is string[] =>
-    Array.isArray(v) && v.every((x) => typeof x === "string");
-  if (r.issues !== undefined && !isStringArr(r.issues)) return undefined;
-  if (r.artifacts !== undefined && !isStringArr(r.artifacts)) return undefined;
-  if (r.handoffHint !== undefined && typeof r.handoffHint !== "string") return undefined;
-  if (r.learnings !== undefined && !isStringArr(r.learnings)) return undefined;
-  if (r.decisions !== undefined && !isStringArr(r.decisions)) return undefined;
-  if (r.issues_found !== undefined && !isStringArr(r.issues_found)) return undefined;
-  if (r.gotchas !== undefined && !isStringArr(r.gotchas)) return undefined;
+  const isBoundedStringArr = (v: unknown): v is string[] => {
+    if (!Array.isArray(v) || v.length > MAX_VERDICT_ARRAY) return false;
+    return v.every((x) => typeof x === "string" && x.length <= MAX_VERDICT_STRING);
+  };
+  if (r.issues !== undefined && !isBoundedStringArr(r.issues)) return undefined;
+  if (r.artifacts !== undefined && !isBoundedStringArr(r.artifacts)) return undefined;
+  if (r.handoffHint !== undefined && (typeof r.handoffHint !== "string" || r.handoffHint.length > MAX_HANDOFF_HINT_BYTES)) return undefined;
+  if (r.learnings !== undefined && !isBoundedStringArr(r.learnings)) return undefined;
+  if (r.decisions !== undefined && !isBoundedStringArr(r.decisions)) return undefined;
+  if (r.issues_found !== undefined && !isBoundedStringArr(r.issues_found)) return undefined;
+  if (r.gotchas !== undefined && !isBoundedStringArr(r.gotchas)) return undefined;
   if (r.runId !== undefined && typeof r.runId !== "string") return undefined;
-  return r as unknown as VerdictPayload;
+  // Canonicalize: return only the schema fields, discarding unknown keys.
+  // Without this, a worker emitting `{step,verdict,my_evil_key:...}` would
+  // get my_evil_key surfaced through the observer projection.
+  const out: Record<string, unknown> = {
+    step: r.step,
+    verdict: r.verdict,
+  };
+  if (r.issues !== undefined) out.issues = r.issues;
+  if (r.artifacts !== undefined) out.artifacts = r.artifacts;
+  if (r.handoffHint !== undefined) out.handoffHint = r.handoffHint;
+  if (r.learnings !== undefined) out.learnings = r.learnings;
+  if (r.decisions !== undefined) out.decisions = r.decisions;
+  if (r.issues_found !== undefined) out.issues_found = r.issues_found;
+  if (r.gotchas !== undefined) out.gotchas = r.gotchas;
+  if (r.runId !== undefined) out.runId = r.runId;
+  return out as VerdictPayload;
 }
 
 // Phase 5.5 round-2 M1: pure helper extracted from deliver() so unit tests

@@ -134,6 +134,20 @@ export function isProtectedPath(filePath: string, opts?: { runsDir?: string }): 
       };
     }
 
+    // Codex round-9 HIGH: `_agent_tmp` is the shared scratch dir where the
+    // controller writes per-deliver verdict files and system prompt
+    // assemblies. A sibling worker that read/wrote there could
+    // (a) snoop another agent's verdict before the host consumed it,
+    // (b) overwrite a peer's verdict to forge PASS, or
+    // (c) read system prompt contents leaked by other agents.
+    // Block ALL agent access — only the host process owns this dir.
+    if (/(^|\/)_agent_tmp(\/|$)/.test(cand) || cand.includes("/runs/_agent_tmp")) {
+      return {
+        blocked: true,
+        reason: "_agent_tmp is host-controlled scratch for verdict + system-prompt files; agents must not Read/Write/Bash there.",
+      };
+    }
+
     // Phase 5.5 round-2 C2 + round-3 M1: tasks.json under a run directory
     // must only be modified via TaskUpdate (which validates taskId shape).
     // A direct Bash/Write/Edit to tasks.json would let a worker plant

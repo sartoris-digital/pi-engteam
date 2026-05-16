@@ -58,10 +58,13 @@ const writeTestsStep: Step = {
     const reviewIssues = ctx.run.steps.findLast(s => s.name === "review")?.issues;
     const validateHint = ctx.run.steps.findLast(s => s.name === "validate")?.handoffHint;
 
+    // Codex round-9 HIGH: fence worker-controlled fields so injection
+    // attempts in issues/handoffHint are rendered as data, not instructions.
+    const { fenceData, fenceArray } = await import("../safety/prompt-fence.js");
     const prompt = `GOAL: ${ctx.run.goal}
 COVERAGE GAPS: ${ctx.run.artifacts["audit-gaps"] ?? "See audit step output"}
-${reviewIssues ? `\nREVIEWER ISSUES TO ADDRESS:\n${reviewIssues.join("\n")}` : ""}
-${validateHint ? `\nFAILING TESTS:\n${validateHint}` : ""}
+${reviewIssues ? `\nREVIEWER ISSUES TO ADDRESS:\n${fenceArray(reviewIssues, "REVIEWER_ISSUES")}` : ""}
+${validateHint ? `\nFAILING TESTS:\n${fenceData(validateHint, "VALIDATE_HANDOFF")}` : ""}
 
 Write the missing tests. Call VerdictEmit with step="write-tests".`;
 

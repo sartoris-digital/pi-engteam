@@ -43,12 +43,24 @@ When your plan is complete, call VerdictEmit with:
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "planner", prompt, "plan");
-      const planArtifact = verdict.artifacts?.[0] ?? "plan.md";
+      // Codex round-9 HIGH: PASS verdicts MUST include an artifact for
+      // the plan step. The fallback `?? "plan.md"` would otherwise let a
+      // crashed-mid-write agent advance the workflow with a phantom file
+      // name that never existed on disk. Downgrade missing-artifact PASS
+      // to FAIL with an explicit issue.
+      const planArtifact = verdict.artifacts?.[0];
+      if (verdict.verdict === "PASS" && !planArtifact) {
+        return {
+          success: false,
+          verdict: "FAIL",
+          issues: [...(verdict.issues ?? []), "Planner emitted PASS without an artifact path. PASS requires artifacts:['plan.md'] referencing the file written to disk."],
+        };
+      }
       return {
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { plan: planArtifact },
+        artifacts: planArtifact ? { plan: planArtifact } : {},
       };
     } catch (err) {
       return {

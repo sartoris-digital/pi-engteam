@@ -110,7 +110,9 @@ describe("plan-build-review workflow integration", () => {
 
     mockTeam.deliver.mockImplementation(async (_agentName: string, msg: any) => {
       const stepName = (msg.summary as string)?.replace("Execute step: ", "") ?? "unknown";
-      return { step: stepName, verdict: "PASS", artifacts: [] } satisfies VerdictPayload;
+      // Round-9 HIGH: plan step's PASS now requires an artifact; supply one
+      // so this persistence test exercises the success path.
+      return { step: stepName, verdict: "PASS", artifacts: [`${stepName}-output.md`] } satisfies VerdictPayload;
     });
 
     const state = await engine.startRun({
