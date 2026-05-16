@@ -1022,21 +1022,33 @@ export default async function (pi: ExtensionAPI) {
       // "paused" so the user can /run-resume <runId> after restart.
       // The phase field is also restored to "active" so a stale
       // "cancelling" doesn't immediately end the resumed run.
+      // Codex round-7 HIGH: previously this did raw readFile→writeFile
+      // on state.json without atomic rename and outside withRunStateLock.
+      // A crash mid-write left a torn state.json that loadRunState then
+      // rejected, making /run-resume report "Run not found". Route the
+      // pause-downgrade through saveRunState (tmp+rename) under the
+      // per-runId mutex.
       try {
-        const { readFile, writeFile } = await import("fs/promises");
+        const { readFile } = await import("fs/promises");
         const { join } = await import("path");
+        const { loadRunState, saveRunState, withRunStateLock, isSafeRunId } = await import("./adw/RunState.js");
         const activeFile = join(RUNS_DIR, "active-run.txt");
         const runId = (await readFile(activeFile, "utf8")).trim();
-        const stateFile = join(RUNS_DIR, runId, "state.json");
-        const state = JSON.parse(await readFile(stateFile, "utf8"));
-        const wasRunning = state.status === "running";
-        if (wasRunning) {
-          state.status = "paused";
-          state.updatedAt = new Date().toISOString();
-          // Clear a stale cancelling phase that wasn't reached at shutdown.
-          if (state.phase === "cancelling") state.phase = "active";
-          await writeFile(stateFile, JSON.stringify(state, null, 2));
-          console.log(`[pi-engineering] Run ${runId.slice(0, 8)} interrupted — marked paused. Resume with /run-resume ${runId}`);
+        if (!isSafeRunId(runId)) {
+          console.warn(`[pi-engineering] active-run.txt contains unsafe runId; skipping interrupted-run recovery.`);
+        } else {
+          await withRunStateLock(RUNS_DIR, runId, async () => {
+            const state = await loadRunState(RUNS_DIR, runId);
+            if (!state) return;
+            if (state.status !== "running") return;
+            const downgraded = {
+              ...state,
+              status: "paused" as const,
+              phase: state.phase === "cancelling" ? "active" : state.phase,
+            };
+            await saveRunState(RUNS_DIR, downgraded);
+            console.log(`[pi-engineering] Run ${runId.slice(0, 8)} interrupted — marked paused. Resume with /run-resume ${runId}`);
+          });
         }
       } catch { /* no active run or already ended */ }
       console.log("[pi-engineering] Extension loaded. Run /run-start <workflow> \"<goal>\" to begin.");

@@ -243,7 +243,39 @@ export function createTaskUpdateTool(runsDir: string, runId: string) {
       //     (existing.owner === callerAgent) or no owner is set yet.
       //   - Creating a brand-new task is open to any agent (they often
       //     emit blocked/completed updates the orchestrator hasn't seen).
+      // Codex round-7 MEDIUM: owner must be a valid agent-name shape, so
+      // a worker cannot set `owner: "judge"` (or any garbage string) on
+      // an unowned task and wedge later updates from the legitimate
+      // owner. Reject obviously-malformed owners at write time; the
+      // worker's own callerAgent is implicitly valid (passes
+      // AGENT_NAME_RE since that's how it was set in the env).
       const callerAgent = process.env["PI_ENGINEERING_AGENT_NAME"] ?? "";
+      const OWNER_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+      if (params.owner !== undefined && !OWNER_RE.test(params.owner)) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `TaskUpdate refused: owner '${params.owner}' must match agent-name shape ${OWNER_RE.source}.`,
+          }],
+          details: {},
+        };
+      }
+      // Workers may not claim ownership for another agent on a task they
+      // don't already own. Only the orchestrator may assign ownership.
+      if (
+        callerAgent &&
+        callerAgent !== "orchestrator" &&
+        params.owner !== undefined &&
+        params.owner !== callerAgent
+      ) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `TaskUpdate refused: caller '${callerAgent}' may not set owner='${params.owner}'. Only the orchestrator may assign ownership.`,
+          }],
+          details: {},
+        };
+      }
       return withRunStateLock(runsDir, runId, async () => {
       const tasksPath = join(runsDir, runId, "tasks.json");
       return withFileLock(tasksPath, async () => {

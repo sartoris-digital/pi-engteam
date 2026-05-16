@@ -25,6 +25,30 @@ export type SubprocessEventLine = {
   ts: string;
 };
 
+// Codex round-7 MEDIUM: previously the per-line parse cast straight to
+// SubprocessEventLine and the consumer (src/index.ts onSubprocessEvent)
+// only filtered by category. A subprocess could write `category:"message"`
+// with arbitrary type/payload shapes, slipping malformed payloads past
+// the category whitelist into the observer projection. Reject lines whose
+// shape doesn't conform AT THE INGESTION BOUNDARY so downstream code can
+// trust the type.
+function validateSubprocessEventLine(raw: unknown): SubprocessEventLine | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o["category"] !== "string" || o["category"].length === 0 || o["category"].length > 64) return null;
+  if (typeof o["type"] !== "string" || o["type"].length === 0 || o["type"].length > 64) return null;
+  if (typeof o["ts"] !== "string" || o["ts"].length === 0 || o["ts"].length > 64) return null;
+  // payload must be a plain object (Array/null/string/number all rejected).
+  const payload = o["payload"];
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  return {
+    category: o["category"] as string,
+    type: o["type"] as string,
+    ts: o["ts"] as string,
+    payload: payload as Record<string, unknown>,
+  };
+}
+
 type TeamRuntimeConfig = {
   cwd: string;
   bus: MessageBus;
@@ -508,7 +532,9 @@ export class TeamRuntime {
       const trimmed = rawLine.trim();
       if (!trimmed) continue;
       try {
-        const line = JSON.parse(trimmed) as SubprocessEventLine;
+        const parsed = JSON.parse(trimmed) as unknown;
+        const line = validateSubprocessEventLine(parsed);
+        if (!line) continue; // structurally malformed — drop
         this.config.onSubprocessEvent(runId, agentName, line);
       } catch {
         // skip malformed line
