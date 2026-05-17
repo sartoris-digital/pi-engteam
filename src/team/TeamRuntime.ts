@@ -395,10 +395,39 @@ export class TeamRuntime {
 
       try {
         await new Promise<void>((resolve, reject) => {
+          // Codex round-14 HIGH: previously spawned with `...process.env`,
+          // so AWS_*, NPM_TOKEN, GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY,
+          // and any other ambient credentials leaked into every agent
+          // subprocess. UseSecret is the documented secret-delivery
+          // mechanism; ambient env should not be a backdoor. Build a
+          // narrow allowlist: only PATH/HOME/USER/SHELL/LANG/TERM (for
+          // process basics), LLM-provider keys Pi itself needs, and
+          // GITHUB_TOKEN for the gh CLI used by /issue.
+          const buildAgentEnv = (): NodeJS.ProcessEnv => {
+            const allow = new Set([
+              "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM",
+              "TMPDIR", "TMP", "TEMP",
+              // LLM provider keys — needed by Pi inside the subprocess.
+              "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
+              "ZENMUX_API_KEY", "AZURE_OPENAI_API_KEY",
+              // gh CLI / GitHub Copilot — used by /issue tracker resolution.
+              "GITHUB_TOKEN", "GH_TOKEN",
+              // Node toolchain basics.
+              "NODE_OPTIONS",
+            ]);
+            const env: NodeJS.ProcessEnv = {};
+            for (const [k, v] of Object.entries(process.env)) {
+              if (v === undefined) continue;
+              if (allow.has(k)) env[k] = v;
+              else if (k.startsWith("PI_")) env[k] = v;
+              else if (k.startsWith("ANTHROPIC_") || k.startsWith("OPENAI_") || k.startsWith("GOOGLE_")) env[k] = v;
+            }
+            return env;
+          };
           proc = spawn(command, args, {
             cwd: this.config.cwd,
             env: {
-              ...process.env,
+              ...buildAgentEnv(),
               PI_ENGINEERING_AGENT_MODE: "1",
               PI_ENGINEERING_AGENT_NAME: to,
               PI_ENGINEERING_VERDICT_FILE: verdictFile,
@@ -406,8 +435,28 @@ export class TeamRuntime {
               PI_ENGINEERING_RUNS_DIR: this.config.runsDir,
               PI_ENGINEERING_SUBPROC_EVENT_TOKEN: eventToken,
             },
-            stdio: ["inherit", "pipe", "inherit"],
+            // Codex round-14 HIGH: previously inherited fd 0 (stdin) and
+            // fd 2 (stderr) from the controller. fd 0 inherit let a
+            // subprocess read the controller's TTY (or steal user input
+            // bound for Pi); fd 2 inherit let agent stderr bypass our
+            // scrubbed audit path. Close stdin entirely (pi -p reads
+            // its prompt from argv) and pipe stderr so we control it.
+            stdio: ["ignore", "pipe", "pipe"],
           });
+          // Pipe agent stderr to controller stderr with a per-line prefix
+          // so it's visible but cannot inject control sequences into the
+          // controller TTY's input stream.
+          if (proc.stderr) {
+            proc.stderr.setEncoding("utf8");
+            proc.stderr.on("data", (chunk: string) => {
+              const lines = chunk.split("\n");
+              for (const line of lines) {
+                if (line.trim()) {
+                  process.stderr.write(`[agent ${to}] ${line}\n`);
+                }
+              }
+            });
+          }
           if (proc.stdout) {
             proc.stdout.setEncoding("utf8");
             proc.stdout.on("data", (chunk: string) => {

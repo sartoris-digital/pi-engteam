@@ -364,7 +364,12 @@ export default async function (pi: ExtensionAPI) {
   // When PI_ENGINEERING_AGENT_MODE=1, this extension is loaded inside a pi subprocess
   // spawned by TeamRuntime.deliver(). Register agent-facing tools only — skip all
   // controller infrastructure (server, observer, commands, TeamRuntime).
-  if (process.env["PI_ENGINEERING_AGENT_MODE"]) {
+  //
+  // Codex round-14 LOW: previously any non-empty value (e.g., "0",
+  // "false") triggered subprocess mode, since the truthiness check on a
+  // non-empty string is always true. Strict-compare to "1" so a typo
+  // doesn't silently disable controller infrastructure.
+  if (process.env["PI_ENGINEERING_AGENT_MODE"] === "1") {
     // C2: apply Layer A hard blockers + Layer D domain lock in subprocess mode.
     const subTeamsCfg = await loadTeamsConfig({
       userPath: join(ENGINEERING_DIR, "teams.yaml"),
@@ -699,6 +704,45 @@ export default async function (pi: ExtensionAPI) {
       try { sink.dispose(); } catch { /* best-effort */ }
     });
   }
+
+  // Codex round-14 MEDIUM: Pi's session_shutdown handler runs only on
+  // graceful Pi shutdown. Ctrl+C / SIGTERM bypassed it, so HttpSink kept
+  // flushing for a few seconds and the active run never had its state
+  // downgraded to paused. Register a one-shot signal handler that runs
+  // the same cleanup best-effort. The handler is intentionally minimal:
+  // anything that throws is swallowed and we re-emit the signal so Pi /
+  // Node still terminate.
+  let shutdownInflight = false;
+  const runCleanup = async (sig: NodeJS.Signals) => {
+    if (shutdownInflight) return;
+    shutdownInflight = true;
+    try {
+      if (sink) {
+        try { await sink.flush(); } catch { /* best-effort */ }
+        try { sink.dispose(); } catch { /* best-effort */ }
+      }
+      // Mark the active run paused so /run-resume can pick up cleanly.
+      try {
+        const { readFile } = await import("fs/promises");
+        const { join: pathJoin } = await import("path");
+        const { loadRunState, saveRunState, withRunStateLock, isSafeRunId } = await import("./adw/RunState.js");
+        const activeFile = pathJoin(RUNS_DIR, "active-run.txt");
+        const runId = (await readFile(activeFile, "utf8")).trim();
+        if (isSafeRunId(runId)) {
+          await withRunStateLock(RUNS_DIR, runId, async () => {
+            const state = await loadRunState(RUNS_DIR, runId);
+            if (!state || state.status !== "running") return;
+            await saveRunState(RUNS_DIR, { ...state, status: "paused", phase: "active" });
+          });
+        }
+      } catch { /* best-effort */ }
+    } finally {
+      // Re-raise the signal so Pi / Node can complete normal teardown.
+      process.kill(process.pid, sig);
+    }
+  };
+  process.once("SIGINT", () => { void runCleanup("SIGINT"); });
+  process.once("SIGTERM", () => { void runCleanup("SIGTERM"); });
 
   // Surface teams.yaml parse errors to operators at boot. Without this, corrupt
   // config silently falls back to defaults and is only visible via /engineering-doctor.
