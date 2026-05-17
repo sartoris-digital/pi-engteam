@@ -529,12 +529,37 @@ export default async function (pi: ExtensionAPI) {
         subAppendFileSync(subEventFile, scrubSubAuditText(serialized) + "\n");
       } catch { /* best-effort; never fail an agent step on audit-write failure */ }
     };
+    // Codex round-11 MEDIUM: safe-stringify with cycle detection and a
+    // byte cap, so a huge or cyclic tool-call args object can't pin the
+    // event loop or throw before we cap. We walk the object once,
+    // replacing seen references with "[Circular]" and bailing out as
+    // soon as we exceed the byte budget.
+    const safeStringifyCapped = (val: unknown, maxBytes: number): string => {
+      const seen = new WeakSet<object>();
+      try {
+        const s = JSON.stringify(val, (_k, v) => {
+          if (v && typeof v === "object") {
+            if (seen.has(v as object)) return "[Circular]";
+            seen.add(v as object);
+          }
+          return v;
+        });
+        if (typeof s !== "string") return "";
+        if (s.length <= maxBytes) return s;
+        return s.slice(0, maxBytes) + "...[truncated]";
+      } catch (err) {
+        return `[serialize-failed: ${err instanceof Error ? err.message : String(err)}]`.slice(0, maxBytes);
+      }
+    };
     pi.on("tool_call", async (event: any) => {
       const rawName = (event?.toolName ?? event?.tool?.name ?? "") as string;
       // Cap payload size — some tool args (large file contents) would
-      // otherwise blow the audit file up.
+      // otherwise blow the audit file up. Codex round-11 MEDIUM: do the
+      // cap BEFORE JSON.stringify so a huge or cyclic args object can't
+      // pin the event loop. Use a bounded safe-stringify with cycle
+      // detection.
       const args = event?.args ?? event?.params ?? undefined;
-      const argsStr = args !== undefined ? JSON.stringify(args).slice(0, 2000) : undefined;
+      const argsStr = args !== undefined ? safeStringifyCapped(args, 2000) : undefined;
       writeAuditLine({
         category: "tool_call",
         type: "invoke",

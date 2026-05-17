@@ -445,6 +445,20 @@ export class TeamRuntime {
       try {
         let data: string;
         try {
+          // Codex round-11 HIGH: stat the file FIRST and reject anything
+          // over MAX_VERDICT_BYTES so a worker emitting a 1 GB verdict
+          // cannot pin the controller while readFile loads it before
+          // validation. Real verdicts are < 16KB; 256KB is a safe ceiling.
+          const MAX_VERDICT_BYTES = 256 * 1024;
+          const { stat } = await import("fs/promises");
+          const s = await stat(verdictFile);
+          if (s.size > MAX_VERDICT_BYTES) {
+            console.error(
+              `[pi-team] verdict file for ${to} (${runId}) is ${s.size} bytes (>${MAX_VERDICT_BYTES}); refusing to load and unlinking.`,
+            );
+            await unlink(verdictFile).catch(() => {});
+            return undefined;
+          }
           data = await readFile(verdictFile, "utf8");
         } catch (err) {
           // ENOENT here is the legitimate "agent did not emit verdict"
@@ -548,15 +562,48 @@ export class TeamRuntime {
     if (!this.config.onSubprocessEvent) return;
     const runDir = join(this.config.runsDir, runId);
     const path = join(runDir, `events-subprocess-${eventToken}.jsonl`);
+    // Codex round-11 HIGH: a worker can append unbounded bytes to its own
+    // audit file before the controller drains. readFile(path, "utf8")
+    // would load the entire thing — a 1GB file pins controller heap and
+    // blocks the event loop while split("\n") tokenizes. Stat first;
+    // refuse anything over MAX_AUDIT_BYTES.
+    const MAX_AUDIT_BYTES = 8 * 1024 * 1024; // 8MB per-deliver — generous
+    const MAX_AUDIT_LINES = 50_000;
+    try {
+      const { stat } = await import("fs/promises");
+      const s = await stat(path);
+      if (s.size > MAX_AUDIT_BYTES) {
+        console.error(
+          `[pi-team] subprocess audit file for ${agentName} (${runId}) is ${s.size} bytes (>${MAX_AUDIT_BYTES}); quarantining and skipping ingestion.`,
+        );
+        // Rename rather than unlink so operators can inspect the
+        // payload post-hoc to identify the offending worker.
+        try {
+          const { rename } = await import("fs/promises");
+          await rename(path, path + ".quarantined");
+        } catch { /* best-effort */ }
+        return;
+      }
+    } catch {
+      // ENOENT — no events emitted. Normal path.
+      return;
+    }
     let raw: string;
     try {
       raw = await readFile(path, "utf8");
     } catch {
       return;
     }
+    let linesProcessed = 0;
     for (const rawLine of raw.split("\n")) {
       const trimmed = rawLine.trim();
       if (!trimmed) continue;
+      if (linesProcessed++ >= MAX_AUDIT_LINES) {
+        console.error(
+          `[pi-team] subprocess audit for ${agentName} (${runId}) exceeded ${MAX_AUDIT_LINES} lines; truncating.`,
+        );
+        break;
+      }
       try {
         const parsed = JSON.parse(trimmed) as unknown;
         const line = validateSubprocessEventLine(parsed);

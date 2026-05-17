@@ -194,8 +194,20 @@ export async function generateNarrative(
   }
 }
 
+// Codex round-11 MEDIUM: cap runCache so a controller running for days
+// across hundreds of runs doesn't accumulate memory indefinitely. Map
+// preserves insertion order; the oldest entries are dropped first.
+const MAX_RUN_CACHE = 500;
+
 export class MemoryCore {
   private readonly runCache = new Map<string, CompletedRun>();
+  private evictIfOverCap(): void {
+    while (this.runCache.size > MAX_RUN_CACHE) {
+      const oldest = this.runCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.runCache.delete(oldest);
+    }
+  }
   // MED-8: 12 hex chars (48-bit) — collisions at ~100 sessions/day are <0.01%
   private readonly sessionId = randomUUID().slice(0, 12);
   private readonly deps: MemoryCoreDeps;
@@ -389,6 +401,7 @@ export class MemoryCore {
       completedAt: new Date().toISOString(),
       wisdom,
     });
+    this.evictIfOverCap();
   }
 
   // HIGH-3: separate path for aborted runs that never emitted a verdict
@@ -409,6 +422,7 @@ export class MemoryCore {
       completedAt: new Date().toISOString(),
       wisdom: { learnings: [], decisions: [], issues_found: [], gotchas: [] },
     });
+    this.evictIfOverCap();
   }
 
   private async refreshRunCache(): Promise<void> {

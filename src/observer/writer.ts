@@ -1,8 +1,16 @@
-import { appendFile, mkdir, rename, stat, readdir } from "fs/promises";
+import { appendFile, mkdir, rename, stat, readdir, unlink } from "fs/promises";
 import { join } from "path";
 import type { EngteamEvent } from "../types.js";
 
 const DEFAULT_ROTATION_BYTES = 50 * 1024 * 1024; // 50MB
+// Codex round-11 HIGH: cap the number of rotated event files per run.
+// Without a retention policy, events.N.jsonl rotated forever and could
+// fill the disk. Keep the most recent MAX_ROTATED_FILES rotated files
+// and delete the rest on each rotation.
+const MAX_ROTATED_FILES = 10;
+// Codex round-11 HIGH: cap per-run write queue depth so a slow disk
+// can't grow an unbounded chain of pending promises.
+const MAX_QUEUE_DEPTH = 1000;
 
 export class EventWriter {
   // Codex round-3 MEDIUM #4: rotateIfNeeded reads size, then renames a
@@ -12,6 +20,9 @@ export class EventWriter {
   // event.N.jsonl numbering. Serialize all writes per-runId through an
   // in-process queue chain so rotate runs once and writes append after.
   private writeQueues = new Map<string, Promise<unknown>>();
+  // Codex round-11 HIGH: per-run queue depth tracking so we can shed
+  // load when a slow disk causes the chain to grow unboundedly.
+  private writeDepth = new Map<string, number>();
 
   constructor(
     private runsDir: string,
@@ -45,9 +56,37 @@ export class EventWriter {
       await rename(join(dir, `events.${n}.jsonl`), join(dir, `events.${n + 1}.jsonl`));
     }
     await rename(main, join(dir, "events.1.jsonl"));
+
+    // Codex round-11 HIGH: enforce retention. After rotation, delete any
+    // rotated file whose index exceeds MAX_ROTATED_FILES. Reads from the
+    // dashboard cap at events.1.jsonl..events.10.jsonl; anything beyond
+    // would only consume disk.
+    const post = (await readdir(dir)).filter(f => f.match(/^events\.\d+\.jsonl$/));
+    for (const f of post) {
+      const n = parseInt(f.replace("events.", "").replace(".jsonl", ""), 10);
+      if (Number.isFinite(n) && n > MAX_ROTATED_FILES) {
+        try { await unlink(join(dir, f)); } catch { /* best-effort */ }
+      }
+    }
   }
 
   async write(runId: string, event: EngteamEvent): Promise<void> {
+    // Codex round-11 HIGH: shed load when queue depth crosses MAX_QUEUE_DEPTH.
+    // Under disk pressure the chain otherwise grows without bound, holding
+    // every queued event object in memory. Dropping is preferable to OOM —
+    // surface a single error per overflow so operators see it.
+    const depth = this.writeDepth.get(runId) ?? 0;
+    if (depth >= MAX_QUEUE_DEPTH) {
+      // Log once per ~1000 drops to avoid log spam.
+      if (depth % 1000 === 0) {
+        console.error(
+          `[observer] write queue depth ${depth} for run ${runId} — dropping events under disk pressure.`,
+        );
+      }
+      this.writeDepth.set(runId, depth + 1);
+      return;
+    }
+    this.writeDepth.set(runId, depth + 1);
     const prev = this.writeQueues.get(runId) ?? Promise.resolve();
     const next = prev.then(async () => {
       await this.ensureDir(runId);
@@ -65,6 +104,9 @@ export class EventWriter {
     this.writeQueues.set(runId, tracked);
     // Drop the entry once settled IF no later writer has chained on top.
     void tracked.finally(() => {
+      const d = (this.writeDepth.get(runId) ?? 1) - 1;
+      if (d <= 0) this.writeDepth.delete(runId);
+      else this.writeDepth.set(runId, d);
       if (this.writeQueues.get(runId) === tracked) {
         this.writeQueues.delete(runId);
       }

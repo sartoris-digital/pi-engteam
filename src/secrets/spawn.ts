@@ -68,8 +68,32 @@ export async function defaultSpawn(opts: {
       opts.signal?.removeEventListener("abort", abortHandler);
     };
 
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    // Codex round-11 HIGH: cap stdout/stderr byte accumulation so a
+    // command like `yes | head -c 2G` can't pin controller heap waiting
+    // for the timeout. Once either stream exceeds the cap, we kill the
+    // child immediately and keep only the bounded tail in the result.
+    const MAX_STREAM_BYTES = 1 * 1024 * 1024; // 1MB per stream
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (stdoutTruncated) return;
+      stdout += chunk.toString();
+      if (stdout.length > MAX_STREAM_BYTES) {
+        stdout = stdout.slice(0, MAX_STREAM_BYTES);
+        stdoutTruncated = true;
+        // Stream cap hit on stdout — kill the rest of the command group.
+        killGroup("SIGTERM");
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderrTruncated) return;
+      stderr += chunk.toString();
+      if (stderr.length > MAX_STREAM_BYTES) {
+        stderr = stderr.slice(0, MAX_STREAM_BYTES);
+        stderrTruncated = true;
+        killGroup("SIGTERM");
+      }
+    });
 
     child.on("error", (err) => {
       if (settled) return;

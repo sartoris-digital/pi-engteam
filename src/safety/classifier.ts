@@ -228,7 +228,20 @@ function classifySegment(segment: string): ClassifierResult {
   return { classification: "destructive", reason: `unknown verb '${verb}', defaulting to destructive` };
 }
 
+// Codex round-11 MEDIUM: cap command length BEFORE regex/shell parsing.
+// A 10MB command would otherwise pin the event loop while regexes and
+// shellParse walked it. Real Bash commands are <1KB; 16KB is generous.
+// Commands above the cap are classified as "destructive" so the approval
+// gate fires, rather than silently allowed or blocked.
+const MAX_COMMAND_BYTES = 16 * 1024;
+
 export function classifyCommand(command: string): ClassifierResult {
+  if (typeof command === "string" && command.length > MAX_COMMAND_BYTES) {
+    return {
+      classification: "destructive",
+      reason: `command exceeds ${MAX_COMMAND_BYTES} bytes; refusing to classify without approval`,
+    };
+  }
   const segments = splitCompound(command);
   let worstResult: ClassifierResult = { classification: "safe" };
 
