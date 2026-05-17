@@ -120,7 +120,16 @@ export async function saveTasks(runsDir: string, runId: string, tasks: Task[]): 
   }
   const dir = join(runsDir, runId);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "tasks.json"), JSON.stringify(normalized, null, 2));
+  // Codex round-13 MEDIUM: writeFile truncated tasks.json before writing
+  // new content, so concurrent readers (orchestrator footer reminders,
+  // TaskList tool result render) could observe a half-written file and
+  // return []. Write to .tmp + atomic rename so readers always see the
+  // pre-update or post-update content.
+  const { rename } = await import("fs/promises");
+  const tasksPath = join(dir, "tasks.json");
+  const tmpPath = tasksPath + ".tmp";
+  await writeFile(tmpPath, JSON.stringify(normalized, null, 2));
+  await rename(tmpPath, tasksPath);
 }
 
 /**

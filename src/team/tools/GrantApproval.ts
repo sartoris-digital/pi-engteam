@@ -226,8 +226,11 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
       // for a specific op + command. World-readable tokens leak the run
       // identity, the command, and the signing run secret position. The
       // .secret file already uses 0o600; mirror that for tokens.
+      // Codex round-13 MEDIUM: ensure the approvals directory itself is
+      // 0o700 so other local users can't list token file names (which
+      // would leak run identity and which commands have been approved).
       const approvalsDir = join(runsDir, runId, "approvals");
-      await mkdir(approvalsDir, { recursive: true });
+      await mkdir(approvalsDir, { recursive: true, mode: 0o700 });
       await writeFile(
         join(approvalsDir, `${tokenId}.json`),
         JSON.stringify(token, null, 2),

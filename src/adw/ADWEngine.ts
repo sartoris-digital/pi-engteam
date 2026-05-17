@@ -356,12 +356,19 @@ export class ADWEngine {
     }
     await saveRunState(this.config.runsDir, state);
 
-    const { writeFile } = await import("fs/promises");
+    // Codex round-13 HIGH: writeFile on active-run.txt truncated the file
+    // before writing new content, so a reader landing in the truncate
+    // window saw empty content. SafetyGuard's findValidApproval and
+    // loadRunPlanMode then short-circuited on empty runId, bypassing
+    // plan-mode for that call. Write to .tmp, then atomic rename — the
+    // reader either sees the old runId or the new one, never an empty
+    // string.
+    const { writeFile, rename } = await import("fs/promises");
     const { join, basename, extname } = await import("path");
-    await writeFile(
-      join(this.config.runsDir, "active-run.txt"),
-      runId,
-    );
+    const activeFile = join(this.config.runsDir, "active-run.txt");
+    const tmpActive = activeFile + ".tmp";
+    await writeFile(tmpActive, runId);
+    await rename(tmpActive, activeFile);
 
     if (params.initialArtifacts?.length) {
       for (const filePath of params.initialArtifacts) {

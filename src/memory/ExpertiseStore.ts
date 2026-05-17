@@ -12,9 +12,10 @@
 // emit wisdom via VerdictEmit; the curator (this module) dedupes and
 // appends. _readonly/ files are user-authored and never modified here.
 
-import { mkdir, readFile, readdir, stat, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, stat, lstat, writeFile, rename } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
+import { withFileLock } from "../util/file-lock.js";
 
 // Phase 5 round-1 H3: expand a leading "~/" or bare "~" to homedir() so
 // users following the spec's "~/.pi/engineering-team/expertise" example
@@ -199,6 +200,12 @@ export async function readReadonly(
     const path = join(dir, name);
     let raw: string;
     try {
+      // Codex round-13 MEDIUM: stat follows symlinks, so a worker that
+      // somehow planted a symlink in _readonly/ would have its target
+      // file content injected into the agent's prompt. Use lstat first
+      // and refuse anything that isn't a regular file.
+      const ls = await lstat(path);
+      if (!ls.isFile()) continue;
       const st = await stat(path);
       if (!st.isFile()) continue;
       raw = await readFile(path, "utf8");
@@ -254,29 +261,39 @@ export async function appendExpertise(
   const limited = entries.slice(0, MAX_WISDOM_ENTRIES_PER_BATCH);
   await mkdir(dirs.projectDir, { recursive: true });
   const path = expertiseFilePath(dirs.projectDir, agentName);
-  const existingRaw = await readFileOrEmpty(path);
-  const existingLines = existingRaw.split("\n").map((l) => l.trim()).filter(Boolean);
-  const existingSet = new Set(existingLines.map(stripBullet));
-  const toAdd: WisdomEntry[] = [];
-  for (const e of limited) {
-    // Truncate per-entry text to keep prompt-injection blast radius bounded.
-    const cappedText = e.text.length > MAX_WISDOM_TEXT_CHARS
-      ? e.text.slice(0, MAX_WISDOM_TEXT_CHARS - 1) + "…"
-      : e.text;
-    const capped: WisdomEntry = { ...e, text: cappedText };
-    const norm = stripBullet(capped.text).toLowerCase();
-    if (norm.length === 0) continue;
-    if (existingSet.has(norm)) continue;
-    existingSet.add(norm);
-    toAdd.push(capped);
-  }
-  if (toAdd.length === 0) return [];
-  const newLines = toAdd.map((e) => formatBullet(e));
-  const merged = [...existingLines, ...newLines];
-  // Enforce file line cap by pruning oldest.
-  const finalLines = merged.slice(Math.max(0, merged.length - cfg.maxLinesPerFile));
-  await writeFile(path, finalLines.join("\n") + "\n");
-  return toAdd;
+  // Codex round-13 MEDIUM: previous version did unlocked readFile →
+  // mutate → writeFile, so two concurrent flushes (two Pi processes, or
+  // sibling MemoryCore calls in one process) could each merge their
+  // wisdom independently against the same baseline and last-writer-win,
+  // dropping the other's entries. Wrap the RMW in a cross-process file
+  // lock keyed on the expertise file path and use atomic rename so a
+  // crash mid-write doesn't truncate the file readers will inject into
+  // agent prompts.
+  return withFileLock(path, async () => {
+    const existingRaw = await readFileOrEmpty(path);
+    const existingLines = existingRaw.split("\n").map((l) => l.trim()).filter(Boolean);
+    const existingSet = new Set(existingLines.map(stripBullet));
+    const toAdd: WisdomEntry[] = [];
+    for (const e of limited) {
+      const cappedText = e.text.length > MAX_WISDOM_TEXT_CHARS
+        ? e.text.slice(0, MAX_WISDOM_TEXT_CHARS - 1) + "…"
+        : e.text;
+      const capped: WisdomEntry = { ...e, text: cappedText };
+      const norm = stripBullet(capped.text).toLowerCase();
+      if (norm.length === 0) continue;
+      if (existingSet.has(norm)) continue;
+      existingSet.add(norm);
+      toAdd.push(capped);
+    }
+    if (toAdd.length === 0) return [];
+    const newLines = toAdd.map((e) => formatBullet(e));
+    const merged = [...existingLines, ...newLines];
+    const finalLines = merged.slice(Math.max(0, merged.length - cfg.maxLinesPerFile));
+    const tmp = path + ".tmp";
+    await writeFile(tmp, finalLines.join("\n") + "\n");
+    await rename(tmp, path);
+    return toAdd;
+  });
 }
 
 function stripBullet(line: string): string {

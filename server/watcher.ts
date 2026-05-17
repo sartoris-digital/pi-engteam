@@ -118,7 +118,20 @@ export class EventWatcher {
     state.ino = ino;
 
     if (fileSize <= state.offset) return;
-    await this.drain(filePath, state);
+    try {
+      await this.drain(filePath, state);
+    } catch (err) {
+      // Codex round-13 MEDIUM: rotation/retention can unlink the file
+      // between our stat and the stream open, or mid-read on macOS the
+      // stream can EOF-out cleanly but Linux can ENOENT. Treat ENOENT as
+      // "file is gone, clear state so the next pass scans fresh" rather
+      // than propagating to an unhandled rejection in the watch callback.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        this.fileStates.delete(filePath);
+        return;
+      }
+      throw err;
+    }
   }
 
   private async drain(filePath: string, state: FileState): Promise<void> {

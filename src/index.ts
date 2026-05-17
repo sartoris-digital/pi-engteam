@@ -634,7 +634,18 @@ export default async function (pi: ExtensionAPI) {
   }
   // ── Controller mode (normal Pi session) ────────────────────────────────────
 
-  await mkdir(RUNS_DIR, { recursive: true });
+  // Codex round-13 MEDIUM: previous boot created sensitive dirs at
+  // default umask (0o755), letting other local users list run metadata,
+  // approval-token file names, and event log paths. Enforce 0o700 on the
+  // engineering-team data root and runs dir; chmod existing installs at
+  // boot so upgrades pick up the tighter mode.
+  await mkdir(ENGINEERING_DIR, { recursive: true, mode: 0o700 });
+  await mkdir(RUNS_DIR, { recursive: true, mode: 0o700 });
+  try {
+    const { chmod } = await import("fs/promises");
+    await chmod(ENGINEERING_DIR, 0o700);
+    await chmod(RUNS_DIR, 0o700);
+  } catch { /* best-effort on upgrade */ }
 
   const VAULT_DIR = ENGINEERING_DIR;
   const VAULT_PATH = join(VAULT_DIR, "secrets.db");
