@@ -222,9 +222,17 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
         requestId: params.requestId,
       };
 
+      // Codex round-12 LOW: approval tokens carry a signed authorization
+      // for a specific op + command. World-readable tokens leak the run
+      // identity, the command, and the signing run secret position. The
+      // .secret file already uses 0o600; mirror that for tokens.
       const approvalsDir = join(runsDir, runId, "approvals");
       await mkdir(approvalsDir, { recursive: true });
-      await writeFile(join(approvalsDir, `${tokenId}.json`), JSON.stringify(token, null, 2));
+      await writeFile(
+        join(approvalsDir, `${tokenId}.json`),
+        JSON.stringify(token, null, 2),
+        { mode: 0o600 },
+      );
 
       return {
         content: [{

@@ -14,7 +14,12 @@ const DEFAULT_SAFETY: SafetyConfig = {
   approvalAuthority: "judge",
   exemptPaths: ["./tmp/**", "./.pi/engineering-team/runs/**"],
   tokenTtlSeconds: 300,
-  allowRunLifetimeScope: true,
+  // Codex round-12 LOW: README documents default `false` (safer, no
+  // reusable approval tokens by default) but the code shipped `true`,
+  // so a fresh install accepted run-lifetime grants that the operator
+  // never opted into. Align with the documented default; users who want
+  // reusable tokens can set it in ~/.pi/engineering-team/safety.json.
+  allowRunLifetimeScope: false,
 };
 
 const DEFAULT_MODEL_ROUTING: ModelRouting = {

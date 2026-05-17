@@ -10,6 +10,8 @@
 // downstream agents (and humans reading transcripts) see it as foreign
 // content rather than prompt text.
 
+import { randomBytes } from "crypto";
+
 const MAX_FENCED_BYTES = 4000;
 
 /**
@@ -55,8 +57,10 @@ export function fenceData(text: string, label: string): string {
   const safeLabel = label.replace(/[^A-Za-z0-9_-]/g, "");
   // Per-call nonce: even if the safe-replace above missed a unicode
   // homoglyph or a future format change, the worker cannot guess the
-  // nonce so it cannot fabricate a closer that matches.
-  const nonce = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
+  // nonce so it cannot fabricate a closer that matches. Codex round-12
+  // defense-in-depth: use crypto randomness so the nonce is unpredictable
+  // even for future format changes that bypass the prefix neutralization.
+  const nonce = randomBytes(4).toString("hex");
   const opener = `<<<UNTRUSTED_${safeLabel}_${nonce}_BEGIN>>>`;
   const closer = `<<<UNTRUSTED_${safeLabel}_${nonce}_END>>>`;
   return (

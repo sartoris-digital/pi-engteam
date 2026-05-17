@@ -1,5 +1,5 @@
 // src/safety/approvals.ts
-import { createHmac, createHash, randomBytes } from "crypto";
+import { createHmac, createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { ApprovalToken } from "../types.js";
 
 export function generateRunSecret(): string {
@@ -48,5 +48,16 @@ export function verifyToken(secret: string, token: ApprovalToken): boolean {
     token.expiresAt,
     token.runId,
   );
-  return expected === token.signature;
+  // Codex round-12 HIGH: timing-safe compare. Plain `===` short-circuits
+  // on the first mismatching byte, leaking signature bytes to a local
+  // attacker who can measure verification timing across many crafted
+  // tokens. timingSafeEqual requires equal-length Buffers; reject any
+  // signature that isn't exactly 64 hex chars (SHA256 HMAC output).
+  if (typeof token.signature !== "string" || token.signature.length !== expected.length) {
+    return false;
+  }
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(token.signature, "hex");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
