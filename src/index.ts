@@ -536,13 +536,23 @@ export default async function (pi: ExtensionAPI) {
     };
     // Codex round-11 MEDIUM: safe-stringify with cycle detection and a
     // byte cap, so a huge or cyclic tool-call args object can't pin the
-    // event loop or throw before we cap. We walk the object once,
-    // replacing seen references with "[Circular]" and bailing out as
-    // soon as we exceed the byte budget.
+    // event loop or throw before we cap.
+    //
+    // Codex round-15 MEDIUM: JSON.stringify still runs over the entire
+    // object before slice cuts the result. A 500MB string field would
+    // allocate 500MB transiently. Pre-truncate string fields inside the
+    // replacer so the serialized output is bounded BEFORE the final
+    // slice. Each individual string is capped at maxBytes/2 so the
+    // total can't exceed ~maxBytes regardless of how many string fields
+    // are present.
     const safeStringifyCapped = (val: unknown, maxBytes: number): string => {
       const seen = new WeakSet<object>();
+      const perStringCap = Math.max(64, Math.floor(maxBytes / 2));
       try {
         const s = JSON.stringify(val, (_k, v) => {
+          if (typeof v === "string" && v.length > perStringCap) {
+            return v.slice(0, perStringCap) + "...[truncated]";
+          }
           if (v && typeof v === "object") {
             if (seen.has(v as object)) return "[Circular]";
             seen.add(v as object);
@@ -713,15 +723,23 @@ export default async function (pi: ExtensionAPI) {
   // anything that throws is swallowed and we re-emit the signal so Pi /
   // Node still terminate.
   let shutdownInflight = false;
+  // Codex round-15 MEDIUM: race the entire cleanup against an absolute
+  // timeout so an unresponsive HttpSink target (or stuck file lock)
+  // cannot hang the controller during Ctrl+C. After CLEANUP_TIMEOUT_MS
+  // we re-raise the signal even if cleanup hasn't finished.
+  const CLEANUP_TIMEOUT_MS = 2000;
   const runCleanup = async (sig: NodeJS.Signals) => {
-    if (shutdownInflight) return;
+    if (shutdownInflight) {
+      // Second signal during in-flight cleanup — re-raise immediately.
+      process.kill(process.pid, sig);
+      return;
+    }
     shutdownInflight = true;
-    try {
+    const cleanup = (async () => {
       if (sink) {
         try { await sink.flush(); } catch { /* best-effort */ }
         try { sink.dispose(); } catch { /* best-effort */ }
       }
-      // Mark the active run paused so /run-resume can pick up cleanly.
       try {
         const { readFile } = await import("fs/promises");
         const { join: pathJoin } = await import("path");
@@ -736,10 +754,11 @@ export default async function (pi: ExtensionAPI) {
           });
         }
       } catch { /* best-effort */ }
-    } finally {
-      // Re-raise the signal so Pi / Node can complete normal teardown.
-      process.kill(process.pid, sig);
-    }
+    })();
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, CLEANUP_TIMEOUT_MS));
+    await Promise.race([cleanup, timeout]);
+    // Re-raise so Pi / Node still complete normal teardown.
+    process.kill(process.pid, sig);
   };
   process.once("SIGINT", () => { void runCleanup("SIGINT"); });
   process.once("SIGTERM", () => { void runCleanup("SIGTERM"); });

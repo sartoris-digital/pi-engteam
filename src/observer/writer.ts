@@ -23,6 +23,9 @@ export class EventWriter {
   // Codex round-11 HIGH: per-run queue depth tracking so we can shed
   // load when a slow disk causes the chain to grow unboundedly.
   private writeDepth = new Map<string, number>();
+  // Codex round-15 MEDIUM: track drops separately from queue depth so
+  // depth drains naturally when disk pressure subsides.
+  private writeDrops = new Map<string, number>();
 
   constructor(
     private runsDir: string,
@@ -75,15 +78,22 @@ export class EventWriter {
     // Under disk pressure the chain otherwise grows without bound, holding
     // every queued event object in memory. Dropping is preferable to OOM —
     // surface a single error per overflow so operators see it.
+    //
+    // Codex round-15 MEDIUM: don't increment writeDepth on the drop path.
+    // The finalizer only decrements for COMPLETED writes; previously a
+    // dropped write also +1'd depth without enqueueing a finalizer, so
+    // the counter never drained and every future write was dropped
+    // permanently. Track drops in a separate counter so the cap is
+    // self-healing once disk pressure passes.
     const depth = this.writeDepth.get(runId) ?? 0;
     if (depth >= MAX_QUEUE_DEPTH) {
-      // Log once per ~1000 drops to avoid log spam.
-      if (depth % 1000 === 0) {
+      const drops = (this.writeDrops.get(runId) ?? 0) + 1;
+      this.writeDrops.set(runId, drops);
+      if (drops % 1000 === 1) {
         console.error(
-          `[observer] write queue depth ${depth} for run ${runId} — dropping events under disk pressure.`,
+          `[observer] write queue depth ${depth} for run ${runId} — dropping events under disk pressure (drops=${drops}).`,
         );
       }
-      this.writeDepth.set(runId, depth + 1);
       return;
     }
     this.writeDepth.set(runId, depth + 1);

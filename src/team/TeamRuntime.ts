@@ -447,13 +447,47 @@ export class TeamRuntime {
           // so it's visible but cannot inject control sequences into the
           // controller TTY's input stream.
           if (proc.stderr) {
+            // Codex round-15 HIGH: forwarding raw agent stderr to the
+            // controller TTY let a worker inject ANSI/OSC control
+            // sequences (clear screen, set window title, copy to
+            // clipboard via OSC 52) and amplify into a DoS by writing
+            // multi-MB lines. Sanitize per-line: strip C0/C1 controls
+            // except \t, cap line length, and cap total forwarded
+            // bytes per delivery.
+            const MAX_STDERR_LINE = 2000;
+            const MAX_STDERR_TOTAL = 1 * 1024 * 1024; // 1MB cap per deliver
+            let stderrForwarded = 0;
+            let stderrTruncated = false;
+            const sanitizeStderr = (s: string): string => {
+              let out = "";
+              for (let i = 0; i < s.length; i++) {
+                const cp = s.charCodeAt(i);
+                if (cp === 0x09) { out += s[i]; continue; } // tab ok
+                if (cp >= 0x20 && cp !== 0x7f && (cp < 0x80 || cp >= 0xa0)) {
+                  out += s[i];
+                }
+                // Everything else (ESC=0x1b, CSI=0x9b, DEL=0x7f, all C0/C1) dropped.
+              }
+              return out;
+            };
             proc.stderr.setEncoding("utf8");
             proc.stderr.on("data", (chunk: string) => {
+              if (stderrTruncated) return;
               const lines = chunk.split("\n");
               for (const line of lines) {
-                if (line.trim()) {
-                  process.stderr.write(`[agent ${to}] ${line}\n`);
+                if (!line.trim()) continue;
+                let safe = sanitizeStderr(line);
+                if (safe.length > MAX_STDERR_LINE) {
+                  safe = safe.slice(0, MAX_STDERR_LINE) + "...[truncated]";
                 }
+                const out = `[agent ${to}] ${safe}\n`;
+                if (stderrForwarded + out.length > MAX_STDERR_TOTAL) {
+                  stderrTruncated = true;
+                  process.stderr.write(`[agent ${to}] [stderr cap ${MAX_STDERR_TOTAL} bytes reached; remainder suppressed]\n`);
+                  return;
+                }
+                stderrForwarded += out.length;
+                process.stderr.write(out);
               }
             });
           }

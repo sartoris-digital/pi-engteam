@@ -200,15 +200,30 @@ export async function readReadonly(
     const path = join(dir, name);
     let raw: string;
     try {
-      // Codex round-13 MEDIUM: stat follows symlinks, so a worker that
-      // somehow planted a symlink in _readonly/ would have its target
-      // file content injected into the agent's prompt. Use lstat first
-      // and refuse anything that isn't a regular file.
-      const ls = await lstat(path);
-      if (!ls.isFile()) continue;
-      const st = await stat(path);
-      if (!st.isFile()) continue;
-      raw = await readFile(path, "utf8");
+      // Codex round-13 MEDIUM + round-15 MEDIUM: stat follows symlinks,
+      // so a worker that planted a symlink in _readonly/ would have its
+      // target injected into the agent prompt. lstat first refuses
+      // symlinks, but there is a TOCTOU between lstat and readFile —
+      // a worker can race-replace the file with a symlink in between.
+      // Defense: open with O_NOFOLLOW (refuses symlinks at open time),
+      // then fstat the resulting fd to confirm regular-file shape.
+      const { open: openFile } = await import("fs/promises");
+      const { constants } = await import("fs");
+      const NOFOLLOW = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+      let fh;
+      try {
+        fh = await openFile(path, constants.O_RDONLY | NOFOLLOW);
+      } catch {
+        // ELOOP / ENOENT / EACCES — treat as not-readable, skip.
+        continue;
+      }
+      try {
+        const st = await fh.stat();
+        if (!st.isFile()) continue;
+        raw = await fh.readFile({ encoding: "utf8" });
+      } finally {
+        try { await fh.close(); } catch { /* ignore */ }
+      }
     } catch {
       continue;
     }

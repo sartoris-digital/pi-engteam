@@ -224,6 +224,29 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
             error: `Position step ${stepName} claimed PASS but emitted no artifact path; downgraded to FAIL.`,
           };
         }
+        // Codex round-15 MEDIUM: the Lead is instructed to write to
+        // exactly `absFilePath`. Previously the host accepted ANY
+        // artifact under cwd or runDir, so a confused Lead could PASS
+        // with `package.json` as the artifact and the consult would
+        // record that instead of the expected position file. Verify
+        // the emitted artifact matches the contract: either the exact
+        // absolute path (realpath), or — for relative-path tests/agents
+        // — a basename match against the expected file.
+        if (verdict.verdict === "PASS" && hasArtifact) {
+          const { realpathSync } = await import("fs");
+          const { basename, isAbsolute } = await import("path");
+          const claimed = verdict.artifacts![0];
+          const safe = (p: string): string => { try { return realpathSync(p); } catch { return p; } };
+          const realEq = isAbsolute(claimed) && safe(claimed) === safe(absFilePath);
+          const baseEq = basename(claimed) === basename(absFilePath);
+          if (!realEq && !baseEq) {
+            return {
+              success: false,
+              verdict: "FAIL",
+              error: `Position step ${stepName} emitted artifact '${claimed}' but the contract requires '${absFilePath}'; downgraded to FAIL.`,
+            };
+          }
+        }
         const isPass = verdict.verdict === "PASS" && hasArtifact;
         return {
           success: isPass,
