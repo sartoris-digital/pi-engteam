@@ -14,9 +14,21 @@ export function registerRoutes(app: FastifyInstance, db: Db, opts: ServerOptions
 
   app.get("/health", async () => ({ ok: true }));
 
+  // Codex round-16 MEDIUM: previous parseInt-based limit/offset accepted
+  // negative values (LIMIT -1 = unbounded in SQLite) and NaN (datatype
+  // mismatch crash). Clamp to safe bounds before hitting SQL.
+  const parseBoundedInt = (raw: string | undefined, fallback: number, min: number, max: number): number => {
+    if (raw === undefined) return fallback;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return fallback;
+    if (n < min) return min;
+    if (n > max) return max;
+    return n;
+  };
+
   app.get<{ Querystring: { limit?: string; offset?: string } }>("/runs", async (req) => {
-    const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
-    const offset = parseInt(req.query.offset ?? "0", 10);
+    const limit = parseBoundedInt(req.query.limit, 50, 1, 200);
+    const offset = parseBoundedInt(req.query.offset, 0, 0, 1_000_000);
     return { runs: listRuns(db, limit, offset) };
   });
 
@@ -30,8 +42,8 @@ export function registerRoutes(app: FastifyInstance, db: Db, opts: ServerOptions
     const run = getRun(db, req.params.runId);
     if (!run) return reply.status(404).send({ error: "Run not found" });
     const events = getEvents(db, req.params.runId, {
-      limit: parseInt(req.query.limit ?? "200", 10),
-      offset: parseInt(req.query.offset ?? "0", 10),
+      limit: parseBoundedInt(req.query.limit, 200, 1, 1000),
+      offset: parseBoundedInt(req.query.offset, 0, 0, 10_000_000),
       category: req.query.category,
       since: req.query.since,
     });

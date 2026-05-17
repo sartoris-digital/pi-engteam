@@ -115,8 +115,16 @@ export class EventWriter {
     // Drop the entry once settled IF no later writer has chained on top.
     void tracked.finally(() => {
       const d = (this.writeDepth.get(runId) ?? 1) - 1;
-      if (d <= 0) this.writeDepth.delete(runId);
-      else this.writeDepth.set(runId, d);
+      if (d <= 0) {
+        this.writeDepth.delete(runId);
+        // Codex round-16 LOW: writeDrops accumulated one entry per
+        // overflowed run for the writer's lifetime. Clear it now that
+        // the queue has drained — drops are not meaningful once writes
+        // are landing again.
+        this.writeDrops.delete(runId);
+      } else {
+        this.writeDepth.set(runId, d);
+      }
       if (this.writeQueues.get(runId) === tracked) {
         this.writeQueues.delete(runId);
       }

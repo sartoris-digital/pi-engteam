@@ -459,14 +459,24 @@ export class TeamRuntime {
             let stderrForwarded = 0;
             let stderrTruncated = false;
             const sanitizeStderr = (s: string): string => {
+              // Codex round-16 LOW: strip COMPLETE ANSI sequences first
+              // so the visible payload survives without the surrounding
+              // `\x1b[31m...\x1b[0m` (color reset) leaving garbage
+              // `[31m...[0m` behind. Covers CSI (ESC [ ... letter),
+              // OSC (ESC ] ... BEL/ST), and bare ESC followed by a
+              // single intro byte.
+              let cleaned = s
+                .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+                .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+                .replace(/\x1b[@-Z\\-_]/g, "");
               let out = "";
-              for (let i = 0; i < s.length; i++) {
-                const cp = s.charCodeAt(i);
-                if (cp === 0x09) { out += s[i]; continue; } // tab ok
+              for (let i = 0; i < cleaned.length; i++) {
+                const cp = cleaned.charCodeAt(i);
+                if (cp === 0x09) { out += cleaned[i]; continue; } // tab ok
                 if (cp >= 0x20 && cp !== 0x7f && (cp < 0x80 || cp >= 0xa0)) {
-                  out += s[i];
+                  out += cleaned[i];
                 }
-                // Everything else (ESC=0x1b, CSI=0x9b, DEL=0x7f, all C0/C1) dropped.
+                // Everything else (remaining ESC, C0/C1, DEL) dropped.
               }
               return out;
             };
