@@ -80,35 +80,45 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
   },
 
   // --- Worker tier (explicit) ---
+  // Round 21: worker subprocesses must hard-block out-of-domain Write/Edit
+  // by default. The global teams.yaml mode remains "warn" for operator
+  // visibility, but these shipped worker policies enforce Layer D as a
+  // runtime boundary unless a narrower override explicitly adds paths.
   planner: {
     read: ["."],
     upsert: ["${RUN_DIR}/plan.md", "${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   implementer: {
     read: ["."],
     upsert: ["src/", "tests/", "scripts/", "${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   reviewer: {
     read: ["."],
     upsert: ["${RUN_DIR}/review.md", "${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   tester: {
     read: ["."],
     upsert: ["tests/", "${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "security-auditor": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   judge: {
     read: ["."],
     upsert: ["${RUN_DIR}/approvals/"],
     delete: [],
+    force_block: true,
   },
 
   // --- Worker tier (defaults: read all, upsert run notes only) ---
@@ -116,51 +126,61 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   discoverer: {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "codebase-cartographer": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "knowledge-retriever": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "root-cause-debugger": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "performance-analyst": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "incident-investigator": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "bug-triage": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "observability-archivist": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
   "issue-analyst": {
     read: ["."],
     upsert: ["${RUN_DIR}/notes/"],
     delete: [],
+    force_block: true,
   },
 
   // --- Verifier: bash limited to script-only mode ---
@@ -168,6 +188,7 @@ export const DEFAULT_DOMAINS: DomainPolicyMap = {
     read: ["."],
     upsert: ["${RUN_DIR}/verification/"],
     delete: [],
+    force_block: true,
     bash_policy: {
       mode: "script-only",
       runner: "uv run --script",

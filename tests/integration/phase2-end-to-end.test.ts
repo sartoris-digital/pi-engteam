@@ -149,6 +149,7 @@ describe("loadTeamsConfig — defaults", () => {
     expect(cfg.domains.implementer.upsert).toEqual(
       expect.arrayContaining(["src/", "tests/", "scripts/"]),
     );
+    expect(cfg.domains.implementer.force_block).toBe(true);
   });
 
   it("includes all 5 lead policies by default", async () => {
@@ -320,16 +321,13 @@ describe("SafetyGuard Layer D — inline wiring", () => {
     }
   });
 
-  it("warn mode via registerHardBlockers: out-of-domain Write emits domain_warn and returns undefined", async () => {
+  it("default worker policy via registerHardBlockers: out-of-domain Write/Edit hard-block even when mode='warn'", async () => {
     const { registerHardBlockers } = await import("../../src/safety/SafetyGuard.js");
     const { pi, handlers } = makePi();
     const events: any[] = [];
 
-    const policy: DomainPolicy = {
-      read: ["."],
-      upsert: ["src/"],
-      delete: [],
-    };
+    const policy = DEFAULT_DOMAINS.implementer;
+    expect(policy.force_block).toBe(true);
 
     const origEnv = process.env["PI_ENGINEERING_AGENT_NAME"];
     process.env["PI_ENGINEERING_AGENT_NAME"] = "implementer";
@@ -345,17 +343,20 @@ describe("SafetyGuard Layer D — inline wiring", () => {
       });
 
       const handler = handlers[0];
-      const result = await handler(
-        { tool: { name: "Write" }, toolInput: { file_path: "/infrastructure/main.tf" } },
-        {},
-      );
+      for (const toolName of ["Write", "Edit"]) {
+        const result = await handler(
+          { tool: { name: toolName }, toolInput: { file_path: "/infrastructure/main.tf" } },
+          {},
+        );
 
-      // Layer A does not block Write to arbitrary paths (only protected paths).
-      // Layer D should emit domain_warn and return undefined (warn mode).
-      expect(result).toBeUndefined();
-      expect(events.length).toBe(1);
-      expect(events[0].type).toBe("domain_warn");
-      expect(events[0].category).toBe("safety");
+        expect(result).toBeDefined();
+        expect(result.block).toBe(true);
+        expect(result.layer).toBe("D");
+        expect(result.reason).toMatch(/\[Layer D\]/);
+      }
+      expect(events.length).toBe(2);
+      expect(events.map((e) => e.type)).toEqual(["domain_block", "domain_block"]);
+      expect(events.every((e) => e.category === "safety")).toBe(true);
     } finally {
       if (origEnv === undefined) delete process.env["PI_ENGINEERING_AGENT_NAME"];
       else process.env["PI_ENGINEERING_AGENT_NAME"] = origEnv;
