@@ -32,14 +32,20 @@ Runs on the **Pi Agent SDK** — credentials resolve through Pi's `ModelRegistry
 # Install
 pi install https://github.com/sartoris-digital/pi-engineering
 
-# Restart Pi, then in your Pi session:
+# Launch Pi from the project directory you want the team to operate on
+cd ~/code/my-project
+pi
+
+# Inside the Pi session:
 /eng-plan "Add email/password login with JWT tokens"
 
-# Watch the run in another terminal:
+# Watch progress in another terminal:
 /observe   # opens http://127.0.0.1:4747
 ```
 
 That's it. The planner decomposes your goal, the implementer writes the code, the reviewer audits it, and the judge gates anything destructive. State, events, and verdicts are persisted under `~/.pi/engineering-team/runs/<runId>/`.
+
+> **⚠ Working directory matters.** Agent subprocesses inherit the controller's `cwd` and Layer D restricts their write paths to that tree. **Always launch Pi from the repo or worktree you want to operate on** — workflows started from the wrong directory will see the planner exploring the wrong codebase, and the implementer will hit domain-lock blocks trying to edit files outside the allowed roots.
 
 ---
 
@@ -160,6 +166,20 @@ Watch progress:
 ```
 
 A live **TillDone footer** also appears in Pi's TUI showing current step + task progress.
+
+### Working in a git worktree
+
+The cwd rule from Quick Start is especially important with `git worktree`. If you've created a worktree to isolate a branch (e.g. `git worktree add /tmp/wt/issue-123 issue-123-fix`):
+
+```bash
+cd /tmp/wt/issue-123     # ← enter the worktree
+pi                        # ← Pi inherits cwd from here
+/eng-plan "Implement the fix described in issue 123"
+```
+
+Do **not** start Pi in the main checkout and then ask the team to operate on a worktree path via the goal string — the agents will still resolve relative paths against the controller's cwd (the main checkout), Layer D will reject writes to the worktree, and the run will fail at the implementation step. The same applies when iterating on a single ticket across multiple branches.
+
+If you discover mid-run that you started Pi in the wrong directory, cancel the run (`/run-cancel <runId>`), exit Pi, `cd` to the right tree, and start a fresh Pi session.
 
 ---
 

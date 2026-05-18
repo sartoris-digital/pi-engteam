@@ -42,6 +42,28 @@ describe("classifyCommand — find", () => {
     expect(classifyCommand("find . -name '*.js' -delete").classification).toBe("destructive"));
 });
 
+describe("classifyCommand — xargs (wraps inner verb)", () => {
+  it("find . -name '*.java' | xargs grep foo | head -50 → safe", () =>
+    expect(
+      classifyCommand("find . -name '*.java' | xargs grep foo | head -50").classification,
+    ).toBe("safe"));
+
+  it("find . | xargs -0 grep foo → safe (xargs flag skipped)", () =>
+    expect(classifyCommand("find . | xargs -0 grep foo").classification).toBe("safe"));
+
+  it("find . | xargs -I {} cat {} → safe (xargs -I {} skipped)", () =>
+    expect(classifyCommand("find . | xargs -I {} cat {}").classification).toBe("safe"));
+
+  it("find . | xargs rm -f → destructive (wrapped verb destructive)", () =>
+    expect(classifyCommand("find . | xargs rm -f").classification).toBe("destructive"));
+
+  it("find / -name x | xargs rm -rf → blocked (dangerous-rm pattern wins)", () =>
+    expect(classifyCommand("find / -name x | xargs rm -rf /").classification).toBe("blocked"));
+
+  it("xargs (bare) → safe", () =>
+    expect(classifyCommand("xargs").classification).toBe("safe"));
+});
+
 describe("classifyCommand — sed", () => {
   it("sed -i 's/x/y/' file → destructive", () =>
     expect(classifyCommand("sed -i 's/x/y/' file").classification).toBe("destructive"));

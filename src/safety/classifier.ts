@@ -188,6 +188,34 @@ function classifySegment(segment: string): ClassifierResult {
     return { classification: "safe" };
   }
 
+  // xargs runs another command on each input. Classify by the WRAPPED verb
+  // so `xargs grep` / `xargs head` / `xargs wc` compose with safe-verb
+  // semantics, while `xargs rm` / `xargs sh` still go through the normal
+  // destructive checks. Without this, every `find … | xargs <safe> …`
+  // pipeline got classified destructive because `xargs` wasn't a known
+  // verb — the Codex round-11 16 KB cap exposed this when agents started
+  // exploring large codebases.
+  if (verb === "xargs") {
+    let i = 1;
+    // Skip xargs's own flags: -0, -n N, -I {}, --null, --max-args N, etc.
+    // Treat any token starting with `-` (and its argument if expected) as
+    // part of xargs's own option set.
+    const flagsWithArg = new Set(["-n", "--max-args", "-I", "--replace", "-L", "--max-lines", "-P", "--max-procs", "-E", "-d", "--delimiter"]);
+    while (i < tokens.length && tokens[i].startsWith("-")) {
+      const flag = tokens[i];
+      i++;
+      if (flagsWithArg.has(flag) && i < tokens.length && !tokens[i].startsWith("-")) {
+        i++; // consume the flag's argument
+      }
+    }
+    if (i >= tokens.length) {
+      // Bare `xargs` with no wrapped command — input is just echoed.
+      return { classification: "safe" };
+    }
+    const wrappedSegment = tokens.slice(i).join(" ");
+    return classifySegment(wrappedSegment);
+  }
+
   if (verb === "sed") {
     if (tokens.some(t => t === "-i" || t.startsWith("-i") || t === "--in-place")) {
       return { classification: "destructive", reason: "sed -i (in-place edit)" };
