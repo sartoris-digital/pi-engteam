@@ -273,7 +273,12 @@ export class TeamRuntime {
   async deliver(
     to: string,
     message: TeamMessage,
-    opts?: { hostStep?: string },
+    // Codex round-17 HIGH: parallel runs can both call deliver() while
+    // currentRunId is mutated between them, binding agent subprocesses
+    // (and PI_ENGINEERING_RUN_ID + verdicts + approvals + plan-mode) to
+    // the WRONG run. Accept the runId per call; the field-stored
+    // currentRunId is now a fallback for callers that haven't migrated.
+    opts?: { hostStep?: string; runId?: string },
   ): Promise<VerdictPayload | undefined> {
     // Round-4 M2: defense-in-depth. The constructor + ensureTeammate
     // already reject unsafe names, but `to` is the value that flows into
@@ -337,7 +342,10 @@ export class TeamRuntime {
       // ordering, escaping, and fencing are encapsulated in
       // buildSystemPrompt() (exported for unit tests). Both resolvers
       // are best-effort — a failure logs but doesn't block dispatch.
-      const runId = this.currentRunId ?? message.id;
+      // Codex round-17 HIGH: prefer the caller-supplied runId so two
+      // concurrent runs whose deliver() calls interleave can't bind to
+      // each other's run identity via the shared currentRunId field.
+      const runId = opts?.runId ?? this.currentRunId ?? message.id;
       let expertise = "";
       try {
         if (this.config.expertiseFor) {

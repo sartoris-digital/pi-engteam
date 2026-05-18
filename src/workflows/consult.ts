@@ -26,7 +26,9 @@ async function dispatch(ctx: StepContext, agentName: string, prompt: string, ste
       message: prompt,
       ts: new Date().toISOString(),
     },
-    { hostStep: stepName },
+    // Codex round-17 HIGH: pass runId so parallel runs sharing a
+    // TeamRuntime don't cross-bind via mutable currentRunId.
+    { hostStep: stepName, runId: ctx.run.runId },
   );
   if (!verdict) {
     throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName}`);

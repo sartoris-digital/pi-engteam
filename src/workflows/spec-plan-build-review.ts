@@ -15,7 +15,7 @@ async function waitForVerdict(
     summary: `Execute step: ${stepName}`,
     message: prompt,
     ts: new Date().toISOString(),
-  });
+  }, { runId: ctx.run.runId });
   if (!verdict) {
     throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
   }

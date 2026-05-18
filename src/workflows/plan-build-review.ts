@@ -7,6 +7,8 @@ async function waitForAgentVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
+  // Codex round-17 HIGH: pass the run's runId explicitly so parallel
+  // runs sharing a TeamRuntime don't cross-bind via mutable currentRunId.
   const verdict = await ctx.team.deliver(agentName, {
     id: crypto.randomUUID(),
     from: "system",
@@ -14,7 +16,7 @@ async function waitForAgentVerdict(
     summary: `Execute step: ${stepName}`,
     message: prompt,
     ts: new Date().toISOString(),
-  });
+  }, { runId: ctx.run.runId });
   if (!verdict) {
     throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
   }
