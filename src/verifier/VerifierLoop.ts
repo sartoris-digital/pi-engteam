@@ -194,7 +194,7 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
       summary: `Verify step: ${cfg.workerStep}`,
       message: prompt,
       ts: new Date().toISOString(),
-    });
+    }, { runId: cfg.runId });
 
     if (!verdict) {
       throw new Error(`Verifier did not emit a verdict for step '${cfg.workerStep}' (iter ${iter})`);
@@ -251,7 +251,7 @@ export async function runVerifyLoop(cfg: VerifierLoopConfig): Promise<VerifyResu
           message: corrective,
           ts: new Date().toISOString(),
         },
-        { hostStep: cfg.workerStep },
+        { hostStep: cfg.workerStep, runId: cfg.runId },
       );
       // H-2: capture the worker's fresh verdict so the next verify pass checks
       // the corrected work, not the stale original verdict.

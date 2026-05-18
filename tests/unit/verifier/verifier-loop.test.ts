@@ -10,17 +10,17 @@ import {
 } from "../../../src/verifier/VerifierLoop.js";
 import type { VerdictPayload } from "../../../src/types.js";
 
-type DeliverArgs = { agent: string; message: any };
+type DeliverArgs = { agent: string; message: any; opts?: any };
 
 function makeMockTeam(responses: Array<(args: DeliverArgs) => Promise<VerdictPayload | undefined> | VerdictPayload | undefined>) {
   let callIdx = 0;
   const calls: DeliverArgs[] = [];
   const team: any = {
-    deliver: vi.fn(async (agent: string, message: any) => {
-      calls.push({ agent, message });
+    deliver: vi.fn(async (agent: string, message: any, opts?: any) => {
+      calls.push({ agent, message, opts });
       const fn = responses[callIdx] ?? responses[responses.length - 1];
       callIdx++;
-      return await fn({ agent, message });
+      return await fn({ agent, message, opts });
     }),
     setRunId: vi.fn(),
     setStepContext: vi.fn(),
@@ -225,6 +225,32 @@ describe("VerifierLoop", () => {
     expect(prompt).toContain("STEP: build");
     expect(prompt).toContain("RUN_ID: r7");
     expect(prompt).toContain("verifier-scripts");
+    expect(calls[0].opts).toEqual({ runId: "r7" });
+  });
+
+  it("passes runId to both verifier and corrective worker dispatches", async () => {
+    const { calls, team } = makeMockTeam([
+      async () => ({ step: "verify:build", verdict: "FAIL", issues: ["claim X failed"] }),
+      async () => ({ step: "build", verdict: "PASS", artifacts: ["fixed.ts"] }),
+      async () => ({ step: "verify:build", verdict: "PASS" }),
+    ]);
+
+    await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: "build",
+      workerVerdict: baseVerdict,
+      runId: "r-threaded",
+      runDir,
+      maxVerifyLoops: 3,
+    });
+
+    expect(calls.map((c) => [c.agent, c.opts])).toEqual([
+      ["verifier", { runId: "r-threaded" }],
+      ["implementer", { hostStep: "build", runId: "r-threaded" }],
+      ["verifier", { runId: "r-threaded" }],
+    ]);
   });
 
   it("creates the verification report path even when verifier omits the file", async () => {

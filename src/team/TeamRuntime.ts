@@ -393,11 +393,19 @@ export class TeamRuntime {
       // read whatever verdict file the agent wrote before the signal —
       // letting an agent that hangs past the timeout still ship a PASS.
       let killedByTimeout = false;
+      const killProcessGroup = (signal: NodeJS.Signals) => {
+        if (!proc?.pid) return;
+        try {
+          process.kill(-proc.pid, signal);
+        } catch {
+          try { proc.kill(signal); } catch { /* already exited */ }
+        }
+      };
       const killTimeout = setTimeout(() => {
         killedByTimeout = true;
-        try { proc?.kill("SIGTERM"); } catch { /* already exited */ }
+        killProcessGroup("SIGTERM");
         sigkillTimeout = setTimeout(() => {
-          try { proc?.kill("SIGKILL"); } catch { /* already exited */ }
+          killProcessGroup("SIGKILL");
         }, 10_000);
       }, this.config.agentTimeoutMs ?? 10 * 60 * 1000);
 
@@ -450,6 +458,11 @@ export class TeamRuntime {
             // scrubbed audit path. Close stdin entirely (pi -p reads
             // its prompt from argv) and pipe stderr so we control it.
             stdio: ["ignore", "pipe", "pipe"],
+            // Codex round-18 HIGH: put the worker in its own process
+            // group so timeout cleanup can terminate shell wrappers and
+            // grandchildren with process.kill(-pid, signal), matching
+            // the UseSecret subprocess pattern.
+            detached: true,
           });
           // Pipe agent stderr to controller stderr with a per-line prefix
           // so it's visible but cannot inject control sequences into the

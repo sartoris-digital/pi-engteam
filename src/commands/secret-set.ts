@@ -9,6 +9,13 @@ const USAGE =
   '  --from-file <path>      Read the value from a file (preferred for one-off scripted secrets).\n' +
   '  (no value flag)         Pop a TUI password prompt that masks the keystrokes — no chat-history leak, no file detour.';
 
+type CustomUi = {
+  custom?: <T>(
+    factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) => any,
+    options?: any,
+  ) => Promise<T>;
+};
+
 export function registerSecretSetCommand(pi: ExtensionAPI): void {
   pi.registerCommand("secret-set", {
     description: 'Store a secret in the vault. Usage: /secret-set <NAME> [--note "..."] (--value <secret> | --from-file <path>)',
@@ -25,6 +32,7 @@ export function registerSecretSetCommand(pi: ExtensionAPI): void {
         return;
       }
       const { name, note, valueInline, fromFile } = parsed;
+      const customUi = (ctx.ui as CustomUi | undefined)?.custom;
 
       let value: string;
       if (valueInline !== undefined) {
@@ -39,12 +47,12 @@ export function registerSecretSetCommand(pi: ExtensionAPI): void {
           );
           return;
         }
-      } else if (typeof (ctx as any)?.ui?.custom === "function") {
+      } else if (typeof customUi === "function") {
         // No flag → pop a TUI masked-input overlay. This is the no-history,
         // no-file-detour path. ctx.ui.custom is provided by Pi when the host
         // is a TUI session; in non-TUI hosts (rare) we fall through to the
         // usage-error below so the user can pick a flag explicitly.
-        const result = await (ctx as any).ui.custom<{ value: string; cancelled: boolean }>(
+        const result = await customUi<{ value: string; cancelled: boolean }>(
           (tui: any, theme: any, _keybindings: any, done: (r: { value: string; cancelled: boolean }) => void) =>
             new PasswordInput(tui, theme, `Value for ${name}:`, done),
           {

@@ -49,17 +49,17 @@ vi.mock("child_process", async () => {
   };
 });
 
-type DeliverArgs = { agent: string; message: any };
+type DeliverArgs = { agent: string; message: any; opts?: any };
 
 function makeMockTeam(responses: Array<(args: DeliverArgs) => Promise<VerdictPayload | undefined> | VerdictPayload | undefined>) {
   let idx = 0;
   const calls: DeliverArgs[] = [];
   const team: any = {
-    deliver: vi.fn(async (agent: string, message: any) => {
-      calls.push({ agent, message });
+    deliver: vi.fn(async (agent: string, message: any, opts?: any) => {
+      calls.push({ agent, message, opts });
       const fn = responses[idx] ?? responses[responses.length - 1];
       idx++;
-      return await fn({ agent, message });
+      return await fn({ agent, message, opts });
     }),
     setRunId: vi.fn(),
     setStepContext: vi.fn(),
@@ -198,6 +198,38 @@ describe("LearnerOrchestrator", () => {
     expect(judgeCall.message.message).toContain("Diff:");
     expect(judgeCall.message.message).toContain("Validation:");
     expect(judgeCall.message.message).toContain(stagedName);
+  });
+
+  it("passes cfg.runId to learner and judge dispatches", async () => {
+    const stagedName = "verify_fk.py";
+    const stagedPath = join(env.stagingDir, stagedName);
+    const fixturePath = join(env.fixturesDir, "fk_fixture.txt");
+    await writeStub(stagedPath);
+    await writeFile(fixturePath, "ok");
+
+    const proposals = [{
+      gap: SAMPLE_GAP, category: "new-domain-script",
+      scriptName: stagedName, approach: "x", fixturePath, regressionCommand: "x",
+    }];
+
+    const { team, calls } = makeMockTeam([
+      async () => ({ step: "learn", verdict: "PASS", handoffHint: JSON.stringify(proposals) }),
+      async () => ({ step: "approve", verdict: "FAIL", issues: ["no token"] }),
+    ]);
+
+    await runLearner({
+      team, learnerAgentName: "learner", judgeAgentName: "judge",
+      scriptsDir: env.scriptsDir, stagingDir: env.stagingDir, versionsDir: env.versionsDir,
+      fixturesDir: env.fixturesDir, changelogPath: env.changelogPath,
+      gapsPaths: [gapsPath], reportRunDir: join(runDir, "learning"),
+      runId: "learner-run-1",
+      runsDir: join(workdir, "runs"),
+    });
+
+    expect(calls.map((c) => [c.agent, c.opts])).toEqual([
+      ["learner", { runId: "learner-run-1" }],
+      ["judge", { runId: "learner-run-1" }],
+    ]);
   });
 
   it("promotes only on Judge approval (rejection path leaves no active script)", async () => {

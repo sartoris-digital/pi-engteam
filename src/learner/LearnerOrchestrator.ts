@@ -220,7 +220,11 @@ async function requestJudgeApproval(opts: {
       justification,
     ts: new Date().toISOString(),
   };
-  const verdict = await opts.team.deliver(opts.judgeAgentName, message);
+  const verdict = await opts.team.deliver(
+    opts.judgeAgentName,
+    message,
+    opts.runId ? { runId: opts.runId } : undefined,
+  );
   if (!verdict) return { approved: false };
   if (verdict.verdict !== "PASS") return { approved: false };
 
@@ -329,6 +333,7 @@ async function dispatchLearnerForProposals(opts: {
   learnerAgentName: string;
   gaps: GapEntry[];
   scriptsDir: string;
+  runId?: string;
 }): Promise<ProposedChange[]> {
   if (opts.gaps.length === 0) return [];
   const message: TeamMessage = {
@@ -349,7 +354,11 @@ async function dispatchLearnerForProposals(opts: {
       `GAPS:\n${opts.gaps.map((g, n) => `${n + 1}. step=${g.step} claim=${g.claim}`).join("\n")}\n`,
     ts: new Date().toISOString(),
   };
-  const verdict = await opts.team.deliver(opts.learnerAgentName, message);
+  const verdict = await opts.team.deliver(
+    opts.learnerAgentName,
+    message,
+    opts.runId ? { runId: opts.runId } : undefined,
+  );
   return parseProposalsFromVerdict(verdict, opts.gaps);
 }
 
@@ -425,6 +434,7 @@ export async function runLearner(cfg: LearnerConfig): Promise<LearnerResult> {
     learnerAgentName: cfg.learnerAgentName,
     gaps,
     scriptsDir: cfg.scriptsDir,
+    runId: cfg.runId,
   });
 
   let approved = 0;
