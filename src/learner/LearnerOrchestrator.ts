@@ -108,17 +108,81 @@ async function readGaps(paths: string[]): Promise<GapEntry[]> {
 // ── Step 4 helper: run a python script via uv ───────────────────────────────
 type RunScriptResult = { exitCode: number; stdout: string; stderr: string };
 
+const RUN_SCRIPT_TIMEOUT_MS = 60_000;
+const RUN_SCRIPT_OUTPUT_MAX_BYTES = 1 * 1024 * 1024;
+
+type OutputAccumulator = {
+  value: string;
+  bytes: number;
+  truncated: boolean;
+};
+
+function appendBoundedOutput(acc: OutputAccumulator, chunk: Buffer | string, label: string): void {
+  if (acc.truncated) return;
+  const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  const remaining = RUN_SCRIPT_OUTPUT_MAX_BYTES - acc.bytes;
+  if (buf.length <= remaining) {
+    acc.value += buf.toString("utf8");
+    acc.bytes += buf.length;
+    return;
+  }
+  if (remaining > 0) {
+    acc.value += buf.subarray(0, remaining).toString("utf8");
+    acc.bytes += remaining;
+  }
+  acc.value += `\n[${label} truncated at ${RUN_SCRIPT_OUTPUT_MAX_BYTES} bytes]\n`;
+  acc.truncated = true;
+}
+
 async function runScript(scriptPath: string, args: string[]): Promise<RunScriptResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const proc = spawn("uv", ["run", "--script", scriptPath, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (c) => { stdout += c.toString(); });
-    proc.stderr?.on("data", (c) => { stderr += c.toString(); });
-    proc.on("error", () => resolve({ exitCode: -1, stdout, stderr: stderr || "spawn-failed" }));
-    proc.on("close", (code) => resolve({ exitCode: code ?? -1, stdout, stderr }));
+    const stdout: OutputAccumulator = { value: "", bytes: 0, truncated: false };
+    const stderr: OutputAccumulator = { value: "", bytes: 0, truncated: false };
+    let timedOut = false;
+    let sigkillTimeout: NodeJS.Timeout | undefined;
+
+    const killProcessGroup = (signal: NodeJS.Signals) => {
+      if (!proc.pid) return;
+      try {
+        process.kill(-proc.pid, signal);
+      } catch {
+        try { proc.kill(signal); } catch { /* already exited */ }
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      killProcessGroup("SIGTERM");
+      sigkillTimeout = setTimeout(() => {
+        killProcessGroup("SIGKILL");
+      }, 10_000);
+    }, RUN_SCRIPT_TIMEOUT_MS);
+
+    proc.stdout?.on("data", (c) => { appendBoundedOutput(stdout, c, "stdout"); });
+    proc.stderr?.on("data", (c) => { appendBoundedOutput(stderr, c, "stderr"); });
+    proc.on("error", (err) => {
+      killProcessGroup("SIGTERM");
+      if (sigkillTimeout) clearTimeout(sigkillTimeout);
+      clearTimeout(timeout);
+      resolve({
+        exitCode: -1,
+        stdout: stdout.value,
+        stderr: stderr.value || `spawn-failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+      if (sigkillTimeout) clearTimeout(sigkillTimeout);
+      if (timedOut) {
+        reject(new Error(`uv script timed out after ${RUN_SCRIPT_TIMEOUT_MS}ms: ${scriptPath}`));
+        return;
+      }
+      resolve({ exitCode: code ?? -1, stdout: stdout.value, stderr: stderr.value });
+    });
   });
 }
 

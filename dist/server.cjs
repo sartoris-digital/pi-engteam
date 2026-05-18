@@ -34279,7 +34279,7 @@ var require_bindings = __commonJS({
     var path = require("path");
     var fileURLToPath = require_file_uri_to_path();
     var join3 = path.join;
-    var dirname2 = path.dirname;
+    var dirname3 = path.dirname;
     var exists = fs.accessSync && function(path2) {
       try {
         fs.accessSync(path2);
@@ -34394,7 +34394,7 @@ var require_bindings = __commonJS({
       return fileName;
     };
     exports2.getRoot = function getRoot(file) {
-      var dir = dirname2(file), prev;
+      var dir = dirname3(file), prev;
       while (true) {
         if (dir === ".") {
           dir = process.cwd();
@@ -35165,9 +35165,17 @@ function registerRoutes(app, db, opts) {
     reply.type("text/html").send(getDashboardHtml(`http://127.0.0.1:${opts.port}`));
   });
   app.get("/health", async () => ({ ok: true }));
+  const parseBoundedInt = (raw, fallback, min, max) => {
+    if (raw === void 0) return fallback;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return fallback;
+    if (n < min) return min;
+    if (n > max) return max;
+    return n;
+  };
   app.get("/runs", async (req) => {
-    const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
-    const offset = parseInt(req.query.offset ?? "0", 10);
+    const limit = parseBoundedInt(req.query.limit, 50, 1, 200);
+    const offset = parseBoundedInt(req.query.offset, 0, 0, 1e6);
     return { runs: listRuns(db, limit, offset) };
   });
   app.get("/runs/:runId", async (req, reply) => {
@@ -35179,8 +35187,8 @@ function registerRoutes(app, db, opts) {
     const run = getRun(db, req.params.runId);
     if (!run) return reply.status(404).send({ error: "Run not found" });
     const events = getEvents(db, req.params.runId, {
-      limit: parseInt(req.query.limit ?? "200", 10),
-      offset: parseInt(req.query.offset ?? "0", 10),
+      limit: parseBoundedInt(req.query.limit, 200, 1, 1e3),
+      offset: parseBoundedInt(req.query.offset, 0, 0, 1e7),
       category: req.query.category,
       since: req.query.since
     });
@@ -35223,6 +35231,7 @@ function registerRoutes(app, db, opts) {
 var import_fs2 = require("fs");
 var import_promises = require("fs/promises");
 var import_path2 = require("path");
+var ROTATED_FILE_RE = /^events\.(\d+)\.jsonl$/;
 var EventWatcher = class {
   constructor(runsDir, db) {
     this.runsDir = runsDir;
@@ -35231,12 +35240,15 @@ var EventWatcher = class {
   runsDir;
   db;
   fileStates = /* @__PURE__ */ new Map();
+  // inode → which rotated path we know it lives under (best-effort; new
+  // rotations re-index numbering so we re-resolve when needed).
   watchers = [];
   async start() {
     await this.scanDir(this.runsDir);
     try {
       const w = (0, import_fs2.watch)(this.runsDir, { recursive: true }, (_event, filename) => {
-        if (filename?.endsWith("events.jsonl")) {
+        if (!filename) return;
+        if (filename.endsWith("events.jsonl") || ROTATED_FILE_RE.test(filename.split("/").pop() ?? "")) {
           const fullPath = (0, import_path2.join)(this.runsDir, filename);
           void this.ingestFile(fullPath);
         }
@@ -35260,22 +35272,66 @@ var EventWatcher = class {
         const full = (0, import_path2.join)(dir, entry.name);
         if (entry.isDirectory()) {
           await this.scanDir(full);
-        } else if (entry.name === "events.jsonl") {
+        } else if (entry.name === "events.jsonl" || ROTATED_FILE_RE.test(entry.name)) {
           await this.ingestFile(full);
         }
       }
     } catch {
     }
   }
-  async ingestFile(filePath) {
-    const state = this.fileStates.get(filePath) ?? { offset: 0 };
-    let fileSize = 0;
+  // Find the rotated file in the same dir that has the given inode (the
+  // writer renames events.jsonl → events.1.jsonl on rotation, bumping all
+  // existing events.N.jsonl). We scan once on demand.
+  findRotatedPathForInode(parentDir, ino) {
     try {
-      fileSize = (0, import_fs2.statSync)(filePath).size;
+      const { readdirSync } = require("fs");
+      for (const entry of readdirSync(parentDir)) {
+        if (!ROTATED_FILE_RE.test(entry)) continue;
+        const full = (0, import_path2.join)(parentDir, entry);
+        try {
+          const s = (0, import_fs2.statSync)(full);
+          if (s.ino === ino) return full;
+        } catch {
+        }
+      }
+    } catch {
+    }
+    return null;
+  }
+  async ingestFile(filePath) {
+    const prior = this.fileStates.get(filePath);
+    let fileSize = 0;
+    let ino = 0;
+    try {
+      const s = (0, import_fs2.statSync)(filePath);
+      fileSize = s.size;
+      ino = s.ino;
     } catch {
       return;
     }
+    if (prior && prior.ino && prior.ino !== ino) {
+      const rotatedPath = this.findRotatedPathForInode((0, import_path2.dirname)(filePath), prior.ino);
+      if (rotatedPath) {
+        const drainState = { offset: prior.offset, ino: prior.ino };
+        this.fileStates.set(rotatedPath, drainState);
+        await this.drain(rotatedPath, drainState);
+      }
+      this.fileStates.delete(filePath);
+    }
+    const state = this.fileStates.get(filePath) ?? { offset: 0, ino };
+    state.ino = ino;
     if (fileSize <= state.offset) return;
+    try {
+      await this.drain(filePath, state);
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        this.fileStates.delete(filePath);
+        return;
+      }
+      throw err;
+    }
+  }
+  async drain(filePath, state) {
     let newContent = "";
     await new Promise((resolve, reject) => {
       const stream = (0, import_fs2.createReadStream)(filePath, {

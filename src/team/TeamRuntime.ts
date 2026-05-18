@@ -731,9 +731,10 @@ export class TeamRuntime {
   }
 
   async deliverAll(message: Omit<TeamMessage, "to">): Promise<void> {
+    const runId = this.currentRunId ?? message.id;
     await Promise.all(
       Array.from(this.knownDefs.keys()).map(name =>
-        this.deliver(name, { ...message, to: name })
+        this.deliver(name, { ...message, to: name }, { runId })
       )
     );
   }

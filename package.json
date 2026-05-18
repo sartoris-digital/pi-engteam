@@ -12,6 +12,8 @@
   "scripts": {
     "build": "tsup",
     "postbuild": "node --input-type=module -e \"import{cpSync}from'node:fs';cpSync('src/assets','dist/assets',{recursive:true,force:true});\"",
+    "check:server-bundle": "node scripts/check-server-bundle.mjs",
+    "precommit": "npm run check:server-bundle",
     "postinstall": "node scripts/postinstall.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
