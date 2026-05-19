@@ -2,6 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import type { SafetyConfig, ModelRouting } from "./types.js";
+import { DEFAULT_APPROVAL_WATCHER_CONFIG } from "./types.js";
 
 const DEFAULT_SAFETY: SafetyConfig = {
   hardBlockers: { enabled: true, alwaysOn: true },
@@ -20,6 +21,10 @@ const DEFAULT_SAFETY: SafetyConfig = {
   // never opted into. Align with the documented default; users who want
   // reusable tokens can set it in ~/.pi/engineering-team/safety.json.
   allowRunLifetimeScope: false,
+  // PLAN.md round-A1+: ApprovalWatcher feature shipped DORMANT by default.
+  // No watcher registers, no boot recovery, no fs changes until the
+  // operator opts in via `enabled: true`. See ApprovalWatcherConfig docs.
+  approvalWatcher: { ...DEFAULT_APPROVAL_WATCHER_CONFIG },
 };
 
 const DEFAULT_MODEL_ROUTING: ModelRouting = {
@@ -47,7 +52,22 @@ async function loadJson<T>(path: string, defaults: T): Promise<T> {
 const engineeringTeamDir = () => join(homedir(), ".pi", "engineering-team");
 
 export async function loadSafetyConfig(): Promise<SafetyConfig> {
-  return loadJson(join(engineeringTeamDir(), "safety.json"), DEFAULT_SAFETY);
+  const merged = await loadJson(join(engineeringTeamDir(), "safety.json"), DEFAULT_SAFETY);
+  // PLAN.md round-A1+: shallow-merge of safety.json over defaults preserves
+  // the top-level `approvalWatcher` key, but a partial user override like
+  // `{ approvalWatcher: { enabled: true } }` would otherwise drop the rest
+  // of the sub-object's defaults (dispatchPaused, pauseEpoch, etc.). Apply
+  // a second-level merge for this one sub-object so each field falls back
+  // to the default when omitted.
+  if (merged.approvalWatcher) {
+    merged.approvalWatcher = {
+      ...DEFAULT_APPROVAL_WATCHER_CONFIG,
+      ...merged.approvalWatcher,
+    };
+  } else {
+    merged.approvalWatcher = { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
+  }
+  return merged;
 }
 
 // Codex round-5 MEDIUM: model-routing.json was shallow-merged into the

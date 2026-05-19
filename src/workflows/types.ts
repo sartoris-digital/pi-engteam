@@ -17,6 +17,15 @@ export type StepResult = {
   artifacts?: Record<string, string>;
   handoffHint?: string;
   error?: string;
+  /**
+   * PLAN.md round-A1 HIGH 4 + round-A5: when a step's `run()` returns
+   * `pauseForUser`, ADWEngine transitions the run to `status: "waiting_user"`,
+   * records the reason in state.json for /run-status, and keeps the
+   * ApprovalWatcher registered. The run sits in waiting_user until
+   * /run-resume (clears the field) or /run-cancel. Used by the
+   * `adhoc-shell` workflow to hold a long-lived approvals-only run.
+   */
+  pauseForUser?: { reason: string };
 };
 
 export type Step = {
