@@ -44,7 +44,7 @@ import { mkdir, rename, readFile, writeFile, readdir, stat, unlink } from "fs/pr
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { ensureApprovalsLayout } from "./approval-fs.js";
-import { acquireLease, releaseLease, startLeaseRenewal, type LeaseHandle } from "./approval-lease.js";
+import { acquireLease, releaseLease, startLeaseRenewal, isLeaseOwned, type LeaseHandle } from "./approval-lease.js";
 import { ALLOWED_OPS } from "./approvals.js";
 
 const POLL_TICK_MS_DEFAULT = 1_000;
@@ -131,6 +131,21 @@ function validateRequest(raw: unknown, expectedRunId: string, expectedRequestId:
   return o as PendingRequestV1;
 }
 
+// Phase 8 review (round 2 MEDIUM): cap and sanitize quarantine reason
+// strings before writing them to the sidecar. validateRequest can
+// build reasons from attacker-controlled `op` values; CheckApproval
+// already strips control chars on read, but the on-disk file should
+// not carry the unsanitized form either.
+const QUARANTINE_REASON_MAX_LEN = 200;
+function sanitizeReason(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const stripped = raw.replace(/[\x00-\x1f\x7f]/g, " ").trim();
+  if (stripped.length === 0) return "unspecified";
+  return stripped.length > QUARANTINE_REASON_MAX_LEN
+    ? stripped.slice(0, QUARANTINE_REASON_MAX_LEN) + "…"
+    : stripped;
+}
+
 async function quarantineFile(
   fromPath: string,
   approvalsDir: string,
@@ -150,7 +165,7 @@ async function quarantineFile(
     // diagnostic so the audit trail exists.
   }
   const reasonRecord = {
-    reason,
+    reason: sanitizeReason(reason),
     quarantinedAt: new Date().toISOString(),
     quarantineId: randomUUID(),
     context,
@@ -320,17 +335,35 @@ export async function registerApprovalDispatcher(opts: DispatcherOptions): Promi
 
   let stopped = false;
   let timer: NodeJS.Timeout | undefined;
+  // Phase 8 review HIGH 1: serialize all drain executions through an
+  // in-flight promise chain. Overlapping ticks would otherwise race on
+  // requeued-then-restored pending files — atomic rename only guards
+  // the claim, not the requeue-then-reclaim cycle.
+  let drainChain: Promise<{ dispatched: number; quarantined: number; requeued: number }> = Promise.resolve({
+    dispatched: 0, quarantined: 0, requeued: 0,
+  });
 
-  const runDrain = async () => {
-    if (stopped) return;
-    try {
-      await drainOnce(layout.pendingDir, join(runDir, "approvals"), layout.metaDir, runId, dispatch, maxRetryAttempts);
-    } catch {
-      // Best-effort: a failed tick is logged at the call site; next tick retries.
+  const guardedDrain = async (): Promise<{ dispatched: number; quarantined: number; requeued: number }> => {
+    if (stopped) return { dispatched: 0, quarantined: 0, requeued: 0 };
+    // Phase 8 review HIGH 2: refuse to mutate the run if we no longer
+    // own the lease. A stale-recovery contender may have taken over;
+    // continuing to drain would clobber the successor's state.
+    if (!(await isLeaseOwned(leaseResult.handle))) {
+      stopped = true;
+      if (timer) clearInterval(timer);
+      timer = undefined;
+      return { dispatched: 0, quarantined: 0, requeued: 0 };
     }
+    return drainOnce(layout.pendingDir, join(runDir, "approvals"), layout.metaDir, runId, dispatch, maxRetryAttempts);
   };
 
-  timer = setInterval(() => { void runDrain(); }, pollIntervalMs);
+  const enqueueDrain = (): Promise<{ dispatched: number; quarantined: number; requeued: number }> => {
+    // Chain onto the existing promise so concurrent calls serialize.
+    drainChain = drainChain.then(guardedDrain, guardedDrain);
+    return drainChain;
+  };
+
+  timer = setInterval(() => { void enqueueDrain(); }, pollIntervalMs);
   timer.unref?.();
 
   return {
@@ -340,10 +373,12 @@ export async function registerApprovalDispatcher(opts: DispatcherOptions): Promi
       stopped = true;
       if (timer) clearInterval(timer);
       timer = undefined;
+      // Wait for any in-flight drain to settle before releasing the lease.
+      try { await drainChain; } catch { /* ignore */ }
       await releaseLease(leaseResult.handle);
     },
     async drainOnce() {
-      return drainOnce(layout.pendingDir, join(runDir, "approvals"), layout.metaDir, runId, dispatch, maxRetryAttempts);
+      return enqueueDrain();
     },
   };
 }

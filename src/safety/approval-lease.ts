@@ -363,6 +363,19 @@ export async function releaseLease(handle: LeaseHandle): Promise<void> {
 }
 
 /**
+ * Phase 8 review HIGH 2: returns true iff the on-disk owner.json
+ * still records OUR instanceId. Callers use this to confirm they
+ * still hold the lease before mutating run-scoped state. A `false`
+ * means a stale-recovery contender has taken over; the caller must
+ * stop touching the run.
+ */
+export async function isLeaseOwned(handle: LeaseHandle): Promise<boolean> {
+  const { ownerFile } = leasePaths(handle.runDir);
+  const current = await readOwnerJson(ownerFile);
+  return current.kind === "ok" && current.owner.instanceId === handle.owner.instanceId;
+}
+
+/**
  * Read the current lease owner (read-only; for /approval-status).
  * Returns null if no lease exists or it's malformed.
  */

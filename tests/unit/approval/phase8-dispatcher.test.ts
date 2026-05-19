@@ -326,6 +326,131 @@ describe("ApprovalWatcher Phase 8 — dispatcher drain + claim semantics", () =>
   });
 });
 
+describe("ApprovalWatcher Phase 8 review fixes — drain serialization + lease-ownership gate", () => {
+  let tmpHome: string;
+  let realHome: string | undefined;
+  let runsDir: string;
+  const runId = "phase8-fix-test";
+
+  beforeEach(async () => {
+    realHome = process.env.HOME;
+    tmpHome = await mkdtemp(join(tmpdir(), "approval-phase8-fix-"));
+    process.env.HOME = tmpHome;
+    runsDir = join(tmpHome, "runs");
+    await mkdir(join(runsDir, runId), { recursive: true });
+  });
+
+  afterEach(async () => {
+    process.env.HOME = realHome;
+    await rm(tmpHome, { recursive: true, force: true });
+  });
+
+  it("drain serialization: overlapping drainOnce calls execute one-at-a-time (round-1 HIGH 1)", async () => {
+    const dispatched: PendingRequestV1[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const handle = await registerApprovalDispatcher({
+      runsDir,
+      runId,
+      dispatch: async (req) => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 30));
+        dispatched.push(req);
+        inFlight--;
+        return { kind: "granted" };
+      },
+      pollIntervalMs: 99_999,
+    });
+    if ("ok" in handle && !handle.ok) throw new Error(`register failed: ${handle.reason}`);
+    if (!("drainOnce" in handle)) throw new Error("not a handle");
+    try {
+      const pendingDir = join(runsDir, runId, "approvals", "pending");
+      for (let i = 0; i < 5; i++) await plantPending(pendingDir, makeRequest(runId));
+      // Fire 5 overlapping drainOnce calls.
+      const results = await Promise.all(Array.from({ length: 5 }).map(() => handle.drainOnce()));
+      expect(dispatched.length).toBe(5);
+      // Serialization invariant: never more than one dispatch in flight.
+      expect(maxInFlight).toBeLessThanOrEqual(1);
+      // Aggregate dispatched count across the 5 results equals 5.
+      const totalDispatched = results.reduce((sum, r) => sum + r.dispatched, 0);
+      expect(totalDispatched).toBe(5);
+    } finally {
+      await handle.stop();
+    }
+  });
+
+  it("lease-loss self-disable: dispatcher refuses to mutate after a successor steals the lease (round-1 HIGH 2)", async () => {
+    let callbackInvocations = 0;
+    const handle = await registerApprovalDispatcher({
+      runsDir,
+      runId,
+      dispatch: async () => {
+        callbackInvocations++;
+        return { kind: "granted" };
+      },
+      pollIntervalMs: 99_999,
+    });
+    if ("ok" in handle && !handle.ok) throw new Error(`register failed: ${handle.reason}`);
+    if (!("drainOnce" in handle)) throw new Error("not a handle");
+    try {
+      // Plant a pending file.
+      const pendingDir = join(runsDir, runId, "approvals", "pending");
+      const req = makeRequest(runId);
+      await plantPending(pendingDir, req);
+
+      // Simulate a successor stealing the lease by overwriting owner.json
+      // with a different instanceId.
+      const lockDir = join(runsDir, runId, ".approval-watcher.lease.lock");
+      const ownerPath = join(lockDir, "owner.json");
+      const successor = {
+        pid: process.pid,
+        hostname: handle.lease.owner.hostname,
+        instanceId: "successor-stole-it",
+        acquiredAt: new Date().toISOString(),
+        renewedAt: new Date().toISOString(),
+      };
+      await writeFile(ownerPath, JSON.stringify(successor));
+
+      // Now drain — must refuse because we no longer own the lease.
+      const result = await handle.drainOnce();
+      expect(result.dispatched).toBe(0);
+      expect(result.quarantined).toBe(0);
+      expect(callbackInvocations).toBe(0);
+      // Pending file is untouched (successor's responsibility now).
+      const { stat: statFs } = await import("fs/promises");
+      await expect(statFs(join(pendingDir, `${req.requestId}.json`))).resolves.toBeTruthy();
+    } finally {
+      await handle.stop();
+    }
+  });
+
+  it("stop() awaits in-flight drain before releasing the lease", async () => {
+    const dispatchOrder: string[] = [];
+    const handle = await registerApprovalDispatcher({
+      runsDir,
+      runId,
+      dispatch: async (req) => {
+        dispatchOrder.push("started");
+        await new Promise((r) => setTimeout(r, 40));
+        dispatchOrder.push("finished");
+        return { kind: "granted" };
+      },
+      pollIntervalMs: 99_999,
+    });
+    if ("ok" in handle && !handle.ok) throw new Error(`register failed: ${handle.reason}`);
+    if (!("drainOnce" in handle)) throw new Error("not a handle");
+
+    const pendingDir = join(runsDir, runId, "approvals", "pending");
+    await plantPending(pendingDir, makeRequest(runId));
+    const drainP = handle.drainOnce(); // fire and forget
+    await new Promise((r) => setTimeout(r, 5)); // let it start
+    await handle.stop();
+    await drainP;
+    expect(dispatchOrder).toEqual(["started", "finished"]);
+  });
+});
+
 describe("ApprovalWatcher Phase 8 — validateRequest", () => {
   const runId = "valid-run";
   it("accepts a well-formed v1 request", () => {
