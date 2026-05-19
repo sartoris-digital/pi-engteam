@@ -10,7 +10,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { checkDomain } from "./DomainLock.js";
 import { substituteRunIdInPolicy } from "./teams-config.js";
-import { loadSafetyConfig } from "../config.js";
+import { loadSafetyConfigStrict } from "../config.js";
 import type { DomainPolicyMap } from "./default-domains.js";
 
 // Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
@@ -115,7 +115,7 @@ async function findValidApproval(
     let currentPauseEpoch: number;
     let emergencyStopped = false;
     try {
-      const safety = await loadSafetyConfig();
+      const safety = await loadSafetyConfigStrict();
       currentPauseEpoch = safety.approvalWatcher?.pauseEpoch ?? 0;
       if (safety.approvalWatcher?.emergencyStop === true) emergencyStopped = true;
     } catch {

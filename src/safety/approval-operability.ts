@@ -177,6 +177,14 @@ export async function migrateLegacyTokensToV2(
       errors++;
       continue;
     }
+    // Phase 9 review round-1 HIGH 1: the legacy HMAC payload did NOT
+    // cover `scope`, so an attacker with disk access could promote
+    // `scope: "once"` to `scope: "run-lifetime"` without breaking the
+    // legacy signature. We refuse to propagate the unauthenticated
+    // scope field — every migrated token is forced to `scope: "once"`,
+    // which is the conservative choice. Operators who legitimately
+    // want a run-lifetime token re-mint via Judge under the v2 flow.
+    const safeScope = "once" as const;
     // Re-sign under the v2 payload with pauseEpoch=0.
     const newSignature = signToken(
       secret,
@@ -187,7 +195,12 @@ export async function migrateLegacyTokensToV2(
       parsed.runId,
       0,
     );
-    const migratedToken: ApprovalToken = { ...parsed, pauseEpoch: 0, signature: newSignature };
+    const migratedToken: ApprovalToken = {
+      ...parsed,
+      scope: safeScope,
+      pauseEpoch: 0,
+      signature: newSignature,
+    };
     // Atomic write via tmp+rename.
     const tmp = path + ".migrate.tmp";
     try {
@@ -197,6 +210,12 @@ export async function migrateLegacyTokensToV2(
       migrated++;
     } catch {
       errors++;
+      // Phase 9 review LOW: clean up stale .migrate.tmp leftover from
+      // a failed rename so future migration retries don't trip on it.
+      try {
+        const { unlink } = await import("fs/promises");
+        await unlink(tmp);
+      } catch { /* best-effort */ }
     }
   }
   return { migrated, skipped, errors };

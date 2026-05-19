@@ -321,8 +321,8 @@ async function requestJudgeApproval(opts: {
   let currentPauseEpoch = 0;
   let emergencyStopped = false;
   try {
-    const { loadSafetyConfig } = await import("../config.js");
-    const safety = await loadSafetyConfig();
+    const { loadSafetyConfigStrict } = await import("../config.js");
+    const safety = await loadSafetyConfigStrict();
     if (safety.approvalWatcher?.emergencyStop === true) emergencyStopped = true;
     if (typeof safety.approvalWatcher?.pauseEpoch === "number") {
       currentPauseEpoch = safety.approvalWatcher.pauseEpoch;

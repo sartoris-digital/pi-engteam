@@ -49,6 +49,29 @@ async function loadJson<T>(path: string, defaults: T): Promise<T> {
   }
 }
 
+/**
+ * Strict variant of loadJson. ENOENT → defaults (fresh install).
+ * Parse errors, permission errors, or other read errors → throws.
+ *
+ * Phase 9 review round-1 HIGH 2: the safety-config fail-closed paths
+ * in SafetyGuard.findValidApproval + LearnerOrchestrator.checkApproval
+ * relied on loadSafetyConfig() throwing on corruption. Without this
+ * strict variant, loadJson swallowed every error and silently
+ * returned DEFAULT_APPROVAL_WATCHER_CONFIG (which has pauseEpoch: 0),
+ * masking real corruption + letting pre-stop tokens slip through.
+ */
+async function loadJsonStrict<T>(path: string, defaults: T): Promise<T> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT") return defaults;
+    throw err;
+  }
+  return { ...defaults, ...JSON.parse(raw) } as T;
+}
+
 const engineeringTeamDir = () => join(homedir(), ".pi", "engineering-team");
 
 // Phase 1 review round-1 MEDIUM 2: a partial user override of
@@ -109,6 +132,19 @@ export async function loadSafetyConfig(): Promise<SafetyConfig> {
   // PLAN.md round-A1+: per-field sanitize so hostile / typo'd user
   // overrides fall back to defaults instead of slipping through the
   // shallow JSON merge as truthy-but-invalid values.
+  merged.approvalWatcher = sanitizeApprovalWatcherConfig(merged.approvalWatcher);
+  return merged;
+}
+
+/**
+ * Phase 9 review round-1 HIGH 2: strict safety-config loader for
+ * approval gates. Throws on parse errors / permission errors so the
+ * fail-closed catch in findValidApproval + LearnerOrchestrator is
+ * actually exercised. ENOENT still returns defaults (fresh install
+ * is a normal state).
+ */
+export async function loadSafetyConfigStrict(): Promise<SafetyConfig> {
+  const merged = await loadJsonStrict(join(engineeringTeamDir(), "safety.json"), DEFAULT_SAFETY);
   merged.approvalWatcher = sanitizeApprovalWatcherConfig(merged.approvalWatcher);
   return merged;
 }

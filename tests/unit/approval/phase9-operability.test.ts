@@ -180,6 +180,50 @@ describe("ApprovalWatcher Phase 9 — installShutdownHandlers", () => {
   });
 });
 
+describe("ApprovalWatcher Phase 9 review fixes — migration scope hardening + strict config", () => {
+  let tmpDir: string;
+  let approvalsDir: string;
+  let secret: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "phase9-fix-"));
+    approvalsDir = join(tmpDir, "approvals");
+    await mkdir(approvalsDir, { recursive: true });
+    secret = "phase9-review-fixes-secret";
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("migration forces scope to 'once' even if the legacy token claims 'run-lifetime' (round-1 HIGH 1)", async () => {
+    // Plant a legacy token with scope:"run-lifetime" but a valid
+    // LEGACY signature (which doesn't cover scope).
+    const runId = "r1";
+    const tokenId = "tok-scope-tamper";
+    const op = "bash";
+    const argsHash = "abc";
+    const expiresAt = new Date(Date.now() + 300_000).toISOString();
+    const legacyPayload = `${runId}:${tokenId}:${op}:${argsHash}:${expiresAt}`;
+    const legacySignature = createHmac("sha256", secret).update(legacyPayload).digest("hex");
+    const tampered: ApprovalToken = {
+      tokenId, runId, op, argsHash,
+      scope: "run-lifetime", // attacker-promoted
+      expiresAt, signature: legacySignature,
+      // no pauseEpoch
+    };
+    await writeFile(join(approvalsDir, `${tokenId}.json`), JSON.stringify(tampered));
+
+    const result = await migrateLegacyTokensToV2(approvalsDir, secret);
+    expect(result.migrated).toBe(1);
+    const migrated: ApprovalToken = JSON.parse(await readFile(join(approvalsDir, `${tokenId}.json`), "utf8"));
+    // Migration forced scope back to "once".
+    expect(migrated.scope).toBe("once");
+    // And the new v2 signature verifies under the safe scope.
+    expect(verifyToken(secret, migrated)).toBe(true);
+  });
+});
+
 describe("ApprovalWatcher Phase 7 review HIGH fixes — SafetyGuard fail-closed", () => {
   // The fail-closed path is exercised in findValidApproval which isn't
   // exported. We assert the behavior indirectly by verifying that
