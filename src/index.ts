@@ -25,6 +25,8 @@ import { consult, buildConsultWorkflow } from "./workflows/consult.js";
 import { registerIssueCommand } from "./commands/issue.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
+import { registerApprovalWatcherCommand } from "./commands/approval-watcher.js";
+import { registerApprovalStatusCommand } from "./commands/approval-status.js";
 import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
 import { registerSpecCommand } from "./commands/spec.js";
 import { registerLearnCommand } from "./commands/learn.js";
@@ -1006,6 +1008,13 @@ export default async function (pi: ExtensionAPI) {
 
   registerDoctorCommand(pi);
   registerObserveCommand(pi);
+  // PLAN.md ApprovalWatcher Phase 2: register operator slash commands
+  // and the read-only status view. Both are safe to register even when
+  // approvalWatcher.enabled=false (default) — pause/resume/etc. just
+  // mutate flags + write audit lines; no watcher behavior fires until
+  // Phase 8 lands.
+  registerApprovalWatcherCommand(pi, RUNS_DIR);
+  registerApprovalStatusCommand(pi);
   registerWorkflowShortcuts(pi, engine, RUNS_DIR);
   registerSpecCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
   registerIssueCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
