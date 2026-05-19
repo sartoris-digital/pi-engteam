@@ -280,6 +280,136 @@ describe("ApprovalWatcher Phase 1 — loadSafetyConfig deep-merges approvalWatch
     expect(cfg.approvalWatcher?.allRuns).toBe(false);
     expect(cfg.approvalWatcher?.maxRequestAgeSeconds).toBe(3600);
   });
+
+  // Phase 1 review round-1 MEDIUM 2 + LOW: hostile shapes in safety.json
+  // must NOT survive as truthy-but-invalid values that Phase 2+ gates
+  // could misread. The sanitizer must per-field fall back to defaults.
+
+  it("approvalWatcher: null → full default approvalWatcher", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: null }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher).toEqual(DEFAULT_APPROVAL_WATCHER_CONFIG);
+  });
+
+  it("approvalWatcher: 'bogus' string → full default", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: "bogus" }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher).toEqual(DEFAULT_APPROVAL_WATCHER_CONFIG);
+  });
+
+  it("approvalWatcher: array → full default (not iterated as object)", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: ["enabled", true] }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher).toEqual(DEFAULT_APPROVAL_WATCHER_CONFIG);
+  });
+
+  it("approvalWatcher: enabled='true' string → kept as default false (no truthy-bypass)", async () => {
+    // Silent-truthiness bug guard: a YAML-style "true" must not flip the
+    // boolean. Operators have to use real `true` (no quotes).
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { enabled: "true" } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.enabled).toBe(false);
+  });
+
+  it("approvalWatcher: canaryRunIds='not-an-array' → kept as default []", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { canaryRunIds: "not-an-array" } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.canaryRunIds).toEqual([]);
+  });
+
+  it("approvalWatcher: canaryRunIds=['*'] → wildcard rejected, other entries preserved", async () => {
+    // PLAN.md round-A7 MEDIUM 4: wildcard not supported; operators must
+    // use allRuns: true explicitly.
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { canaryRunIds: ["*", "real-run-1", "real-run-2"] } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.canaryRunIds).toEqual(["real-run-1", "real-run-2"]);
+  });
+
+  it("approvalWatcher: mode='bogus' → kept as default 'dormant'", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { mode: "bogus" } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.mode).toBe("dormant");
+  });
+
+  it("approvalWatcher: negative pauseEpoch → kept as default 0", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { pauseEpoch: -5 } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.pauseEpoch).toBe(0);
+  });
+
+  it("approvalWatcher: maxRequestAgeSeconds=0 → kept as default 3600 (0 is invalid)", async () => {
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { maxRequestAgeSeconds: 0 } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.maxRequestAgeSeconds).toBe(3600);
+  });
+
+  it("typo'd field name preserves all defaults", async () => {
+    // `enabld` (typo) doesn't touch `enabled`. Defaults survive.
+    await writeFile(
+      join(tmpHome, ".pi", "engineering-team", "safety.json"),
+      JSON.stringify({ approvalWatcher: { enabld: true, dispatchpaused: true } }),
+    );
+    const cfg = await loadSafetyConfig();
+    expect(cfg.approvalWatcher?.enabled).toBe(false);
+    expect(cfg.approvalWatcher?.dispatchPaused).toBe(false);
+  });
+});
+
+describe("ApprovalWatcher Phase 1 — type guards reject hostile inputs", () => {
+  it("isApprovalEventType handles null/undefined/empty without crashing", () => {
+    expect(isApprovalEventType(null as unknown as string)).toBe(false);
+    expect(isApprovalEventType(undefined as unknown as string)).toBe(false);
+    expect(isApprovalEventType("")).toBe(false);
+  });
+
+  it("isApprovalEventType is case-sensitive", () => {
+    expect(isApprovalEventType("DISPATCH")).toBe(false);
+    expect(isApprovalEventType("Dispatch")).toBe(false);
+    expect(isApprovalEventType("dispatch")).toBe(true);
+  });
+
+  it("no duplicate values within request-scoped set", () => {
+    const seen = new Set<string>();
+    for (const t of APPROVAL_EVENT_TYPES_REQUEST_SCOPED) {
+      expect(seen.has(t)).toBe(false);
+      seen.add(t);
+    }
+  });
+
+  it("no duplicate values within global set", () => {
+    const seen = new Set<string>();
+    for (const t of APPROVAL_EVENT_TYPES_GLOBAL) {
+      expect(seen.has(t)).toBe(false);
+      seen.add(t);
+    }
+  });
 });
 
 // vitest globals helper imports for beforeEach/afterEach

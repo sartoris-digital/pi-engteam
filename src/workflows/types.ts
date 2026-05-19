@@ -18,12 +18,21 @@ export type StepResult = {
   handoffHint?: string;
   error?: string;
   /**
-   * PLAN.md round-A1 HIGH 4 + round-A5: when a step's `run()` returns
-   * `pauseForUser`, ADWEngine transitions the run to `status: "waiting_user"`,
-   * records the reason in state.json for /run-status, and keeps the
-   * ApprovalWatcher registered. The run sits in waiting_user until
-   * /run-resume (clears the field) or /run-cancel. Used by the
-   * `adhoc-shell` workflow to hold a long-lived approvals-only run.
+   * PLAN.md round-A1 HIGH 4 + round-A5 (TYPE ONLY in Phase 1; ADWEngine
+   * consumption lands in Phase 10).
+   *
+   * Future contract (NOT YET IMPLEMENTED): when a step's `run()` returns
+   * `pauseForUser`, ADWEngine will transition the run to
+   * `status: "waiting_user"`, record the reason in state.json for
+   * /run-status, and keep the ApprovalWatcher registered. The run sits
+   * in waiting_user until /run-resume (clears the field) or /run-cancel.
+   * Used by the `adhoc-shell` workflow to hold a long-lived
+   * approvals-only run.
+   *
+   * Phase 1 only lands the type so Phase 10 workflow code can declare
+   * the field without TypeScript errors. Workflows that emit this field
+   * BEFORE Phase 10 will see ADWEngine ignore it silently — see Phase 10
+   * in PLAN.md for the consumption work.
    */
   pauseForUser?: { reason: string };
 };

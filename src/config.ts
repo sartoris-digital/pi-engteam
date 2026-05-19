@@ -51,22 +51,58 @@ async function loadJson<T>(path: string, defaults: T): Promise<T> {
 
 const engineeringTeamDir = () => join(homedir(), ".pi", "engineering-team");
 
+// Phase 1 review round-1 MEDIUM 2: a partial user override of
+// `approvalWatcher` that contains hostile shapes (string instead of bool,
+// array instead of string array, wildcard `"*"` in canaryRunIds, etc.)
+// would survive a shallow merge with truthy-but-invalid values that
+// Phase 2 gates could misread. Sanitize each field per its expected type
+// and reject the wildcard explicitly (PLAN.md round-A7 MEDIUM 4 requires
+// `allRuns: true` for full rollout, not `canaryRunIds: ["*"]`).
+function sanitizeApprovalWatcherConfig(raw: unknown): import("./types.js").ApprovalWatcherConfig {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
+  }
+  const o = raw as Record<string, unknown>;
+  const out: import("./types.js").ApprovalWatcherConfig = { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
+
+  if (typeof o.enabled === "boolean") out.enabled = o.enabled;
+  if (o.mode === "dormant" || o.mode === "rollback") out.mode = o.mode;
+  if (typeof o.dispatchPaused === "boolean") out.dispatchPaused = o.dispatchPaused;
+  if (typeof o.emergencyStop === "boolean") out.emergencyStop = o.emergencyStop;
+  if (typeof o.pauseEpoch === "number" && Number.isFinite(o.pauseEpoch) && o.pauseEpoch >= 0) {
+    out.pauseEpoch = Math.floor(o.pauseEpoch);
+  }
+  if (Array.isArray(o.canaryRunIds)) {
+    const ids = o.canaryRunIds.filter(
+      (r): r is string => typeof r === "string" && r.length > 0 && r !== "*",
+    );
+    out.canaryRunIds = ids;
+    if (o.canaryRunIds.some((r) => r === "*")) {
+      // PLAN.md round-A7 MEDIUM 4: wildcard is rejected; operators must
+      // opt into allRuns explicitly. Emit a warning at boot so the
+      // operator notices the typo / misconfiguration.
+      console.warn(
+        "[approval-watcher] canaryRunIds contained '*' — wildcard not supported; use allRuns: true. Wildcard entries dropped.",
+      );
+    }
+  }
+  if (typeof o.allRuns === "boolean") out.allRuns = o.allRuns;
+  if (
+    typeof o.maxRequestAgeSeconds === "number" &&
+    Number.isFinite(o.maxRequestAgeSeconds) &&
+    o.maxRequestAgeSeconds > 0
+  ) {
+    out.maxRequestAgeSeconds = Math.floor(o.maxRequestAgeSeconds);
+  }
+  return out;
+}
+
 export async function loadSafetyConfig(): Promise<SafetyConfig> {
   const merged = await loadJson(join(engineeringTeamDir(), "safety.json"), DEFAULT_SAFETY);
-  // PLAN.md round-A1+: shallow-merge of safety.json over defaults preserves
-  // the top-level `approvalWatcher` key, but a partial user override like
-  // `{ approvalWatcher: { enabled: true } }` would otherwise drop the rest
-  // of the sub-object's defaults (dispatchPaused, pauseEpoch, etc.). Apply
-  // a second-level merge for this one sub-object so each field falls back
-  // to the default when omitted.
-  if (merged.approvalWatcher) {
-    merged.approvalWatcher = {
-      ...DEFAULT_APPROVAL_WATCHER_CONFIG,
-      ...merged.approvalWatcher,
-    };
-  } else {
-    merged.approvalWatcher = { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
-  }
+  // PLAN.md round-A1+: per-field sanitize so hostile / typo'd user
+  // overrides fall back to defaults instead of slipping through the
+  // shallow JSON merge as truthy-but-invalid values.
+  merged.approvalWatcher = sanitizeApprovalWatcherConfig(merged.approvalWatcher);
   return merged;
 }
 

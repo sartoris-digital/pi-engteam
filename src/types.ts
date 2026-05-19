@@ -73,8 +73,11 @@ export type RunState = {
    */
   adhocHoldExpiresAt?: string;
   /**
-   * PLAN.md round-A7: a step's StepResult.pauseForUser surfaced here
-   * so /run-status can display why a waiting_user run is paused.
+   * PLAN.md round-A7 (TYPE ONLY in Phase 1; ADWEngine writes this in
+   * Phase 10). Future: ADWEngine copies StepResult.pauseForUser into
+   * state.json on the waiting_user transition so /run-status surfaces
+   * why the run is paused. Phase 1 only lands the type so RunState
+   * readers can opt in to the field without TypeScript errors.
    */
   pauseForUser?: { reason: string };
 };
