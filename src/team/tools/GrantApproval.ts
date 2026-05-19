@@ -4,7 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { realpathSync } from "fs";
 import { join, sep } from "path";
-import { generateRunSecret, signToken, hashArgs } from "../../safety/approvals.js";
+import { generateRunSecret, signToken, hashArgs, ALLOWED_OPS } from "../../safety/approvals.js";
 import { loadSafetyConfig } from "../../config.js";
 
 // Codex round-5 HIGH: requestId flows from a tool parameter straight into a
@@ -34,7 +34,6 @@ type PendingRequest = {
   justification: string;
   createdAt: string;
 };
-const ALLOWED_OPS = new Set(["git-push", "npm-install-new", "migration", "bash", "write", "edit", "verifier-script-update"]);
 function validatePendingRequest(raw: unknown, expectedId: string, expectedRunId: string): PendingRequest | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;

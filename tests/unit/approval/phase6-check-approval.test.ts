@@ -224,4 +224,59 @@ describe("ApprovalWatcher Phase 6 — CheckApproval status transitions (watcher 
     const afterMtime = (await import("fs/promises")).stat(safetyPath).then((s) => s.mtimeMs);
     expect(await afterMtime).toBe(await beforeMtime);
   });
+
+  // Phase 6 review fixes — both rounds HIGH + MEDIUM regression tests.
+
+  it("emergency-stop takes precedence over rollback-handoff (review HIGH, both rounds)", async () => {
+    // emergencyStop=true AND enabled=false (rollback eligible). The
+    // previous code returned rollback-handoff; the fix ensures the
+    // global stop denies unconditionally.
+    const safetyDir = join(tmpHome, ".pi", "engineering-team");
+    await mkdir(safetyDir, { recursive: true });
+    await writeFile(
+      join(safetyDir, "safety.json"),
+      JSON.stringify({ approvalWatcher: { enabled: false, emergencyStop: true } }),
+    );
+    const tool = createCheckApprovalTool(runsDir, runId);
+    const r = await execCheck(tool, VALID_UUID);
+    expect(r.status).toBe("denied");
+    expect(r.reason).toBe("emergency-stop");
+  });
+
+  it("emergency-stop also wins when run is not on the canary list", async () => {
+    const safetyDir = join(tmpHome, ".pi", "engineering-team");
+    await mkdir(safetyDir, { recursive: true });
+    await writeFile(
+      join(safetyDir, "safety.json"),
+      JSON.stringify({
+        approvalWatcher: {
+          enabled: true,
+          canaryRunIds: ["DIFFERENT-RUN"],
+          emergencyStop: true,
+        },
+      }),
+    );
+    const tool = createCheckApprovalTool(runsDir, runId);
+    const r = await execCheck(tool, VALID_UUID);
+    expect(r.status).toBe("denied");
+    expect(r.reason).toBe("emergency-stop");
+  });
+
+  it("caps and sanitizes quarantine reason (review MEDIUM, both rounds)", async () => {
+    const quarantineDir = join(runsDir, runId, "approvals", "quarantine");
+    await mkdir(quarantineDir, { recursive: true });
+    // Reason with embedded NUL + escape sequence + 1000-char filler.
+    const hostile = "ANSI\x1b[31mRED\x00null" + "x".repeat(1000);
+    await writeFile(
+      join(quarantineDir, `${VALID_UUID}.json`),
+      JSON.stringify({ reason: hostile }),
+    );
+    const tool = createCheckApprovalTool(runsDir, runId);
+    const r = await execCheck(tool, VALID_UUID);
+    expect(r.status).toBe("denied");
+    // Control chars stripped, length bounded.
+    expect(r.reason).not.toContain("\x00");
+    expect(r.reason).not.toContain("\x1b");
+    expect(r.reason.length).toBeLessThanOrEqual(201); // 200 + ellipsis char
+  });
 });

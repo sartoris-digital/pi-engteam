@@ -34,22 +34,36 @@
 import { defineTool } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { writeFile, rename, readdir, readFile, mkdir, rmdir, unlink } from "fs/promises";
-import { join } from "path";
+import { writeFile, rename, readdir, readFile, mkdir, rmdir, unlink, stat } from "fs/promises";
+import { join, resolve, sep } from "path";
 import { randomBytes } from "crypto";
+import { hostname } from "os";
 import { ensureApprovalsLayout } from "../../safety/approval-fs.js";
-import { hashArgs } from "../../safety/approvals.js";
+import { hashArgs, ALLOWED_OPS } from "../../safety/approvals.js";
 import { loadRunState } from "../../adw/RunState.js";
 import { loadSafetyConfig } from "../../config.js";
 import type { RequestApprovalPollHint } from "../../types.js";
 
 const ADMISSION_LOCK_DIR = ".approval-admission.lock";
+const ADMISSION_OWNER_FILE = "owner.json";
 const ADMISSION_MAX_WAIT_MS = 5_000;
 const ADMISSION_POLL_BASE_MS = 10;
 const ADMISSION_POLL_JITTER_MS = 20;
+// Phase 5 review round-2 HIGH 2: admission lock stale-recovery
+// thresholds. Same-host PID-death OR cross-host TTL — generous enough
+// that a legitimately-busy holder finishes long before they apply.
+const ADMISSION_OWNER_STALE_MS = 30_000;
+const ADMISSION_LOCK_DIR_MIN_AGE_MS = 500;
 const REQUEST_SCHEMA_VERSION = 1;
 const COMMAND_MAX_LEN = 4096;
 const JUSTIFICATION_MAX_LEN = 4096;
+
+type AdmissionOwner = {
+  pid: number;
+  hostname: string;
+  instanceId: string;
+  acquiredAt: string;
+};
 
 type PendingRequestV1 = {
   schemaVersion: 1;
@@ -65,18 +79,112 @@ type PendingRequestV1 = {
   createdAt: string;
 };
 
-async function acquireAdmissionLock(runDir: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function readAdmissionOwner(ownerPath: string): Promise<AdmissionOwner | "absent" | "malformed"> {
+  let raw: string;
+  try {
+    raw = await readFile(ownerPath, "utf8");
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT") return "absent";
+    return "malformed";
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<AdmissionOwner>;
+    if (
+      typeof parsed.pid === "number" &&
+      typeof parsed.hostname === "string" &&
+      typeof parsed.instanceId === "string" &&
+      typeof parsed.acquiredAt === "string"
+    ) {
+      return parsed as AdmissionOwner;
+    }
+    return "malformed";
+  } catch {
+    return "malformed";
+  }
+}
+
+function isAdmissionOwnerStale(owner: AdmissionOwner): boolean {
+  const ageMs = Date.now() - Date.parse(owner.acquiredAt);
+  if (!Number.isFinite(ageMs)) return true;
+  if (ageMs < 0) return false; // future-skew tolerance
+  if (owner.hostname === hostname()) {
+    // Same-host: dead PID + any age, OR alive but absurdly old.
+    if (owner.pid > 0) {
+      try {
+        process.kill(owner.pid, 0);
+        return ageMs > ADMISSION_OWNER_STALE_MS;
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === "ESRCH") return true; // dead → stale
+        return ageMs > ADMISSION_OWNER_STALE_MS;
+      }
+    }
+  }
+  return ageMs > ADMISSION_OWNER_STALE_MS;
+}
+
+async function forceRemoveAdmission(lockDir: string, ownerPath: string): Promise<void> {
+  try { await unlink(ownerPath); } catch { /* may not exist */ }
+  try { await rmdir(lockDir); } catch { /* may already be gone */ }
+}
+
+/**
+ * Acquire the per-run admission lock with crash-safe stale recovery.
+ * Phase 5 review round-2 HIGH 2 + round-1 MEDIUM 1: the previous
+ * impl was ownerless — a crashed RequestApproval left the run wedged
+ * for the rest of its life. Now we mkdir + write owner metadata, and
+ * contenders apply same-host PID-death recovery and an
+ * ADMISSION_OWNER_STALE_MS TTL on the acquiredAt timestamp.
+ */
+async function acquireAdmissionLock(
+  runDir: string,
+): Promise<{ ok: true; instanceId: string } | { ok: false; reason: string }> {
   const lockDir = join(runDir, ADMISSION_LOCK_DIR);
+  const ownerPath = join(lockDir, ADMISSION_OWNER_FILE);
   const deadline = Date.now() + ADMISSION_MAX_WAIT_MS;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       await mkdir(lockDir, { mode: 0o700 });
-      return { ok: true };
+      // We won the mkdir — write owner.json so contenders can identify us.
+      const instanceId = randomBytes(8).toString("hex");
+      const owner: AdmissionOwner = {
+        pid: process.pid,
+        hostname: hostname(),
+        instanceId,
+        acquiredAt: new Date().toISOString(),
+      };
+      try {
+        await writeFile(ownerPath, JSON.stringify(owner), { mode: 0o600 });
+      } catch (err) {
+        // Back out the lock so we don't wedge.
+        await forceRemoveAdmission(lockDir, ownerPath);
+        return { ok: false, reason: `admission-lock owner-write failed: ${(err as Error).message}` };
+      }
+      return { ok: true, instanceId };
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "EEXIST") {
         return { ok: false, reason: `admission-lock fs-error: ${e.message}` };
+      }
+      // Lock dir exists. Inspect owner.json — recover if stale.
+      const ownerRead = await readAdmissionOwner(ownerPath);
+      if (typeof ownerRead === "object" && isAdmissionOwnerStale(ownerRead)) {
+        await forceRemoveAdmission(lockDir, ownerPath);
+        // Loop back to retry mkdir.
+      } else if (ownerRead === "absent") {
+        // Owner missing — only force-remove if the lock dir is older
+        // than ADMISSION_LOCK_DIR_MIN_AGE_MS (otherwise we'd race a
+        // legitimate winner who's about to write owner.json).
+        try {
+          const st = await stat(lockDir);
+          if (Date.now() - st.mtimeMs > ADMISSION_LOCK_DIR_MIN_AGE_MS) {
+            await forceRemoveAdmission(lockDir, ownerPath);
+          }
+        } catch {
+          // Lock dir vanished — retry mkdir.
+        }
       }
       if (Date.now() > deadline) {
         return { ok: false, reason: "admission-lock-timeout" };
@@ -87,12 +195,15 @@ async function acquireAdmissionLock(runDir: string): Promise<{ ok: true } | { ok
   }
 }
 
-async function releaseAdmissionLock(runDir: string): Promise<void> {
-  try {
-    await rmdir(join(runDir, ADMISSION_LOCK_DIR));
-  } catch {
-    // Best-effort. Loser of a stale-recovery race wins anyway.
-  }
+async function releaseAdmissionLock(runDir: string, instanceId: string): Promise<void> {
+  const lockDir = join(runDir, ADMISSION_LOCK_DIR);
+  const ownerPath = join(lockDir, ADMISSION_OWNER_FILE);
+  // Only release if we still own the lock. If a stale-recovery
+  // contender stole it, leave their lock + owner intact.
+  const current = await readAdmissionOwner(ownerPath);
+  if (typeof current === "object" && current.instanceId !== instanceId) return;
+  try { await unlink(ownerPath); } catch { /* may not exist */ }
+  try { await rmdir(lockDir); } catch { /* may not exist */ }
 }
 
 /**
@@ -113,11 +224,22 @@ async function findDuplicate(
   } catch {
     return null;
   }
+  // Phase 5 review round-2 HIGH 1: containment check on each path
+  // BEFORE reading. readdir returns base names but a hostile filesystem
+  // or a misconfigured entry could let a join escape the pending dir;
+  // explicit resolve+startsWith catches anything that resolves outside.
+  const resolvedRoot = resolve(pendingDir);
+  const rootWithSep = resolvedRoot.endsWith(sep) ? resolvedRoot : resolvedRoot + sep;
   for (const name of entries) {
     if (!name.endsWith(".json")) continue;
     if (name.endsWith(".tmp")) continue;
+    // Defense in depth: reject names with path separators or null bytes
+    // outright — readdir on POSIX returns base names, but better safe.
+    if (name.includes("/") || name.includes("\\") || name.includes("\0")) continue;
+    const candidate = resolve(pendingDir, name);
+    if (candidate !== resolvedRoot && !candidate.startsWith(rootWithSep)) continue;
     try {
-      const raw = await readFile(join(pendingDir, name), "utf8");
+      const raw = await readFile(candidate, "utf8");
       const parsed = JSON.parse(raw) as Partial<PendingRequestV1>;
       if (
         parsed.op === fingerprint.op &&
@@ -159,6 +281,23 @@ export function createRequestApprovalTool(runsDir: string, runId: string) {
       justification: Type.String({ description: "Why this operation is necessary for the current task" }),
     }),
     execute: async (_id, params) => {
+      // Phase 5 review round-2 MEDIUM 1: enforce ALLOWED_OPS at the
+      // writer side. The downstream GrantApproval rejects unknown ops,
+      // but accepting them here wastes pending capacity and produces
+      // junk in approvals/pending/ until the watcher quarantines them.
+      if (typeof params.op !== "string" || !ALLOWED_OPS.has(params.op)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: `op must be one of: ${Array.from(ALLOWED_OPS).join(", ")} (got ${JSON.stringify(params.op)})`,
+              }),
+            },
+          ],
+          details: {},
+        };
+      }
       // Phase 5 input clamps. The downstream GrantApproval already
       // validates these, but rejecting at the writer side prevents
       // disk fill with oversized junk and makes the error path crisp.
@@ -217,6 +356,7 @@ export function createRequestApprovalTool(runsDir: string, runId: string) {
       const argsHash = hashArgs({ op: params.op, command: params.command });
 
       // 3) Acquire admission lock — atomic mkdir of <run>/.approval-admission.lock
+      // with owner metadata + stale recovery.
       const lockResult = await acquireAdmissionLock(runDir);
       if (!lockResult.ok) {
         return {
@@ -231,6 +371,7 @@ export function createRequestApprovalTool(runsDir: string, runId: string) {
           details: {},
         };
       }
+      const admissionInstanceId = lockResult.instanceId;
 
       try {
         // 4) Duplicate collapse: if same op+argsHash+step+iteration is
@@ -328,7 +469,7 @@ export function createRequestApprovalTool(runsDir: string, runId: string) {
           details: {},
         };
       } finally {
-        await releaseAdmissionLock(runDir);
+        await releaseAdmissionLock(runDir, admissionInstanceId);
       }
     },
     renderCall(args, theme, context) {

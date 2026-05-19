@@ -2,6 +2,23 @@
 import { createHmac, createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { ApprovalToken } from "../types.js";
 
+/**
+ * Canonical list of approval-eligible operations. Both RequestApproval
+ * and GrantApproval reference this set so the writer-side allowlist
+ * matches the verifier-side allowlist. Adding a new approval-eligible
+ * operation requires bumping the schema and updating SafetyGuard's
+ * Layer C trigger as well.
+ */
+export const ALLOWED_OPS: ReadonlySet<string> = new Set([
+  "git-push",
+  "npm-install-new",
+  "migration",
+  "bash",
+  "write",
+  "edit",
+  "verifier-script-update",
+]);
+
 export function generateRunSecret(): string {
   return randomBytes(32).toString("hex");
 }

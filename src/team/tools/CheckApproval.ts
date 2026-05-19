@@ -75,30 +75,10 @@ type CheckApprovalResponse = {
   scope?: string;
 };
 
-/**
- * Run-level gating check (PLAN.md round-A7 MEDIUM 5).
- *
- * Returns true if the run should use the new watcher path (CheckApproval
- * polls drive the wait). Returns false if the watcher is disabled or
- * this run is not in the canary list — in which case CheckApproval
- * returns `rollback-handoff` and the worker exits NEEDS_MORE.
- */
-async function isRunOnWatcherPath(runId: string): Promise<boolean> {
-  const safety = await loadSafetyConfig();
-  const cfg = safety.approvalWatcher;
-  if (!cfg || !cfg.enabled) return false;
-  if (cfg.allRuns) return true;
-  return cfg.canaryRunIds.includes(runId);
-}
-
-/**
- * Returns true if the global emergency stop is asserted. In that state
- * CheckApproval returns `denied` with reason=emergency-stop.
- */
-async function isEmergencyStopped(): Promise<boolean> {
-  const safety = await loadSafetyConfig();
-  return safety.approvalWatcher?.emergencyStop === true;
-}
+// Run-level gating + emergency-stop are evaluated inline in execute()
+// so safety.json is read exactly once per call (Phase 6 review LOW —
+// minimize per-poll syscalls). The unified evaluation enforces the
+// correct precedence: emergencyStop FIRST, rollback gate SECOND.
 
 /**
  * Find a token in `<run>/approvals/*.json` matching this requestId
@@ -206,6 +186,22 @@ async function pendingStatus(
   }
 }
 
+// Phase 6 review (both rounds MEDIUM): cap the quarantine reason
+// length and strip control characters before surfacing to the agent.
+// The watcher writes this field from logic over a potentially hostile
+// pending payload; an unbounded reason can pollute the worker's
+// context window and (in theory) carry control-char escapes.
+const QUARANTINE_REASON_MAX_LEN = 200;
+function sanitizeQuarantineReason(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  // eslint-disable-next-line no-control-regex
+  const stripped = raw.replace(/[\x00-\x1f\x7f]/g, " ").trim();
+  if (stripped.length === 0) return undefined;
+  return stripped.length > QUARANTINE_REASON_MAX_LEN
+    ? stripped.slice(0, QUARANTINE_REASON_MAX_LEN) + "…"
+    : stripped;
+}
+
 async function quarantineStatus(
   runsDir: string,
   runId: string,
@@ -215,8 +211,8 @@ async function quarantineStatus(
   const target = join(quarantineDir, `${requestId}.json`);
   try {
     const raw = await readFile(target, "utf8");
-    const parsed = JSON.parse(raw) as { reason?: string };
-    return { quarantined: true, reason: typeof parsed.reason === "string" ? parsed.reason : undefined };
+    const parsed = JSON.parse(raw) as { reason?: unknown };
+    return { quarantined: true, reason: sanitizeQuarantineReason(parsed.reason) };
   } catch {
     return { quarantined: false };
   }
@@ -243,28 +239,34 @@ export function createCheckApprovalTool(runsDir: string, runId: string) {
         return { content: [{ type: "text" as const, text: JSON.stringify(response) }], details: {} };
       }
 
-      // 1) Rollback-handoff gating: if the watcher is not enabled OR
+      // Phase 6 review (both rounds HIGH): emergency-stop must take
+      // precedence over rollback-handoff. PLAN.md item 184 says
+      // emergencyStop "denies all requests unconditionally"; routing to
+      // legacy ADWEngine dispatch via rollback-handoff would let the
+      // legacy path try to mint a token during the stop. Load safety
+      // once and evaluate both checks in the correct order.
+      const safety = await loadSafetyConfig();
+      const cfg = safety.approvalWatcher;
+
+      // 1) Global emergency-stop FIRST. Deny unconditionally.
+      if (cfg?.emergencyStop === true) {
+        const response: CheckApprovalResponse = {
+          status: "denied",
+          requestId,
+          reason: "emergency-stop",
+        };
+        return { content: [{ type: "text" as const, text: JSON.stringify(response) }], details: {} };
+      }
+
+      // 2) Rollback-handoff gating: if the watcher is not enabled OR
       // this run is not in the canary list, instruct the worker to exit
       // NEEDS_MORE so legacy ADWEngine dispatch handles the approval.
-      const onWatcherPath = await isRunOnWatcherPath(runId);
+      const onWatcherPath = cfg?.enabled === true && (cfg.allRuns === true || cfg.canaryRunIds.includes(runId));
       if (!onWatcherPath) {
         const response: CheckApprovalResponse = {
           status: "rollback-handoff",
           requestId,
           reason: "approval-watcher not active for this run; exit NEEDS_MORE for legacy dispatch",
-        };
-        return { content: [{ type: "text" as const, text: JSON.stringify(response) }], details: {} };
-      }
-
-      // 2) Global emergency-stop: deny all requests unconditionally
-      // (PLAN.md item 184). The /approval-watcher resume-after-emergency
-      // command clears this. Phase 7 will additionally enforce pauseEpoch
-      // mismatch in the HMAC.
-      if (await isEmergencyStopped()) {
-        const response: CheckApprovalResponse = {
-          status: "denied",
-          requestId,
-          reason: "emergency-stop",
         };
         return { content: [{ type: "text" as const, text: JSON.stringify(response) }], details: {} };
       }

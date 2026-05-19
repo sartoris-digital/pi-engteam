@@ -201,4 +201,111 @@ describe("ApprovalWatcher Phase 5 — RequestApproval atomic write + metadata", 
     );
     expect(lockExists).toBe(false);
   });
+
+  // Phase 5 review fixes — round 1 + 2 follow-up tests.
+
+  it("rejects unsupported op (round-2 MEDIUM 1: ALLOWED_OPS allowlist)", async () => {
+    const tool = createRequestApprovalTool(runsDir, runId);
+    const r = await execTool(tool, {
+      op: "arbitrary-malicious-op",
+      command: "echo hi",
+      justification: "should refuse",
+    });
+    expect(r.error).toMatch(/op must be one of/);
+    expect(r.requestId).toBeUndefined();
+  });
+
+  it("admission lock owner.json is written with pid + hostname + instanceId, and a competing call sees it (round-2 HIGH 2)", async () => {
+    // Plant a fresh, NOT-stale owner that belongs to a "different
+    // process" so RequestApproval blocks on EEXIST + owner-present-
+    // and-not-stale. The competing call should time out without
+    // stealing the lock.
+    const lockDir = join(runsDir, runId, ".approval-admission.lock");
+    const ownerPath = join(lockDir, "owner.json");
+    await mkdir(lockDir, { recursive: true, mode: 0o700 });
+    const myPid = process.pid;
+    const liveOwner = {
+      pid: myPid, // current process — alive, so isAdmissionOwnerStale returns false
+      hostname: (await import("os")).hostname(),
+      instanceId: "live-other-instance",
+      acquiredAt: new Date().toISOString(),
+    };
+    await writeFile(ownerPath, JSON.stringify(liveOwner));
+    const tool = createRequestApprovalTool(runsDir, runId);
+    const r = await execTool(tool, { op: "bash", command: "blocked-by-live", justification: "j" });
+    // Cannot acquire → admission-lock-timeout.
+    expect(r.error).toMatch(/admission-lock-timeout/);
+    // Owner file is unchanged — competing call did not steal.
+    const afterRaw = await readFile(ownerPath, "utf8");
+    const after = JSON.parse(afterRaw);
+    expect(after.instanceId).toBe("live-other-instance");
+  }, 10_000);
+
+  it("stale admission lock (dead PID) is recovered on next acquire (round-2 HIGH 2)", async () => {
+    // Plant a stale owner.json with a non-existent PID + same hostname,
+    // then call RequestApproval — it should recover.
+    const lockDir = join(runsDir, runId, ".approval-admission.lock");
+    const ownerPath = join(lockDir, "owner.json");
+    await mkdir(lockDir, { recursive: true, mode: 0o700 });
+    await writeFile(
+      ownerPath,
+      JSON.stringify({
+        pid: 9999999, // unreachable PID
+        hostname: (await import("os")).hostname(),
+        instanceId: "stale-ffff",
+        acquiredAt: new Date().toISOString(),
+      }),
+    );
+    const tool = createRequestApprovalTool(runsDir, runId);
+    const r = await execTool(tool, {
+      op: "bash",
+      command: "after-stale",
+      justification: "j",
+    });
+    // Stale-recovered → request succeeds.
+    expect(r.requestId).toBeTruthy();
+    expect(r.error).toBeUndefined();
+  });
+
+  it("admission lock with absent owner.json + young lock dir delays steal but eventually recovers (round-2 HIGH 2 — slow-disk safety)", async () => {
+    // Plant a young lock dir without owner.json (simulates a slow-disk
+    // winner mid-mkdir+write OR a true mid-acquire crash). The
+    // contender must NOT instantly steal — it waits at least
+    // ADMISSION_LOCK_DIR_MIN_AGE_MS (~500ms) before treating the dir
+    // as crashed, then recovers and proceeds.
+    const lockDir = join(runsDir, runId, ".approval-admission.lock");
+    await mkdir(lockDir, { recursive: true, mode: 0o700 });
+    const tool = createRequestApprovalTool(runsDir, runId);
+    const start = Date.now();
+    const r = await execTool(tool, { op: "bash", command: "recovered", justification: "j" });
+    const elapsed = Date.now() - start;
+    // The request eventually succeeds (stale-mid-acquire recovered).
+    expect(r.requestId).toBeTruthy();
+    expect(r.error).toBeUndefined();
+    // But not instantly — the mtime guard delayed us at least ~500ms.
+    expect(elapsed).toBeGreaterThan(400);
+  }, 10_000);
+
+  it("findDuplicate ignores files with weird names (round-2 HIGH 1: path traversal defense)", async () => {
+    const tool = createRequestApprovalTool(runsDir, runId);
+    // Write a first request normally.
+    const first = await execTool(tool, { op: "bash", command: "real", justification: "j" });
+    const pendingDir = join(runsDir, runId, "approvals", "pending");
+    // Drop a malicious entry with a null byte in the name — would be
+    // ignored by readdir on most FS, but our containment check should
+    // skip it defensively. We can't actually create a file with `\0`,
+    // so simulate with a regular-but-weird name that is NOT a UUID:
+    await writeFile(join(pendingDir, "..weird.json"), JSON.stringify({
+      op: "bash",
+      argsHash: "fake",
+      issuedAtStepName: "build",
+      issuedAtIteration: 2,
+      requestId: "11111111-2222-3333-4444-555555555555",
+    }));
+    // A new request with the SAME op+command — fingerprint matches the
+    // real first request, NOT the weird-named one.
+    const second = await execTool(tool, { op: "bash", command: "real", justification: "j" });
+    expect(second.requestId).toBe(first.requestId);
+    expect(second.requestId).not.toBe("11111111-2222-3333-4444-555555555555");
+  });
 });
