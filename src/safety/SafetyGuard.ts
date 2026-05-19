@@ -108,8 +108,20 @@ async function findValidApproval(
     // Phase 7: read current pauseEpoch so we can reject tokens minted
     // under a different (pre-emergency-stop) epoch even if their
     // signature is otherwise valid. PLAN.md round-A8 HIGH 2.
-    const safety = await loadSafetyConfig().catch(() => null);
-    const currentPauseEpoch = safety?.approvalWatcher?.pauseEpoch ?? 0;
+    // Phase 7 review HIGH (both rounds): fail CLOSED on config load
+    // failure. A corrupt safety.json must NOT silently collapse
+    // currentPauseEpoch to 0 — that would re-validate every pre-stop
+    // token under a forged "fresh epoch" view. Refuse the approval.
+    let currentPauseEpoch: number;
+    let emergencyStopped = false;
+    try {
+      const safety = await loadSafetyConfig();
+      currentPauseEpoch = safety.approvalWatcher?.pauseEpoch ?? 0;
+      if (safety.approvalWatcher?.emergencyStop === true) emergencyStopped = true;
+    } catch {
+      return false;
+    }
+    if (emergencyStopped) return false;
 
     const { readdir, rename } = await import("fs/promises");
     const files = await readdir(approvalDir).catch(() => []);

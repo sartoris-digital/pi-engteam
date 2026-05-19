@@ -312,6 +312,28 @@ async function requestJudgeApproval(opts: {
   } catch {
     return { approved: false };
   }
+  // Phase 7 review fix (both rounds HIGH): the verifier promotion
+  // path is a Layer-C approval boundary; it must enforce the same
+  // pauseEpoch + emergencyStop gate as SafetyGuard.findValidApproval.
+  // Fail closed on safety config load failure (corrupted safety.json
+  // must not silently let pre-stop tokens slip through). And if
+  // emergencyStop is asserted, refuse unconditionally.
+  let currentPauseEpoch = 0;
+  let emergencyStopped = false;
+  try {
+    const { loadSafetyConfig } = await import("../config.js");
+    const safety = await loadSafetyConfig();
+    if (safety.approvalWatcher?.emergencyStop === true) emergencyStopped = true;
+    if (typeof safety.approvalWatcher?.pauseEpoch === "number") {
+      currentPauseEpoch = safety.approvalWatcher.pauseEpoch;
+    }
+  } catch {
+    // Fail closed on config load failure.
+    return { approved: false };
+  }
+  if (emergencyStopped) {
+    return { approved: false };
+  }
   const approvalsDir = join(opts.runsDir, opts.runId, "approvals");
   const files = await readdir(approvalsDir).catch(() => [] as string[]);
   for (const file of files) {
@@ -324,6 +346,8 @@ async function requestJudgeApproval(opts: {
       if (token.argsHash !== expectedArgsHash) continue;
       if (token.runId !== opts.runId) continue;
       if (!verifyToken(secret, token)) continue;
+      // Phase 7 review fix: epoch equality on top of signature verify.
+      if (token.pauseEpoch !== currentPauseEpoch) continue;
       // Atomic consume: rename to .consumed so a second promote can't replay.
       const consumedPath = tokenPath + ".consumed";
       try {
