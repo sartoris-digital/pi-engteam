@@ -26,6 +26,28 @@ import { mkdtemp, writeFile, mkdir, rm } from "fs/promises";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 
+describe("ApprovalWatcher Phase 1 — schema.ts EVENT_TYPES is synced to types.ts", () => {
+  it("EVENT_TYPES.approval includes every type from both scope lists", async () => {
+    // Round 2 review angle: catch the gap where schema.ts has its own
+    // const map of valid event types but src/types.ts has the canonical
+    // list. If the two drift, dashboards or future schema validators
+    // will reject canary events.
+    const { EVENT_TYPES } = await import("../../../src/observer/schema.js");
+    const expected = new Set([
+      ...APPROVAL_EVENT_TYPES_REQUEST_SCOPED,
+      ...APPROVAL_EVENT_TYPES_GLOBAL,
+    ]);
+    const actual = new Set(EVENT_TYPES.approval as readonly string[]);
+    for (const t of expected) {
+      expect(actual.has(t)).toBe(true);
+    }
+    // And nothing extra in EVENT_TYPES that's not in the typed lists.
+    for (const t of actual) {
+      expect(expected.has(t as never)).toBe(true);
+    }
+  });
+});
+
 describe("ApprovalWatcher Phase 1 — event-type taxonomy", () => {
   it("legacy approval event types are preserved (back-compat)", () => {
     expect(APPROVAL_EVENT_TYPES_LEGACY).toEqual([
