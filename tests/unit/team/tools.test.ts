@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtemp, readFile } from "fs/promises";
+import { mkdtemp, mkdir, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createSendMessageTool } from "../../../src/team/tools/SendMessage.js";
@@ -83,6 +83,10 @@ describe("TaskList and TaskUpdate tools", () => {
 describe("RequestApproval tool", () => {
   it("writes pending approval file", async () => {
     const dir = await makeTmpDir();
+    // Phase 5: RequestApproval calls ensureApprovalsLayout which requires
+    // the run dir to exist (containment check). Production callers create
+    // the run dir on /run-start; tests must do the same.
+    await mkdir(join(dir, "run-3"), { recursive: true });
     const tool = createRequestApprovalTool(dir, "run-3");
     const result = await tool.execute("call-1", {
       op: "git-push",
@@ -94,13 +98,14 @@ describe("RequestApproval tool", () => {
     expect(parsed.requestId).toBeTruthy();
     const { readdir } = await import("fs/promises");
     const files = await readdir(join(dir, "run-3", "approvals", "pending"));
-    expect(files).toHaveLength(1);
+    expect(files.filter(f => f.endsWith(".json"))).toHaveLength(1);
   });
 });
 
 describe("GrantApproval tool", () => {
   it("creates signed token file", async () => {
     const dir = await makeTmpDir();
+    await mkdir(join(dir, "run-4"), { recursive: true });
     const requestTool = createRequestApprovalTool(dir, "run-4");
     const reqResult = await requestTool.execute("call-1", {
       op: "npm-install-new",

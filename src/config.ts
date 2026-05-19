@@ -94,6 +94,13 @@ function sanitizeApprovalWatcherConfig(raw: unknown): import("./types.js").Appro
   ) {
     out.maxRequestAgeSeconds = Math.floor(o.maxRequestAgeSeconds);
   }
+  if (
+    typeof o.maxPendingPerRun === "number" &&
+    Number.isFinite(o.maxPendingPerRun) &&
+    o.maxPendingPerRun > 0
+  ) {
+    out.maxPendingPerRun = Math.floor(o.maxPendingPerRun);
+  }
   return out;
 }
 

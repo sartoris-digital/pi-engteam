@@ -242,6 +242,13 @@ export type ApprovalWatcherConfig = {
    * dispatcher quarantines as generation-stale. Default 3600 (1 hour).
    */
   maxRequestAgeSeconds: number;
+  /**
+   * PLAN.md item 11b + 129: per-run pending request cap. RequestApproval
+   * refuses with `refused: per-run-pending-cap` once a run has this many
+   * pending files. Default 100. The check is performed under the
+   * per-run admission lock so concurrent writes cannot exceed the cap.
+   */
+  maxPendingPerRun: number;
 };
 
 // Phase 1 review round-2 LOW: deep-freeze so any consumer that imports
@@ -258,6 +265,7 @@ export const DEFAULT_APPROVAL_WATCHER_CONFIG: Readonly<ApprovalWatcherConfig> = 
   canaryRunIds: Object.freeze([]) as readonly string[] as string[],
   allRuns: false,
   maxRequestAgeSeconds: 3600,
+  maxPendingPerRun: 100,
 });
 
 /**
@@ -276,6 +284,7 @@ export function cloneDefaultApprovalWatcherConfig(): ApprovalWatcherConfig {
     canaryRunIds: [],
     allRuns: false,
     maxRequestAgeSeconds: 3600,
+    maxPendingPerRun: 100,
   };
 }
 
