@@ -189,8 +189,8 @@ export function registerApprovalWatcherCommand(pi: ExtensionAPI, runsDir: string
               payload: { emergencyStop: next.emergencyStop, pauseEpoch: next.pauseEpoch },
             });
             ctx.ui.notify(
-              `Emergency cleared. pauseEpoch incremented to ${next.pauseEpoch}; pre-stop tokens are now rejected by epoch mismatch.`,
-              "info",
+              `Emergency cleared. pauseEpoch incremented to ${next.pauseEpoch}. NOTE: epoch-binding into the token HMAC lands in Phase 7 — until then, pre-stop tokens are NOT automatically rejected by SafetyGuard. To invalidate them now, manually rm <run>/approvals/*.json.`,
+              "warning",
             );
             return;
           }

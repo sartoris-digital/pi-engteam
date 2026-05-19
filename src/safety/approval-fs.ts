@@ -5,18 +5,27 @@
 // containment + permission + symlink-rejection guards that PLAN.md
 // items 2, 5, and 17b require:
 //
-//   - lstat (not stat) so symlinks at any approval path are detected
-//     and refused. Round-A2 HIGH 3 + Round-A6 MEDIUM 2.
-//   - realpath + containment under the canonical runs root so a
-//     malicious or corrupted run dir cannot redirect writes elsewhere.
-//   - 0o700 dirs / 0o600 files everywhere. Round-A1 MEDIUM 5 +
-//     round-A2 MEDIUM 5.
-//   - On unsafe-fs-state (symlink, non-directory, containment break),
-//     write a single diagnostic line OUTSIDE the suspect tree to
-//     `~/.pi/engineering-team/approval-watcher-incidents.jsonl` and
-//     refuse to mutate the suspect tree at all. Round-A6 MEDIUM 2.
+//   - fd-based open(O_NOFOLLOW) instead of lstat(path) → kernel rejects
+//     symlinks at the leaf atomically. Round-3 HIGH 1: closes the
+//     lstat-to-chmod TOCTOU window where an attacker could swap a real
+//     dir for a symlink between the check and the chmod call.
+//   - fchmod on the returned file handle (not chmod on a path). The FD
+//     is bound to an inode, so a post-open path swap cannot redirect
+//     our chmod.
+//   - realpath-based containment, strict on failure: if realpath()
+//     cannot resolve either side, containment is REFUSED (Round-3 HIGH 2
+//     — the previous safeRealResolve silently returned the lexical input
+//     on error, which let an unresolvable symlinked parent pass).
+//   - 0o700 dirs / 0o600 files. Round-A1 MEDIUM 5 + round-A2 MEDIUM 5.
+//   - On unsafe-fs-state, write a single diagnostic line OUTSIDE the
+//     suspect tree to `~/.pi/engineering-team/approval-watcher-incidents.jsonl`
+//     and refuse to mutate the suspect tree. Round-A6 MEDIUM 2 +
+//     Round-3 MEDIUM: incident log itself opens with O_NOFOLLOW so
+//     a malicious symlink at the log path cannot redirect our writes.
 
-import { lstat, mkdir, chmod, appendFile, realpath } from "fs/promises";
+import { mkdir, open, realpath } from "fs/promises";
+import type { FileHandle } from "fs/promises";
+import { constants } from "fs";
 import { homedir } from "os";
 import { join, sep } from "path";
 
@@ -43,7 +52,20 @@ async function writeIncident(record: {
   try {
     await mkdir(join(homedir(), ".pi", "engineering-team"), { recursive: true, mode: 0o700 });
     const line = JSON.stringify({ ...record, ts: new Date().toISOString(), pid: process.pid }) + "\n";
-    await appendFile(INCIDENT_LOG_PATH(), line, { mode: 0o600 });
+    // O_NOFOLLOW so a symlink planted at the log path cannot redirect
+    // our writes elsewhere on the filesystem. O_APPEND | O_CREAT lets us
+    // create it if missing and append safely. fd is bound to the inode.
+    let fd: FileHandle | undefined;
+    try {
+      fd = await open(
+        INCIDENT_LOG_PATH(),
+        constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
+        0o600,
+      );
+      await fd.write(line);
+    } finally {
+      await fd?.close();
+    }
   } catch (err) {
     // Best-effort. Incident logging cannot block the refusal itself.
     // eslint-disable-next-line no-console
@@ -55,72 +77,102 @@ async function writeIncident(record: {
 }
 
 /**
- * Resolve a path through symlinks for containment checks. Returns the
- * input when realpath would throw (e.g., path doesn't exist yet) so
- * the caller can still detect "claimed but missing" via lstat.
+ * Strict realpath: returns the resolved canonical path, or null if
+ * realpath cannot resolve (ENOENT, ELOOP, EACCES, etc). Callers MUST
+ * treat null as "containment cannot be proven" and refuse — never fall
+ * back to lexical paths (Round-3 HIGH 2).
  */
-function safeRealResolve(p: string): string {
+async function strictRealResolve(p: string): Promise<string | null> {
   try {
-    // realpathSync — synchronous variant for use inside the lstat loop.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("fs").realpathSync(p);
+    return await realpath(p);
   } catch {
-    return p;
+    return null;
   }
 }
 
 /**
- * lstat a path and require it is either a directory (when expectDir=true)
- * or absent. Symlinks, regular files, sockets, FIFOs, block/char devices
- * are refused. Returns { ok: true, exists } if safe; otherwise returns
- * the specific failure reason for incident logging.
+ * Verify `target` resolves to a path that is equal-to or contained
+ * under `allowedRoot` via realpath. STRICT: if either side fails to
+ * resolve, returns false (refuse).
  */
-async function lstatExpectDirOrAbsent(
-  path: string,
-): Promise<
-  | { ok: true; exists: boolean }
-  | { ok: false; reason: ApprovalLayoutFailureReason; detail: string }
-> {
-  try {
-    const ls = await lstat(path);
-    if (ls.isSymbolicLink()) {
-      return { ok: false, reason: "symlink-detected", detail: `${path} is a symbolic link` };
-    }
-    if (!ls.isDirectory()) {
-      return {
-        ok: false,
-        reason: "non-directory",
-        detail: `${path} exists but is not a plain directory (mode=${ls.mode.toString(8)})`,
-      };
-    }
-    return { ok: true, exists: true };
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === "ENOENT") return { ok: true, exists: false };
-    if (e.code === "EACCES" || e.code === "EPERM") {
-      return { ok: false, reason: "permission-denied", detail: e.message };
-    }
-    return { ok: false, reason: "unknown", detail: e.message };
-  }
-}
-
-/**
- * Verify `target` realpath-resolves to a path that is equal-to or
- * contained-under `allowedRoot`. Used to refuse symlinks that escape
- * the runs dir even after lstat says "plain directory".
- */
-function isContainedUnder(target: string, allowedRoot: string): boolean {
-  const realTarget = safeRealResolve(target);
-  const realRoot = safeRealResolve(allowedRoot);
+async function isContainedUnder(target: string, allowedRoot: string): Promise<boolean> {
+  const realTarget = await strictRealResolve(target);
+  const realRoot = await strictRealResolve(allowedRoot);
+  if (realTarget === null || realRoot === null) return false;
   if (realTarget === realRoot) return true;
   const withSep = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
   return realTarget.startsWith(withSep);
 }
 
 /**
+ * Lexical containment for the test surface only — pure path arithmetic,
+ * no fs calls. Production code MUST use isContainedUnder (realpath-based).
+ */
+function isContainedLexical(target: string, allowedRoot: string): boolean {
+  if (target === allowedRoot) return true;
+  const withSep = allowedRoot.endsWith(sep) ? allowedRoot : allowedRoot + sep;
+  return target.startsWith(withSep);
+}
+
+/**
+ * Open a path as a directory with O_NOFOLLOW so the kernel rejects
+ * symlinks at the leaf atomically. Returns the FileHandle (caller must
+ * close) on success, or a typed failure reason.
+ *
+ * `exists` is true when the path is present but unsafe (symlink, non-dir,
+ * permission-denied), and false when the path is absent (ENOENT). Callers
+ * use this to distinguish "needs mkdir" from "refuse and incident-log".
+ */
+type OpenDirResult =
+  | { ok: true; fd: FileHandle }
+  | { ok: false; reason: ApprovalLayoutFailureReason; detail: string; exists: boolean };
+
+async function openDirNoFollow(path: string): Promise<OpenDirResult> {
+  let fd: FileHandle | undefined;
+  try {
+    fd = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const st = await fd.stat();
+    if (!st.isDirectory()) {
+      await fd.close();
+      return {
+        ok: false,
+        reason: "non-directory",
+        detail: `${path} exists but is not a plain directory (mode=${st.mode.toString(8)})`,
+        exists: true,
+      };
+    }
+    return { ok: true, fd };
+  } catch (err) {
+    // If we opened the fd but stat/check threw, make sure we close it.
+    if (fd) {
+      try {
+        await fd.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ELOOP" || e.code === "EMLINK") {
+      return { ok: false, reason: "symlink-detected", detail: `${path} is a symbolic link (${e.code})`, exists: true };
+    }
+    if (e.code === "ENOTDIR") {
+      return { ok: false, reason: "non-directory", detail: `${path} is not a directory`, exists: true };
+    }
+    if (e.code === "ENOENT") {
+      return { ok: false, reason: "non-directory", detail: `${path} does not exist`, exists: false };
+    }
+    if (e.code === "EACCES" || e.code === "EPERM") {
+      return { ok: false, reason: "permission-denied", detail: e.message, exists: true };
+    }
+    return { ok: false, reason: "unknown", detail: e.message, exists: true };
+  }
+}
+
+/**
  * Ensure `<runsDir>/<runId>/approvals/{,pending,meta,quarantine}` exist
- * at 0o700, with chmod-repair for pre-watcher installs. Refuses if any
- * path is a symlink, non-directory, or escapes the runs dir.
+ * at 0o700, with TOCTOU-safe chmod-repair via fd-based fchmod for
+ * pre-watcher installs. Refuses if any path is a symlink, non-directory,
+ * or escapes the runs dir.
  *
  * On failure: writes an incident record OUTSIDE the suspect tree and
  * returns `{ ok: false, reason }`. Callers MUST handle the failure
@@ -138,69 +190,113 @@ export async function ensureApprovalsLayout(
   const quarantineDir = join(approvalsDir, "quarantine");
 
   // Containment check at the run-root level FIRST so any symlinked
-  // parent dir is caught before we touch the approvals tree.
-  if (!isContainedUnder(runDir, runsDir)) {
+  // parent dir is caught before we touch the approvals tree. Strict:
+  // if realpath cannot resolve, containment is refused.
+  if (!(await isContainedUnder(runDir, runsDir))) {
     await writeIncident({
       runId,
       reason: "containment-break",
       suspectPath: runDir,
-      detail: `${runDir} realpath escapes ${runsDir}`,
+      detail: `${runDir} realpath escapes ${runsDir} or could not be resolved`,
     });
     return {
       ok: false,
       reason: "containment-break",
       suspectPath: runDir,
-      detail: `run dir realpath escapes runs root`,
+      detail: `run dir realpath escapes runs root or cannot be resolved`,
     };
   }
 
-  // For each of the 4 dirs: lstat → if exists, require plain dir AND
-  // realpath containment under runDir. If absent, mkdir with 0o700.
   for (const dir of [approvalsDir, pendingDir, metaDir, quarantineDir]) {
-    const check = await lstatExpectDirOrAbsent(dir);
-    if (!check.ok) {
-      await writeIncident({ runId, reason: check.reason, suspectPath: dir, detail: check.detail });
-      return { ok: false, reason: check.reason, suspectPath: dir, detail: check.detail };
-    }
-    if (check.exists) {
-      // Existing dir: containment + chmod-repair.
-      if (!isContainedUnder(dir, runDir)) {
-        await writeIncident({
-          runId,
-          reason: "containment-break",
-          suspectPath: dir,
-          detail: `${dir} realpath escapes ${runDir}`,
-        });
-        return {
-          ok: false,
-          reason: "containment-break",
-          suspectPath: dir,
-          detail: `${dir} realpath escapes ${runDir}`,
-        };
-      }
+    // Step 1: try to open with O_NOFOLLOW. This atomically rejects
+    // symlinks at the leaf and gives us an FD bound to the inode.
+    const openResult = await openDirNoFollow(dir);
+
+    if (openResult.ok) {
+      // Existing dir: verify containment under runDir + fchmod 0o700.
       try {
-        await chmod(dir, 0o700);
-      } catch (err) {
-        const e = err as NodeJS.ErrnoException;
-        if (e.code === "EACCES" || e.code === "EPERM") {
-          await writeIncident({ runId, reason: "permission-denied", suspectPath: dir, detail: e.message });
-          return { ok: false, reason: "permission-denied", suspectPath: dir, detail: e.message };
+        if (!(await isContainedUnder(dir, runDir))) {
+          await openResult.fd.close();
+          await writeIncident({
+            runId,
+            reason: "containment-break",
+            suspectPath: dir,
+            detail: `${dir} realpath escapes ${runDir} or could not be resolved`,
+          });
+          return {
+            ok: false,
+            reason: "containment-break",
+            suspectPath: dir,
+            detail: `${dir} realpath escapes ${runDir} or cannot be resolved`,
+          };
         }
-        // ignore other chmod errors (e.g. read-only fs); the run will
-        // still function but the operator may want to fix mode manually.
+        // fchmod via FD — TOCTOU-safe. A path swap after the open
+        // cannot redirect this chmod because we hold the inode.
+        try {
+          await openResult.fd.chmod(0o700);
+        } catch (err) {
+          const e = err as NodeJS.ErrnoException;
+          if (e.code === "EACCES" || e.code === "EPERM") {
+            await writeIncident({ runId, reason: "permission-denied", suspectPath: dir, detail: e.message });
+            return { ok: false, reason: "permission-denied", suspectPath: dir, detail: e.message };
+          }
+          // Ignore non-fatal chmod errors (e.g. read-only fs); the run
+          // can still function but the operator may want to fix mode.
+        }
+      } finally {
+        await openResult.fd.close();
       }
-    } else {
-      try {
-        await mkdir(dir, { recursive: true, mode: 0o700 });
-        // mkdir's mode argument is masked by umask on POSIX, so chmod
-        // to enforce. Round-A1 MEDIUM 5.
-        await chmod(dir, 0o700);
-      } catch (err) {
-        const e = err as NodeJS.ErrnoException;
+      continue;
+    }
+
+    if (openResult.exists) {
+      // Path is present but unsafe (symlink / non-dir / permission).
+      await writeIncident({ runId, reason: openResult.reason, suspectPath: dir, detail: openResult.detail });
+      return { ok: false, reason: openResult.reason, suspectPath: dir, detail: openResult.detail };
+    }
+
+    // Step 2: path does not exist — mkdir then re-open with O_NOFOLLOW
+    // to verify no race-window symlink swap, then fchmod via FD.
+    try {
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      const reason: ApprovalLayoutFailureReason =
+        e.code === "EACCES" || e.code === "EPERM" ? "permission-denied" : "unknown";
+      await writeIncident({ runId, reason, suspectPath: dir, detail: e.message });
+      return { ok: false, reason, suspectPath: dir, detail: e.message };
+    }
+
+    const verify = await openDirNoFollow(dir);
+    if (!verify.ok) {
+      // The dir we just created is no longer a plain dir at the same
+      // path — concurrent attacker swapped a symlink in.
+      await writeIncident({
+        runId,
+        reason: verify.reason,
+        suspectPath: dir,
+        detail: `post-mkdir verify failed: ${verify.detail}`,
+      });
+      return {
+        ok: false,
+        reason: verify.reason,
+        suspectPath: dir,
+        detail: `post-mkdir verify: ${verify.detail}`,
+      };
+    }
+    try {
+      await verify.fd.chmod(0o700);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      await verify.fd.close();
+      if (e.code === "EACCES" || e.code === "EPERM") {
         await writeIncident({ runId, reason: "permission-denied", suspectPath: dir, detail: e.message });
         return { ok: false, reason: "permission-denied", suspectPath: dir, detail: e.message };
       }
+      // Non-fatal — continue.
+      continue;
     }
+    await verify.fd.close();
   }
 
   return { ok: true, approvalsDir, pendingDir, metaDir, quarantineDir };
@@ -209,7 +305,10 @@ export async function ensureApprovalsLayout(
 /**
  * Tighten permissions on existing approval-token files for pre-watcher
  * installs. Run AFTER ensureApprovalsLayout returns ok. Walks
- * `<approvalsDir>/*.json` (granted tokens) and chmods each to 0o600.
+ * `<approvalsDir>/*.json` (granted tokens) and fchmods each to 0o600
+ * via O_NOFOLLOW open so a symlinked token cannot redirect chmod onto
+ * an unrelated file.
+ *
  * Safe to call repeatedly; no-op if all tokens are already 0o600.
  */
 export async function repairApprovalTokenPermissions(approvalsDir: string): Promise<void> {
@@ -219,21 +318,31 @@ export async function repairApprovalTokenPermissions(approvalsDir: string): Prom
     for (const name of entries) {
       if (!name.endsWith(".json") || name.endsWith(".consumed")) continue;
       const path = join(approvalsDir, name);
+      let fd: FileHandle | undefined;
       try {
-        const ls = await lstat(path);
-        if (!ls.isFile() || ls.isSymbolicLink()) continue;
-        await chmod(path, 0o600);
+        // O_NOFOLLOW prevents following a symlink planted at the token
+        // path; fchmod operates on the FD (inode), not the path, so
+        // a subsequent path swap cannot redirect the chmod.
+        fd = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        const st = await fd.stat();
+        if (!st.isFile()) continue;
+        await fd.chmod(0o600);
       } catch {
-        // best-effort
+        // best-effort; symlinked tokens are skipped (ELOOP) rather than
+        // chmod'd through the link.
+      } finally {
+        await fd?.close();
       }
     }
   } catch {
-    // best-effort
+    // best-effort — missing dir is fine.
   }
 }
 
 /**
  * Re-exported for tests so test fixtures can verify a path is contained
- * without re-importing the private helper.
+ * without re-importing the private helper. Includes both the strict
+ * realpath-based check used by production AND a lexical helper for
+ * tests that operate on non-existent paths.
  */
-export const __test = { isContainedUnder, safeRealResolve };
+export const __test = { isContainedUnder, isContainedLexical, strictRealResolve };
