@@ -256,3 +256,155 @@ describe("ApprovalWatcher Phase 4 — renew + readLeaseOwner", () => {
     expect(owner).toBeNull();
   });
 });
+
+describe("ApprovalWatcher Phase 4 review fixes — successor protection + safe stale handling", () => {
+  let runDir: string;
+
+  beforeEach(async () => {
+    runDir = await mkdtemp(join(tmpdir(), "approval-lease-review-"));
+  });
+
+  afterEach(async () => {
+    await rm(runDir, { recursive: true, force: true });
+  });
+
+  it("renewLease is a no-op when the on-disk instanceId no longer matches our handle (round-1 HIGH 1)", async () => {
+    const { acquireLease, renewLease, releaseLease } = await import("../../../src/safety/approval-lease.js");
+    const result = await acquireLease(runDir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const leaseFile = join(runDir, ".approval-watcher.lease");
+    const ownerFile = join(runDir, ".approval-watcher.lease.lock", "owner.json");
+    // Simulate a successor taking over: overwrite owner.json with a
+    // different instanceId (still a valid owner record).
+    const successor = {
+      pid: process.pid,
+      hostname: result.handle.owner.hostname,
+      instanceId: "ffffffffffffffff",
+      acquiredAt: new Date().toISOString(),
+      renewedAt: new Date().toISOString(),
+    };
+    await writeFile(ownerFile, JSON.stringify(successor));
+    await writeFile(leaseFile, JSON.stringify(successor));
+    // Old handle attempts renew — must NOT overwrite successor's metadata.
+    await renewLease(result.handle);
+    const ownerAfter = JSON.parse(await readFile(ownerFile, "utf8"));
+    expect(ownerAfter.instanceId).toBe("ffffffffffffffff");
+    const leaseAfter = JSON.parse(await readFile(leaseFile, "utf8"));
+    expect(leaseAfter.instanceId).toBe("ffffffffffffffff");
+    // Cleanup: release the *successor* manually
+    await rm(runDir, { recursive: true, force: true });
+    await mkdir(runDir, { recursive: true });
+    // Releasing the stale handle should also no-op (lease no longer ours)
+    await releaseLease(result.handle);
+  });
+
+  it("releaseLease leaves a successor's lock intact when instanceId differs (round-2 HIGH 1)", async () => {
+    const { acquireLease, releaseLease } = await import("../../../src/safety/approval-lease.js");
+    const result = await acquireLease(runDir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const lockDir = join(runDir, ".approval-watcher.lease.lock");
+    const ownerFile = join(lockDir, "owner.json");
+    const leaseFile = join(runDir, ".approval-watcher.lease");
+    const successor = {
+      pid: 9999999,
+      hostname: result.handle.owner.hostname,
+      instanceId: "deadbeefdeadbeef",
+      acquiredAt: new Date().toISOString(),
+      renewedAt: new Date().toISOString(),
+    };
+    await writeFile(ownerFile, JSON.stringify(successor));
+    await writeFile(leaseFile, JSON.stringify(successor));
+    await releaseLease(result.handle);
+    // Successor's files survive.
+    await expect(stat(ownerFile)).resolves.toBeTruthy();
+    await expect(stat(lockDir)).resolves.toBeTruthy();
+    const ownerAfter = JSON.parse(await readFile(ownerFile, "utf8"));
+    expect(ownerAfter.instanceId).toBe("deadbeefdeadbeef");
+  });
+
+  it("missing owner.json on a freshly-created lock dir is treated as in-progress, not crashed (round-1 HIGH 2)", async () => {
+    const { __test } = await import("../../../src/safety/approval-lease.js");
+    // Manually create the lock dir without owner.json — simulating a
+    // legitimate winner mid-acquire. The contender should refuse to
+    // steal because lock-dir mtime is too young.
+    const lockDir = join(runDir, ".approval-watcher.lease.lock");
+    await mkdir(lockDir, { recursive: true });
+    const result = await __test.tryAcquireOnce(runDir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("held-by-live-owner");
+    // The detail should signal in-progress, NOT stale-mid-acquire.
+    expect(result.detail).toBe("acquire-in-progress");
+    // Lock dir was NOT removed (the slow winner can still finish).
+    await expect(stat(lockDir)).resolves.toBeTruthy();
+  });
+
+  it("malformed owner.json is treated as live owner, not a crash (round-2 HIGH 2)", async () => {
+    const { __test } = await import("../../../src/safety/approval-lease.js");
+    const lockDir = join(runDir, ".approval-watcher.lease.lock");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(join(lockDir, "owner.json"), "not-json-at-all");
+    const result = await __test.tryAcquireOnce(runDir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("held-by-live-owner");
+    expect(result.detail).toBe("owner-malformed");
+    // Lock dir is NOT removed — live owner is presumed to still own it.
+    await expect(stat(lockDir)).resolves.toBeTruthy();
+  });
+
+  it("readOwnerJson distinguishes absent / malformed / ok (round-2 HIGH 2)", async () => {
+    const { __test } = await import("../../../src/safety/approval-lease.js");
+    const tmp = await mkdtemp(join(tmpdir(), "owner-read-"));
+    try {
+      // absent
+      expect((await __test.readOwnerJson(join(tmp, "missing.json"))).kind).toBe("absent");
+      // malformed
+      await writeFile(join(tmp, "bad.json"), "{this is not json");
+      expect((await __test.readOwnerJson(join(tmp, "bad.json"))).kind).toBe("malformed");
+      // ok
+      const owner = {
+        pid: 1,
+        hostname: "h",
+        instanceId: "abc",
+        acquiredAt: new Date().toISOString(),
+        renewedAt: new Date().toISOString(),
+      };
+      await writeFile(join(tmp, "ok.json"), JSON.stringify(owner));
+      const ok = await __test.readOwnerJson(join(tmp, "ok.json"));
+      expect(ok.kind).toBe("ok");
+      if (ok.kind === "ok") expect(ok.owner.instanceId).toBe("abc");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("future-skewed renewedAt is treated as not-stale, not infinitely-fresh (round-1 MEDIUM)", async () => {
+    const { __test } = await import("../../../src/safety/approval-lease.js");
+    // 1 hour in the future.
+    const futureOwner = {
+      pid: process.pid,
+      hostname: "anywhere",
+      instanceId: "future-1",
+      acquiredAt: new Date().toISOString(),
+      renewedAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    // Should be "not stale" right now (not steal-eligible). Cross-host
+    // TTL still applies once the future time passes 600s ago.
+    expect(__test.isOwnerStale(futureOwner)).toBe(false);
+  });
+
+  it("very small future skew (<5s) treated as fresh, no extrapolation", async () => {
+    const { __test } = await import("../../../src/safety/approval-lease.js");
+    const owner = {
+      pid: process.pid,
+      hostname: "anywhere",
+      instanceId: "future-2",
+      acquiredAt: new Date().toISOString(),
+      renewedAt: new Date(Date.now() + 1_500).toISOString(),
+    };
+    expect(__test.isOwnerStale(owner)).toBe(false);
+  });
+});
