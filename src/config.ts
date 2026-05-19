@@ -2,7 +2,7 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import type { SafetyConfig, ModelRouting } from "./types.js";
-import { DEFAULT_APPROVAL_WATCHER_CONFIG } from "./types.js";
+import { cloneDefaultApprovalWatcherConfig } from "./types.js";
 
 const DEFAULT_SAFETY: SafetyConfig = {
   hardBlockers: { enabled: true, alwaysOn: true },
@@ -24,7 +24,7 @@ const DEFAULT_SAFETY: SafetyConfig = {
   // PLAN.md round-A1+: ApprovalWatcher feature shipped DORMANT by default.
   // No watcher registers, no boot recovery, no fs changes until the
   // operator opts in via `enabled: true`. See ApprovalWatcherConfig docs.
-  approvalWatcher: { ...DEFAULT_APPROVAL_WATCHER_CONFIG },
+  approvalWatcher: cloneDefaultApprovalWatcherConfig(),
 };
 
 const DEFAULT_MODEL_ROUTING: ModelRouting = {
@@ -60,10 +60,10 @@ const engineeringTeamDir = () => join(homedir(), ".pi", "engineering-team");
 // `allRuns: true` for full rollout, not `canaryRunIds: ["*"]`).
 function sanitizeApprovalWatcherConfig(raw: unknown): import("./types.js").ApprovalWatcherConfig {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
+    return cloneDefaultApprovalWatcherConfig();
   }
   const o = raw as Record<string, unknown>;
-  const out: import("./types.js").ApprovalWatcherConfig = { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
+  const out: import("./types.js").ApprovalWatcherConfig = cloneDefaultApprovalWatcherConfig();
 
   if (typeof o.enabled === "boolean") out.enabled = o.enabled;
   if (o.mode === "dormant" || o.mode === "rollback") out.mode = o.mode;

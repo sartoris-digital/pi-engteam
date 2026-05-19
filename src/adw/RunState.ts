@@ -124,11 +124,38 @@ function normalizeLoadedState(raw: unknown): RunState | null {
   if (!budget.spent || typeof budget.spent !== "object") {
     budget.spent = { costUsd: 0, wallSeconds: 0, tokens: 0 };
   }
-  return {
-    ...(o as Record<string, unknown>),
-    steps,
-    budget,
-  } as RunState;
+  // ApprovalWatcher Phase 1 round-2 MEDIUM 1: normalize the new optional
+  // fields so a state file with `schemaVersion:"1"` (string), `adhocHoldExpiresAt:"garbage"`,
+  // or `pauseForUser:null` does NOT slip through as typed but invalid data
+  // that Phase-N readers would misuse. Drop on validation miss; consumers
+  // see undefined and apply their own defaults.
+  const normalized = { ...(o as Record<string, unknown>), steps, budget };
+  if (
+    "schemaVersion" in normalized &&
+    (typeof normalized.schemaVersion !== "number" ||
+      !Number.isFinite(normalized.schemaVersion) ||
+      (normalized.schemaVersion as number) < 0)
+  ) {
+    delete normalized.schemaVersion;
+  }
+  if ("adhocHoldExpiresAt" in normalized) {
+    const v = normalized.adhocHoldExpiresAt;
+    if (typeof v !== "string" || !Number.isFinite(Date.parse(v as string))) {
+      delete normalized.adhocHoldExpiresAt;
+    }
+  }
+  if ("pauseForUser" in normalized) {
+    const v = normalized.pauseForUser as unknown;
+    if (
+      !v ||
+      typeof v !== "object" ||
+      Array.isArray(v) ||
+      typeof (v as { reason?: unknown }).reason !== "string"
+    ) {
+      delete normalized.pauseForUser;
+    }
+  }
+  return normalized as RunState;
 }
 
 const MAX_STATE_BYTES = 5 * 1024 * 1024; // 5MB hard cap — real states are <100KB

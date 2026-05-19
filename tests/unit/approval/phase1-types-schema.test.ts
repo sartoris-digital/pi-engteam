@@ -230,6 +230,115 @@ describe("ApprovalWatcher Phase 1 — DEFAULT_APPROVAL_WATCHER_CONFIG is safe", 
     const c: ApprovalWatcherConfig = { ...DEFAULT_APPROVAL_WATCHER_CONFIG };
     expect(c.enabled).toBe(false);
   });
+
+  it("is frozen — attempting to mutate top-level fields throws in strict mode", () => {
+    // Phase 1 review round-2 LOW: an importer that accidentally mutates
+    // the singleton would bleed a hostile change into the controller's
+    // lifetime. Object.freeze ensures mutation throws (or silently
+    // no-ops in sloppy mode) — TypeScript marks the type Readonly so
+    // any direct write is also caught at compile time.
+    expect(Object.isFrozen(DEFAULT_APPROVAL_WATCHER_CONFIG)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_APPROVAL_WATCHER_CONFIG.canaryRunIds)).toBe(true);
+  });
+
+  it("cloneDefaultApprovalWatcherConfig returns a fresh, mutable copy", async () => {
+    const { cloneDefaultApprovalWatcherConfig } = await import("../../../src/types.js");
+    const a = cloneDefaultApprovalWatcherConfig();
+    const b = cloneDefaultApprovalWatcherConfig();
+    expect(a).not.toBe(b); // distinct object references
+    expect(a.canaryRunIds).not.toBe(b.canaryRunIds); // distinct array references
+    a.canaryRunIds.push("test-run");
+    expect(b.canaryRunIds).toEqual([]); // mutation does not bleed
+    expect(DEFAULT_APPROVAL_WATCHER_CONFIG.canaryRunIds).toEqual([]); // nor to singleton
+  });
+});
+
+describe("ApprovalWatcher Phase 1 — RunState normalization for new fields", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "approval-runstate-norm-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects schemaVersion as string", async () => {
+    // Phase 1 review round-2 MEDIUM 1: a state file with `schemaVersion:"1"`
+    // (string instead of number) must NOT slip through normalizeLoadedState
+    // as a typed but wrong-shape field.
+    const runId = "test-run-1";
+    const dir = join(tmpDir, runId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, "state.json"),
+      JSON.stringify({
+        runId,
+        workflow: "plan",
+        goal: "test",
+        status: "running",
+        currentStep: "x",
+        iteration: 0,
+        budget: { maxIterations: 1, maxCostUsd: 1, maxWallSeconds: 60, maxTokens: 100, spent: { costUsd: 0, wallSeconds: 0, tokens: 0 } },
+        steps: [],
+        artifacts: {},
+        approvals: [],
+        planMode: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        schemaVersion: "1",
+        adhocHoldExpiresAt: "not-a-date",
+        pauseForUser: null,
+      }),
+    );
+    const { loadRunState } = await import("../../../src/adw/RunState.js");
+    const state = await loadRunState(tmpDir, runId);
+    expect(state).not.toBeNull();
+    expect(state?.schemaVersion).toBeUndefined();
+    expect(state?.adhocHoldExpiresAt).toBeUndefined();
+    expect(state?.pauseForUser).toBeUndefined();
+  });
+
+  it("accepts well-shaped values for the new fields", async () => {
+    const runId = "test-run-2";
+    const dir = join(tmpDir, runId);
+    await mkdir(dir, { recursive: true });
+    const expiry = new Date(Date.now() + 3600000).toISOString();
+    await writeFile(
+      join(dir, "state.json"),
+      JSON.stringify({
+        runId,
+        workflow: "plan",
+        goal: "test",
+        status: "waiting_user",
+        currentStep: "idle",
+        iteration: 0,
+        budget: { maxIterations: 1, maxCostUsd: 1, maxWallSeconds: 60, maxTokens: 100, spent: { costUsd: 0, wallSeconds: 0, tokens: 0 } },
+        steps: [],
+        artifacts: {},
+        approvals: [],
+        planMode: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        schemaVersion: 1,
+        adhocHoldExpiresAt: expiry,
+        pauseForUser: { reason: "adhoc-approvals-hold" },
+      }),
+    );
+    const { loadRunState } = await import("../../../src/adw/RunState.js");
+    const state = await loadRunState(tmpDir, runId);
+    expect(state?.schemaVersion).toBe(1);
+    expect(state?.adhocHoldExpiresAt).toBe(expiry);
+    expect(state?.pauseForUser).toEqual({ reason: "adhoc-approvals-hold" });
+  });
+});
+
+describe("ApprovalWatcher Phase 1 — APPROVAL_TOKEN_SCHEMA_VERSION marker", () => {
+  it("exports the version constant for Phase 7 boot gating", async () => {
+    const { APPROVAL_TOKEN_SCHEMA_VERSION } = await import("../../../src/types.js");
+    expect(APPROVAL_TOKEN_SCHEMA_VERSION).toBe(1);
+  });
 });
 
 describe("ApprovalWatcher Phase 1 — loadSafetyConfig deep-merges approvalWatcher", () => {

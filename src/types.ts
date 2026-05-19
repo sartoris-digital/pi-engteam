@@ -161,6 +161,19 @@ export type BudgetStatus = {
   exhausted: Array<"iterations" | "cost" | "wall" | "tokens">;
 };
 
+/**
+ * PLAN.md round-A8 HIGH 2 + Phase 1 review round-2 MEDIUM 2: explicit
+ * schema-version marker for the ApprovalToken on-disk format. Phase 7
+ * will introduce pauseEpoch as a REQUIRED HMAC field and bump this to 2.
+ * A Phase 7 controller booting against a token store still at version 1
+ * must refuse-with-error (NOT silently re-verify) until the operator
+ * runs the one-shot migration script. Phase 1 only lands the constant
+ * so Phase 7 has something concrete to gate against; no boot-time
+ * enforcement runs yet because no Phase 1 token actually carries the
+ * field.
+ */
+export const APPROVAL_TOKEN_SCHEMA_VERSION = 1;
+
 export type ApprovalToken = {
   tokenId: string;
   runId: string;
@@ -231,16 +244,40 @@ export type ApprovalWatcherConfig = {
   maxRequestAgeSeconds: number;
 };
 
-export const DEFAULT_APPROVAL_WATCHER_CONFIG: ApprovalWatcherConfig = {
+// Phase 1 review round-2 LOW: deep-freeze so any consumer that imports
+// this and accidentally mutates a field (or pushes to canaryRunIds)
+// throws synchronously instead of bleeding a hostile change into the
+// singleton for the controller's lifetime. Use `cloneDefaultApprovalWatcherConfig()`
+// when you need a mutable copy.
+export const DEFAULT_APPROVAL_WATCHER_CONFIG: Readonly<ApprovalWatcherConfig> = Object.freeze({
   enabled: false,
-  mode: "dormant",
+  mode: "dormant" as const,
   dispatchPaused: false,
   emergencyStop: false,
   pauseEpoch: 0,
-  canaryRunIds: [],
+  canaryRunIds: Object.freeze([]) as readonly string[] as string[],
   allRuns: false,
   maxRequestAgeSeconds: 3600,
-};
+});
+
+/**
+ * Factory for a fresh, mutable copy of DEFAULT_APPROVAL_WATCHER_CONFIG.
+ * Use this in loaders so per-process config can be assigned to without
+ * mutating the exported frozen singleton (which would throw in strict
+ * mode and silently no-op in sloppy mode).
+ */
+export function cloneDefaultApprovalWatcherConfig(): ApprovalWatcherConfig {
+  return {
+    enabled: false,
+    mode: "dormant",
+    dispatchPaused: false,
+    emergencyStop: false,
+    pauseEpoch: 0,
+    canaryRunIds: [],
+    allRuns: false,
+    maxRequestAgeSeconds: 3600,
+  };
+}
 
 /**
  * PLAN.md round-1 HIGH 3 + round-A7 LOW: canonical poll-hint field on
