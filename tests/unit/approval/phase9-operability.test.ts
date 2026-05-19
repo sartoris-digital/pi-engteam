@@ -178,6 +178,21 @@ describe("ApprovalWatcher Phase 9 — installShutdownHandlers", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(calls).toBe(0);
   });
+
+  it("fires on SIGHUP and SIGQUIT (Phase 9 review round-2 MEDIUM)", async () => {
+    let calls = 0;
+    const dispose = installShutdownHandlers(async () => { calls++; });
+    process.emit("SIGHUP");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toBe(1);
+    dispose();
+    let calls2 = 0;
+    const dispose2 = installShutdownHandlers(async () => { calls2++; });
+    process.emit("SIGQUIT");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls2).toBe(1);
+    dispose2();
+  });
 });
 
 describe("ApprovalWatcher Phase 9 review fixes — migration scope hardening + strict config", () => {

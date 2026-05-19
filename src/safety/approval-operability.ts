@@ -222,10 +222,16 @@ export async function migrateLegacyTokensToV2(
 }
 
 /**
- * Install SIGINT / SIGTERM handlers that call the supplied stop callback.
- * Returns a disposer that removes the listeners (idempotent). The stop
- * callback runs once even if both signals arrive — subsequent signals
- * are ignored (operator can SIGKILL if truly wedged).
+ * Install SIGINT / SIGTERM / SIGHUP / SIGQUIT handlers that call the
+ * supplied stop callback. Returns a disposer that removes the
+ * listeners (idempotent). The stop callback runs once even if multiple
+ * signals arrive — subsequent signals are ignored (operator can
+ * SIGKILL if truly wedged).
+ *
+ * Phase 9 review round-2 MEDIUM: SIGHUP and SIGQUIT are added because
+ * systemd (KillSignal=SIGHUP) and supervisord (default SIGQUIT) won't
+ * trigger our drain otherwise; the dispatcher would leave orphan
+ * `.dispatching` files and an unreleased lease.
  *
  * The handlers do NOT process.exit() — they let the stop callback
  * complete and assume normal shutdown follows.
@@ -244,11 +250,17 @@ export function installShutdownHandlers(stop: () => Promise<void>): () => void {
   };
   const onInt = () => handler("SIGINT");
   const onTerm = () => handler("SIGTERM");
+  const onHup = () => handler("SIGHUP");
+  const onQuit = () => handler("SIGQUIT");
   process.on("SIGINT", onInt);
   process.on("SIGTERM", onTerm);
+  process.on("SIGHUP", onHup);
+  process.on("SIGQUIT", onQuit);
   return () => {
     process.off("SIGINT", onInt);
     process.off("SIGTERM", onTerm);
+    process.off("SIGHUP", onHup);
+    process.off("SIGQUIT", onQuit);
   };
 }
 
