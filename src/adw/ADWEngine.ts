@@ -714,6 +714,40 @@ export class ADWEngine {
         });
       }
 
+      // Phase 10 (PLAN.md item 17): runtime pause-for-user via
+      // StepResult.pauseForUser. The step can request a pause at any
+      // verdict — typically used by the adhoc-shell workflow where the
+      // step opens an interactive context and waits for the user to
+      // drive approvals. ADWEngine records the reason and transitions
+      // to waiting_user without breaking the loop (the dispatcher /
+      // watcher continues serving approvals for the run).
+      if (result.pauseForUser && typeof result.pauseForUser.reason === "string") {
+        state = {
+          ...state,
+          status: "waiting_user",
+          pauseForUser: { reason: result.pauseForUser.reason },
+        };
+        const pauseSnap = state;
+        await withRunStateLock(this.config.runsDir, runId, async () => {
+          await saveRunState(this.config.runsDir, pauseSnap);
+        });
+        this.config.observer.emit({
+          runId,
+          step: state.currentStep,
+          iteration: state.iteration,
+          category: "verdict",
+          type: "pause_for_user",
+          payload: { reason: result.pauseForUser.reason },
+          summary: `Run paused for user: ${result.pauseForUser.reason}`,
+        });
+        this.uiCallbacks?.notify(
+          `⏸ Run paused: ${result.pauseForUser.reason}. /run-resume when ready (use /approval-watcher extend-hold to push the stale-block expiry).`,
+          "info",
+        );
+        this.uiCallbacks?.setStatus("engineering", `⏸ ${result.pauseForUser.reason}`);
+        break;
+      }
+
       // Pause if the completed step requested it
       if (stepDef.pauseAfter && result.verdict === "PASS") {
         state = { ...state, status: "waiting_user" };
