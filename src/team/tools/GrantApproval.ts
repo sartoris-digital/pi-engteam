@@ -206,7 +206,14 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
       const argsHash = hashArgs({ op: request.op, command: request.command });
       const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
       const scope = requestedScope;
-      const signature = signToken(secret, tokenId, request.op, argsHash, expiresAt, runId);
+      // Phase 7 (PLAN.md round-A8 HIGH 2): stamp the current pauseEpoch
+      // into the token AND bind it into the HMAC. After an audited
+      // resume-after-emergency increments the global counter, all
+      // pre-stop tokens become invalid by signature mismatch — closing
+      // the race window where a worker held a token issued before the
+      // emergency was declared.
+      const pauseEpoch = safety.approvalWatcher?.pauseEpoch ?? 0;
+      const signature = signToken(secret, tokenId, request.op, argsHash, expiresAt, runId, pauseEpoch);
 
       const token = {
         tokenId,
@@ -216,6 +223,7 @@ export function createGrantApprovalTool(runsDir: string, runId: string) {
         scope,
         expiresAt,
         signature,
+        pauseEpoch,
         consumed: false,
         grantedAt: new Date().toISOString(),
         requestId: params.requestId,

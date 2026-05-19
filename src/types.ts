@@ -172,7 +172,11 @@ export type BudgetStatus = {
  * enforcement runs yet because no Phase 1 token actually carries the
  * field.
  */
-export const APPROVAL_TOKEN_SCHEMA_VERSION = 1;
+// Phase 7: bumped to 2 because pauseEpoch is now in the HMAC payload.
+// Tokens lacking the field (legacy schema 1) fail verifyToken until
+// the one-shot migration helper (migrateLegacyTokensToV2) rewrites
+// them with pauseEpoch:0 + a fresh signature.
+export const APPROVAL_TOKEN_SCHEMA_VERSION = 2;
 
 export type ApprovalToken = {
   tokenId: string;
@@ -183,12 +187,14 @@ export type ApprovalToken = {
   expiresAt: string;
   signature: string;
   /**
-   * PLAN.md round-A8: emergency-stop epoch persistence. GrantApproval
-   * stamps this with the current global pauseEpoch at mint time AND
-   * binds it into the HMAC. SafetyGuard rejects any token whose
-   * pauseEpoch !== currentPauseEpoch. Pre-watcher tokens (legacy)
-   * have this absent; the one-shot migration writes `0` and re-signs
-   * under the new HMAC payload before the first emergencyStop fires.
+   * PLAN.md round-A8 HIGH 2 (Phase 7): emergency-stop epoch
+   * persistence. GrantApproval stamps this with the current global
+   * pauseEpoch at mint time AND binds it into the HMAC. SafetyGuard +
+   * CheckApproval reject any token whose pauseEpoch !== currentPauseEpoch.
+   * Pre-watcher tokens (legacy schema 1) have this absent; the one-shot
+   * migration writes `0` and re-signs under the new HMAC payload.
+   * Optional in the type only to support the migration path — once
+   * migrated, every on-disk token MUST carry the field.
    */
   pauseEpoch?: number;
   /**

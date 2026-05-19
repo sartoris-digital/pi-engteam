@@ -335,9 +335,9 @@ describe("ApprovalWatcher Phase 1 — RunState normalization for new fields", ()
 });
 
 describe("ApprovalWatcher Phase 1 — APPROVAL_TOKEN_SCHEMA_VERSION marker", () => {
-  it("exports the version constant for Phase 7 boot gating", async () => {
+  it("exports the version constant (Phase 7 bumped to 2 for pauseEpoch in HMAC)", async () => {
     const { APPROVAL_TOKEN_SCHEMA_VERSION } = await import("../../../src/types.js");
-    expect(APPROVAL_TOKEN_SCHEMA_VERSION).toBe(1);
+    expect(APPROVAL_TOKEN_SCHEMA_VERSION).toBe(2);
   });
 });
 

@@ -33,6 +33,7 @@ import { Type } from "@sinclair/typebox";
 import { readFile, readdir, stat } from "fs/promises";
 import { join } from "path";
 import { createHmac, timingSafeEqual } from "crypto";
+import { tokenSigningPayload } from "../../safety/approvals.js";
 import { loadSafetyConfig } from "../../config.js";
 import type { CheckApprovalStatus, ApprovalToken } from "../../types.js";
 
@@ -43,9 +44,10 @@ import type { CheckApprovalStatus, ApprovalToken } from "../../types.js";
  * "not a valid token at all" so the worker gets a clear `denied:
  * expired` response instead of silently hanging on `pending`.
  *
- * Mirrors the signing scheme: HMAC-SHA256 over
- * `${runId}:${tokenId}:${op}:${argsHash}:${expiresAt}`. Timing-safe
- * compare on the hex signature.
+ * Phase 7: uses the shared `tokenSigningPayload` helper so a future
+ * signing-input change (e.g., a Phase 9 addition) lands here
+ * automatically — no silent divergence between signToken and the
+ * verifier. The pauseEpoch field is now part of the payload.
  */
 function verifyTokenSignatureOnly(secret: string, token: ApprovalToken): boolean {
   if (typeof token.runId !== "string" || token.runId.length === 0) return false;
@@ -54,8 +56,11 @@ function verifyTokenSignatureOnly(secret: string, token: ApprovalToken): boolean
   if (typeof token.argsHash !== "string" || token.argsHash.length === 0) return false;
   if (typeof token.expiresAt !== "string" || token.expiresAt.length === 0) return false;
   if (typeof token.signature !== "string") return false;
+  if (typeof token.pauseEpoch !== "number" || !Number.isFinite(token.pauseEpoch) || token.pauseEpoch < 0) {
+    return false;
+  }
   const expected = createHmac("sha256", secret)
-    .update(`${token.runId}:${token.tokenId}:${token.op}:${token.argsHash}:${token.expiresAt}`)
+    .update(tokenSigningPayload(token.runId, token.tokenId, token.op, token.argsHash, token.expiresAt, token.pauseEpoch))
     .digest("hex");
   if (token.signature.length !== expected.length) return false;
   const a = Buffer.from(expected, "hex");
@@ -95,11 +100,16 @@ type TokenLookup =
   | { state: "verified-expired"; token: ApprovalToken }
   | { state: "none" };
 
+type TokenLookupExtended =
+  | TokenLookup
+  | { state: "verified-pauseEpoch-mismatch"; token: ApprovalToken; expected: number; got: number };
+
 async function lookupTokenForRequest(
   runsDir: string,
   runId: string,
   requestId: string,
-): Promise<TokenLookup> {
+  currentPauseEpoch: number,
+): Promise<TokenLookupExtended> {
   const approvalsDir = join(runsDir, runId, "approvals");
   const secretPath = join(runsDir, runId, ".secret");
   let secret: string;
@@ -140,6 +150,18 @@ async function lookupTokenForRequest(
     // from "not a valid token". The expiry check is done separately
     // below to route into denied:expired vs granted.
     if (!verifyTokenSignatureOnly(secret, parsed)) continue;
+    // Phase 7: token signature valid but pauseEpoch may not match the
+    // current global counter. A token issued before an audited
+    // resume-after-emergency carries the old epoch; the post-resume
+    // worker must NOT honor it.
+    if (typeof parsed.pauseEpoch === "number" && parsed.pauseEpoch !== currentPauseEpoch) {
+      return {
+        state: "verified-pauseEpoch-mismatch",
+        token: parsed,
+        expected: currentPauseEpoch,
+        got: parsed.pauseEpoch,
+      };
+    }
     if (typeof parsed.expiresAt !== "string") continue;
     const expiresMs = Date.parse(parsed.expiresAt);
     if (Number.isFinite(expiresMs) && expiresMs > Date.now()) {
@@ -273,7 +295,8 @@ export function createCheckApprovalTool(runsDir: string, runId: string) {
 
       // 3) Granted? Check approvals/<tokenId>.json files for a token
       // whose requestId matches AND full verification passes.
-      const lookup = await lookupTokenForRequest(runsDir, runId, requestId);
+      const currentPauseEpoch = cfg?.pauseEpoch ?? 0;
+      const lookup = await lookupTokenForRequest(runsDir, runId, requestId, currentPauseEpoch);
       if (lookup.state === "verified-fresh") {
         const response: CheckApprovalResponse = {
           status: "granted",
@@ -291,6 +314,18 @@ export function createCheckApprovalTool(runsDir: string, runId: string) {
           reason: "expired",
           tokenId: lookup.token.tokenId,
           expiresAt: lookup.token.expiresAt,
+        };
+        return { content: [{ type: "text" as const, text: JSON.stringify(response) }], details: {} };
+      }
+      if (lookup.state === "verified-pauseEpoch-mismatch") {
+        // Token was minted under a different pauseEpoch — either before
+        // an emergency-stop+resume cycle that has since incremented the
+        // counter, or against a future epoch we haven't caught up to.
+        const response: CheckApprovalResponse = {
+          status: "denied",
+          requestId,
+          reason: `pauseEpoch-mismatch (token=${lookup.got}, current=${lookup.expected}); the run was paused and resumed since this approval was minted — re-request.`,
+          tokenId: lookup.token.tokenId,
         };
         return { content: [{ type: "text" as const, text: JSON.stringify(response) }], details: {} };
       }

@@ -30,6 +30,23 @@ export function hashArgs(args: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
 }
 
+/**
+ * Build the canonical HMAC payload for a token. Shared by signToken
+ * and verifyToken (and by CheckApproval's signature-only verify) so
+ * a single source of truth governs the signing inputs. Phase 7 adds
+ * pauseEpoch as a required field bound into the HMAC.
+ */
+export function tokenSigningPayload(
+  runId: string,
+  tokenId: string,
+  op: string,
+  argsHash: string,
+  expiresAt: string,
+  pauseEpoch: number,
+): string {
+  return `${runId}:${tokenId}:${op}:${argsHash}:${expiresAt}:pauseEpoch=${pauseEpoch}`;
+}
+
 export function signToken(
   secret: string,
   tokenId: string,
@@ -37,26 +54,31 @@ export function signToken(
   argsHash: string,
   expiresAt: string,
   runId: string,
+  pauseEpoch: number,
 ): string {
-  // Codex round-6 HIGH: runId is now part of the HMAC payload so a token
+  // Codex round-6 HIGH: runId is part of the HMAC payload so a token
   // issued under run A cannot be honored when run B is the active run.
-  // Previous version omitted runId; coupled with the global active-run.txt
-  // lookup in findValidApproval, an attacker could exfiltrate a token
-  // from run A into run B's approvals dir and replay it.
-  const payload = `${runId}:${tokenId}:${op}:${argsHash}:${expiresAt}`;
+  // PLAN.md round-A8 HIGH 2 (Phase 7): pauseEpoch is also part of the
+  // payload so a pre-emergency-stop token is invalidated once the
+  // operator runs /approval-watcher resume-after-emergency (which
+  // bumps the global counter).
+  const payload = tokenSigningPayload(runId, tokenId, op, argsHash, expiresAt, pauseEpoch);
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
 export function verifyToken(secret: string, token: ApprovalToken): boolean {
-  // Codex round-8 MEDIUM: previous check used `new Date(expiresAt) < new Date()`,
-  // which (a) returned false for `Date("not-a-date")` so a token with a
-  // malformed expiry-string passed expiry verification, and (b) accepted
-  // tokens at exact-expiry (strict `<` instead of `<=`). Parse to a
-  // finite number, reject malformed strings, and reject tokens whose
-  // expiry is now-or-past.
+  // Codex round-8 MEDIUM: parse expiry to a finite number; reject
+  // malformed strings and now-or-past expiries.
   const expMs = Date.parse(token.expiresAt);
   if (!Number.isFinite(expMs) || expMs <= Date.now()) return false;
   if (typeof token.runId !== "string" || token.runId.length === 0) return false;
+  // Phase 7: pauseEpoch is REQUIRED on every token. A legacy token
+  // (no pauseEpoch) must be migrated before it verifies — migration
+  // rewrites it with pauseEpoch:0 + a fresh signature under the new
+  // HMAC payload. verifyToken rejects any token lacking the field.
+  if (typeof token.pauseEpoch !== "number" || !Number.isFinite(token.pauseEpoch) || token.pauseEpoch < 0) {
+    return false;
+  }
   const expected = signToken(
     secret,
     token.tokenId,
@@ -64,6 +86,7 @@ export function verifyToken(secret: string, token: ApprovalToken): boolean {
     token.argsHash,
     token.expiresAt,
     token.runId,
+    token.pauseEpoch,
   );
   // Codex round-12 HIGH: timing-safe compare. Plain `===` short-circuits
   // on the first mismatching byte, leaking signature bytes to a local

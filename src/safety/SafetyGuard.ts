@@ -10,6 +10,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { checkDomain } from "./DomainLock.js";
 import { substituteRunIdInPolicy } from "./teams-config.js";
+import { loadSafetyConfig } from "../config.js";
 import type { DomainPolicyMap } from "./default-domains.js";
 
 // Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
@@ -104,6 +105,12 @@ async function findValidApproval(
     const approvalDir = join(runsDir, runId, "approvals");
     const secret = (await readFile(secretFile, "utf8")).trim();
 
+    // Phase 7: read current pauseEpoch so we can reject tokens minted
+    // under a different (pre-emergency-stop) epoch even if their
+    // signature is otherwise valid. PLAN.md round-A8 HIGH 2.
+    const safety = await loadSafetyConfig().catch(() => null);
+    const currentPauseEpoch = safety?.approvalWatcher?.pauseEpoch ?? 0;
+
     const { readdir, rename } = await import("fs/promises");
     const files = await readdir(approvalDir).catch(() => []);
 
@@ -126,6 +133,15 @@ async function findValidApproval(
         // missing/wrong (legacy or tampered) is rejected here.
         if (token.runId !== runId) continue;
         if (!verifyToken(secret, token)) continue;
+        // Phase 7 (PLAN.md round-A8 HIGH 2): reject tokens whose
+        // pauseEpoch differs from the current global pauseEpoch — even
+        // if their signature is otherwise valid, they were minted
+        // under a stale epoch (pre-emergency-stop) and must not be
+        // honored post-resume. verifyToken already enforces
+        // pauseEpoch presence + signature match; we layer the strict
+        // equality on top so a bumped counter invalidates old tokens
+        // without invalidating in-flight fresh ones.
+        if (token.pauseEpoch !== currentPauseEpoch) continue;
         if (token.scope === "once") {
           // Codex round-2 HIGH: atomic consume via rename. The previous
           // load-mutate-write sequence let two concurrent tool_call
