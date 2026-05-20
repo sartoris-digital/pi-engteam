@@ -9,7 +9,7 @@ import { existsSync, realpathSync } from "fs";
 function safeRealResolve(p: string): string {
   try { return realpathSync(p); } catch { return p; }
 }
-import { basename, isAbsolute, resolve } from "path";
+import { basename, dirname, isAbsolute, resolve } from "path";
 import { join } from "path";
 import { randomBytes } from "crypto";
 import type { AgentDefinition, TeamMessage, VerdictPayload } from "../types.js";
@@ -846,15 +846,80 @@ export class TeamRuntime {
             return false;
           };
           const missing: string[] = [];
+          const synthesized: string[] = [];
           for (const art of payload.artifacts) {
             const candidates = isAbsolute(art)
               ? [art]
               : [resolve(this.config.cwd, art), resolve(runDir, art)];
             // Existence AND containment. Pure existsSync was Codex
             // round-1 #4 — an agent could claim `/etc/hosts` and pass.
-            if (!candidates.some((c) => existsSync(c) && isUnderAllowed(c))) {
-              missing.push(art);
+            if (candidates.some((c) => existsSync(c) && isUnderAllowed(c))) {
+              continue;
             }
+            // Provider-compat: under CoPilot (and similar), models often
+            // emit a substantive analysis in the verdict's learnings /
+            // decisions / issues_found / gotchas fields INSTEAD of
+            // writing the claimed artifact file. The work is real; only
+            // the channel is wrong. Synthesize the missing markdown
+            // artifact from the verdict content so downstream steps
+            // that expect to read the file find it. Only triggers when
+            // BOTH (a) the artifact path is a plain `.md` filename
+            // under runDir (no absolute paths, no path traversal) AND
+            // (b) at least one of the content fields is non-empty.
+            const isSafeMdName =
+              !isAbsolute(art) &&
+              /^[A-Za-z0-9._-]+\.md$/.test(art) &&
+              !art.includes("..");
+            const hasContent =
+              (payload.learnings && payload.learnings.length > 0) ||
+              (payload.decisions && payload.decisions.length > 0) ||
+              (payload.issues_found && payload.issues_found.length > 0) ||
+              (payload.gotchas && payload.gotchas.length > 0) ||
+              (payload.issues && payload.issues.length > 0);
+            if (isSafeMdName && hasContent) {
+              const synthesizedPath = resolve(runDir, art);
+              if (isUnderAllowed(synthesizedPath)) {
+                try {
+                  const sections: string[] = [
+                    `# ${art.replace(/\.md$/, "")}`,
+                    "",
+                    `_Synthesized by orchestrator from agent verdict — the agent (${to}) emitted analysis in verdict fields instead of writing the file directly. Step: ${payload.step}. Verdict: ${payload.verdict}._`,
+                    "",
+                  ];
+                  if (payload.decisions && payload.decisions.length > 0) {
+                    sections.push("## Decisions", ...payload.decisions.map((d) => `- ${d}`), "");
+                  }
+                  if (payload.learnings && payload.learnings.length > 0) {
+                    sections.push("## Learnings", ...payload.learnings.map((l) => `- ${l}`), "");
+                  }
+                  if (payload.issues_found && payload.issues_found.length > 0) {
+                    sections.push("## Issues Found", ...payload.issues_found.map((i) => `- ${i}`), "");
+                  }
+                  if (payload.gotchas && payload.gotchas.length > 0) {
+                    sections.push("## Gotchas", ...payload.gotchas.map((g) => `- ${g}`), "");
+                  }
+                  if (payload.issues && payload.issues.length > 0) {
+                    sections.push("## Issues", ...payload.issues.map((i) => `- ${i}`), "");
+                  }
+                  if (payload.handoffHint) {
+                    sections.push("## Handoff Hint", payload.handoffHint, "");
+                  }
+                  const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
+                  mkdirSync(dirname(synthesizedPath), { recursive: true });
+                  writeFileSync(synthesizedPath, sections.join("\n"), { mode: 0o600 });
+                  synthesized.push(art);
+                  continue;
+                } catch {
+                  // fall through to "missing" if synthesis fails
+                }
+              }
+            }
+            missing.push(art);
+          }
+          if (synthesized.length > 0) {
+            console.error(
+              `[pi-team] agent ${to} (${runId}) claimed artifact(s) without writing them; synthesized from verdict fields: ${synthesized.join(", ")}.`,
+            );
           }
           if (missing.length > 0) {
             const original = payload.verdict;
