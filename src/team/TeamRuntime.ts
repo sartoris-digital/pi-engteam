@@ -164,10 +164,21 @@ export function buildSystemPrompt(opts: {
   expertise: string;
 }): string {
   const safeAgent = AGENT_NAME_RE.test(opts.agentName) ? opts.agentName : "agent";
+  // Verdict-emit enforcement (HARD requirement, not advisory): some models
+  // (notably CoPilot-routed Claude variants) treat the soft "always call
+  // VerdictEmit" wording as optional and end their turn without one,
+  // leaving the orchestrator to time out. The wording below is deliberately
+  // non-negotiable and includes the FAIL-with-reasoning escape hatch so the
+  // model can never honestly conclude that VerdictEmit is optional.
   const teamSuffix =
     `\n\n---\n## Team Context\nYour name in the team is: **${safeAgent}**\n` +
-    `Use SendMessage to communicate with other agents. Use VerdictEmit to signal task completion.\n` +
-    `Always end your turn with VerdictEmit when you have completed your assigned step.`;
+    `Use SendMessage to communicate with other agents.\n\n` +
+    `## VerdictEmit — REQUIRED, NOT OPTIONAL\n` +
+    `You MUST call VerdictEmit before ending your turn. Every turn. No exceptions.\n` +
+    `- If your work succeeded: call VerdictEmit with verdict="PASS" and the artifacts you produced.\n` +
+    `- If your work failed or you ran out of investigation paths: call VerdictEmit with verdict="FAIL" and put your reasoning, dead ends, and blockers in the issues array.\n` +
+    `- If you genuinely cannot decide: call VerdictEmit with verdict="NEEDS_MORE" describing what additional input would unblock you.\n` +
+    `Ending a turn WITHOUT VerdictEmit is a protocol violation that wastes orchestrator time and forces a forcing re-prompt. NEVER do this.`;
   const notesBlock = opts.systemNotes
     ? "\n\n---\n## System Reminders\n" + opts.systemNotes + "\n"
     : "";
@@ -270,7 +281,46 @@ export class TeamRuntime {
     this.knownDefs.set(name, def);
   }
 
+  /**
+   * Dispatch a message to an agent and wait for its verdict. If the agent's
+   * subprocess exits without emitting VerdictEmit (verdict file missing),
+   * re-prompt the agent ONCE with a forcing instruction that makes
+   * VerdictEmit non-optional. Workflows expect a verdict; the retry closes
+   * the common failure where a model (especially CoPilot-routed Claude)
+   * ends its turn without calling VerdictEmit.
+   */
   async deliver(
+    to: string,
+    message: TeamMessage,
+    opts?: { hostStep?: string; runId?: string },
+  ): Promise<VerdictPayload | undefined> {
+    const first = await this.deliverOnce(to, message, opts);
+    if (first) return first;
+    // Re-prompt with a forcing instruction. We MUST also append the
+    // forcing instruction to the system prompt for the retry pass so a
+    // model that ignored the prior teamSuffix has a second chance to
+    // honor the contract.
+    const forcedMessage: TeamMessage = {
+      ...message,
+      id: message.id, // keep same id so events thread; eventToken differs per deliver
+      message:
+        message.message +
+        "\n\n---\n" +
+        "[ORCHESTRATOR RE-PROMPT — VERDICTEMIT REQUIRED]\n" +
+        "Your previous turn ended WITHOUT calling VerdictEmit. That is a protocol violation.\n" +
+        "You MUST call VerdictEmit NOW with your best assessment of the work above:\n" +
+        "  - If your prior investigation was sufficient to draw a conclusion, emit verdict=\"PASS\" or \"FAIL\" accordingly with any artifacts you produced.\n" +
+        "  - If you ran out of investigation paths or hit a blocker, emit verdict=\"FAIL\" and put the blocker / dead ends / what you DID learn in the issues array.\n" +
+        "  - If you genuinely need more input, emit verdict=\"NEEDS_MORE\" describing exactly what would unblock you.\n" +
+        "DO NOT investigate further. DO NOT end this turn without VerdictEmit. Call VerdictEmit immediately with one of those three verdicts.",
+    };
+    console.error(
+      `[pi-team] agent ${to} did not emit VerdictEmit on first pass; re-prompting with forcing instruction.`,
+    );
+    return this.deliverOnce(to, forcedMessage, opts);
+  }
+
+  private async deliverOnce(
     to: string,
     message: TeamMessage,
     // Codex round-17 HIGH: parallel runs can both call deliver() while

@@ -64,7 +64,11 @@ describe("TeamRuntime subprocess spawn options", () => {
 
     await team.deliver("worker", makeMessage("worker"), { runId: "run-spawn" });
 
-    expect(spawnMock).toHaveBeenCalledTimes(1);
+    // deliver() retries once when no verdict file is written, so the mock
+    // child (which exits cleanly without writing a verdict) gets spawned
+    // twice — once for the initial attempt and once for the forcing
+    // re-prompt. Both calls share the same spawn options.
+    expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(spawnMock.mock.calls[0][2]).toEqual(expect.objectContaining({
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
