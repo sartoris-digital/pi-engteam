@@ -162,6 +162,14 @@ export function buildSystemPrompt(opts: {
   agentName: string;
   systemNotes: string;
   expertise: string;
+  /**
+   * Concrete path the orchestrator expects the verdict JSON at. Passed
+   * to the model so it can use its built-in `write` tool as a fallback
+   * when the provider (e.g., GitHub CoPilot) doesn't expose the custom
+   * `VerdictEmit` tool to its model inventory. The orchestrator reads
+   * this file regardless of whether VerdictEmit or `write` produced it.
+   */
+  verdictFilePath?: string;
 }): string {
   const safeAgent = AGENT_NAME_RE.test(opts.agentName) ? opts.agentName : "agent";
   // Verdict-emit enforcement (HARD requirement, not advisory): some models
@@ -170,15 +178,36 @@ export function buildSystemPrompt(opts: {
   // leaving the orchestrator to time out. The wording below is deliberately
   // non-negotiable and includes the FAIL-with-reasoning escape hatch so the
   // model can never honestly conclude that VerdictEmit is optional.
+  //
+  // PLUS: GitHub CoPilot and other providers may not expose our custom
+  // tools (VerdictEmit, SendMessage, etc.) to the model's tool inventory
+  // — they only relay their own built-in tools. The fallback is to write
+  // the verdict JSON directly to `verdictFilePath` using the built-in
+  // `write` tool. The orchestrator reads that same file whether the
+  // VerdictEmit tool wrote it or the agent did via `write`.
+  const verdictSchema =
+    `{ "step": "<step name from the prompt>", "verdict": "PASS" | "FAIL" | "NEEDS_MORE", ` +
+    `"issues": ["..."], "artifacts": ["..."], "handoffHint": "..." }`;
+  const fileFallback = opts.verdictFilePath
+    ? `\n\n### Provider compatibility — file-write fallback\n` +
+      `If the VerdictEmit tool is NOT in your tool inventory (some providers, including GitHub CoPilot, do not expose custom orchestrator tools), use the built-in \`write\` tool to write the verdict JSON to this exact path:\n` +
+      `  **${opts.verdictFilePath}**\n` +
+      `The JSON must match this shape:\n` +
+      `  ${verdictSchema}\n` +
+      `The orchestrator reads this file regardless of which path you took. Writing the file is FUNCTIONALLY EQUIVALENT to calling VerdictEmit. One of the two — VerdictEmit tool call OR write to the file — is required.`
+    : "";
   const teamSuffix =
     `\n\n---\n## Team Context\nYour name in the team is: **${safeAgent}**\n` +
-    `Use SendMessage to communicate with other agents.\n\n` +
-    `## VerdictEmit — REQUIRED, NOT OPTIONAL\n` +
-    `You MUST call VerdictEmit before ending your turn. Every turn. No exceptions.\n` +
-    `- If your work succeeded: call VerdictEmit with verdict="PASS" and the artifacts you produced.\n` +
-    `- If your work failed or you ran out of investigation paths: call VerdictEmit with verdict="FAIL" and put your reasoning, dead ends, and blockers in the issues array.\n` +
-    `- If you genuinely cannot decide: call VerdictEmit with verdict="NEEDS_MORE" describing what additional input would unblock you.\n` +
-    `Ending a turn WITHOUT VerdictEmit is a protocol violation that wastes orchestrator time and forces a forcing re-prompt. NEVER do this.`;
+    `Use SendMessage to communicate with other agents (if SendMessage is in your tool inventory).\n\n` +
+    `## Verdict — REQUIRED, NOT OPTIONAL\n` +
+    `You MUST signal a verdict before ending your turn. Every turn. No exceptions.\n` +
+    `- If your work succeeded: emit verdict="PASS" with the artifacts you produced.\n` +
+    `- If your work failed or you ran out of investigation paths: emit verdict="FAIL" with your reasoning, dead ends, and blockers in the issues array.\n` +
+    `- If you genuinely cannot decide: emit verdict="NEEDS_MORE" describing what additional input would unblock you.\n` +
+    `Ending a turn WITHOUT a verdict signal is a protocol violation that wastes orchestrator time and forces a forcing re-prompt. NEVER do this.\n\n` +
+    `### Primary path — VerdictEmit tool\n` +
+    `If VerdictEmit appears in your tool inventory, call it with the verdict fields. This is the preferred path.` +
+    fileFallback;
   const notesBlock = opts.systemNotes
     ? "\n\n---\n## System Reminders\n" + opts.systemNotes + "\n"
     : "";
@@ -306,13 +335,16 @@ export class TeamRuntime {
       message:
         message.message +
         "\n\n---\n" +
-        "[ORCHESTRATOR RE-PROMPT — VERDICTEMIT REQUIRED]\n" +
-        "Your previous turn ended WITHOUT calling VerdictEmit. That is a protocol violation.\n" +
-        "You MUST call VerdictEmit NOW with your best assessment of the work above:\n" +
-        "  - If your prior investigation was sufficient to draw a conclusion, emit verdict=\"PASS\" or \"FAIL\" accordingly with any artifacts you produced.\n" +
-        "  - If you ran out of investigation paths or hit a blocker, emit verdict=\"FAIL\" and put the blocker / dead ends / what you DID learn in the issues array.\n" +
-        "  - If you genuinely need more input, emit verdict=\"NEEDS_MORE\" describing exactly what would unblock you.\n" +
-        "DO NOT investigate further. DO NOT end this turn without VerdictEmit. Call VerdictEmit immediately with one of those three verdicts.",
+        "[ORCHESTRATOR RE-PROMPT — VERDICT REQUIRED]\n" +
+        "Your previous turn ended WITHOUT a verdict signal. That is a protocol violation.\n" +
+        "You MUST signal a verdict NOW based on your investigation above. Two equivalent ways:\n" +
+        "  1. Call the VerdictEmit tool, IF it appears in your tool inventory.\n" +
+        "  2. If VerdictEmit is NOT in your tool inventory (some providers do not expose custom orchestrator tools), use the built-in `write` tool to write your verdict JSON to the verdictFilePath that was specified in your system prompt. The file path was provided above. The orchestrator reads that file the same way it reads VerdictEmit's output.\n" +
+        "Verdict content rules:\n" +
+        "  - If your prior investigation was sufficient: verdict=\"PASS\" or \"FAIL\" with artifacts.\n" +
+        "  - If you ran out of investigation paths or hit a blocker: verdict=\"FAIL\" with the blocker / dead ends / what you DID learn in the issues array.\n" +
+        "  - If you genuinely need more input: verdict=\"NEEDS_MORE\" describing exactly what would unblock you.\n" +
+        "DO NOT investigate further. DO NOT end this turn without signaling a verdict via VerdictEmit OR a write to the verdict file. Pick one and do it now.",
     };
     console.error(
       `[pi-team] agent ${to} did not emit VerdictEmit on first pass; re-prompting with forcing instruction.`,
@@ -424,6 +456,7 @@ export class TeamRuntime {
         agentName: to,
         systemNotes,
         expertise,
+        verdictFilePath: verdictFile,
       });
       await writeFile(systemPromptFile, fullPrompt);
 
