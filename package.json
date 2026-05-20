@@ -1,6 +1,6 @@
 {
   "name": "@sartoris/pi-engineering",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -32,7 +32,7 @@
     "shell-quote": "^1.8.1"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": ">=0.65.0"
+    "@mariozechner/pi-coding-agent": ">=0.73.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -41,9 +41,9 @@
     ]
   },
   "devDependencies": {
-    "@mariozechner/pi-ai": "^0.67.0",
-    "@mariozechner/pi-coding-agent": "^0.67.0",
-    "@mariozechner/pi-tui": "^0.67.0",
+    "@mariozechner/pi-ai": "^0.73.1",
+    "@mariozechner/pi-coding-agent": "^0.73.1",
+    "@mariozechner/pi-tui": "^0.73.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/shell-quote": "^1.7.4",
