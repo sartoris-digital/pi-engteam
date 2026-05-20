@@ -89,11 +89,17 @@ const judgeGateStep: Step = {
       ? `\nPREVIOUS FEEDBACK:\n${previousFeedback.join("\n")}`
       : "";
 
+    const triageSummary = ctx.run.artifacts["triage-summary"] ?? "(missing)";
+    const routingRec = ctx.run.artifacts["artifact-0"] ?? "(missing)";
     const prompt = `BUG: ${ctx.run.goal}
 
-Review the triage and routing. Confirm or override severity and routing.${feedbackSection}
+TRIAGE SUMMARY: ${triageSummary}
+ROUTING RECOMMENDATION: ${routingRec}
 
-Call VerdictEmit with step="judge-gate".`;
+Read the triage summary and routing recommendation above (use the \`read\` tool on the absolute paths).
+Confirm or override severity and routing in your verdict.${feedbackSection}
+
+Call VerdictEmit with step="judge-gate", verdict="PASS" if you agree, or verdict="FAIL" with issues if you disagree.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");

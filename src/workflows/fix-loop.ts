@@ -172,11 +172,20 @@ const judgeGateStep: Step = {
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
 
+    const fixPlan = ctx.run.artifacts["fix-plan"] ?? "(missing)";
+    const implArtifacts = Object.entries(ctx.run.artifacts)
+      .filter(([k]) => k.startsWith("impl-artifact-"))
+      .map(([, v]) => v)
+      .join(", ") || "(none)";
     const prompt = `GOAL: ${ctx.run.goal}
 
+FIX PLAN: ${fixPlan}
+IMPLEMENTATION ARTIFACTS: ${implArtifacts}
+
+Read the fix plan and any implementation artifacts at the absolute paths above (use the \`read\` tool).
 Review the implementation, test results, and code review findings. Confirm the fix is complete and correct.
 ${priorFeedback ? `\nPREVIOUS FEEDBACK:\n${priorFeedback.join("\n")}` : ""}
-Call VerdictEmit with step="judge-gate".`;
+Call VerdictEmit with step="judge-gate", verdict="PASS" if the fix is acceptable, or verdict="FAIL" with specific issues.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");

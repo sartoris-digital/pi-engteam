@@ -150,7 +150,15 @@ const judgeGateStep: Step = {
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
 
-    const prompt = `ROOT CAUSE AND FIX OPTIONS: See debug-report.md and propose-fix artifacts.
+    const rootCause = ctx.run.artifacts["root-cause"] ?? "(missing)";
+    const fixOptions = Object.entries(ctx.run.artifacts)
+      .filter(([k]) => k.startsWith("fix-option-"))
+      .map(([, v]) => v)
+      .join(", ") || "(none)";
+    const prompt = `ROOT CAUSE REPORT: ${rootCause}
+FIX OPTIONS: ${fixOptions}
+
+Read the root cause report and fix option artifacts at the absolute paths above (use the \`read\` tool).
 Select the recommended fix option. If acceptable, PASS. If more investigation needed, FAIL.
 ${priorFeedback ? `\nPREVIOUS FEEDBACK:\n${priorFeedback.join("\n")}` : ""}
 Call VerdictEmit with step="judge-gate".`;
