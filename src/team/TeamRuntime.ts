@@ -293,6 +293,13 @@ export function buildSystemPrompt(opts: {
       `**UseSecret** (retrieve secret material)\n` +
       `  NO file-write fallback. Secrets MUST NOT be written to disk in the run dir. If UseSecret is not in your tool inventory, emit verdict="FAIL" with reason="UseSecret-required" and stop — do not improvise an alternative.`
     : "";
+  const artifactGuidance = opts.runDir
+    ? `\n\n## Artifact files — WRITE UNDER runDir\n` +
+      `When a step prompt tells you to write a file like \`triage-summary.md\`, \`fix-plan.md\`, \`debug-report.md\`, \`context-pack.md\`, \`questions.md\`, etc., you MUST write it under the orchestrator-managed run directory:\n` +
+      `  **${opts.runDir}**\n` +
+      `Use the absolute path \`${opts.runDir}/<filename>\` with the built-in \`write\` / \`edit\` tools. Files written at cwd-relative paths land outside the orchestrator's allowed roots, are blocked by domain policy, and are not found by the next workflow step.\n` +
+      `Then list the SAME absolute path (or its bare filename) in your verdict's \`artifacts\` array. The orchestrator validates that each claimed artifact exists under runDir before accepting a PASS verdict.`
+    : "";
   const teamSuffix =
     `\n\n---\n## Team Context\nYour name in the team is: **${safeAgent}**\n` +
     `Use SendMessage to communicate with other agents (if SendMessage is in your tool inventory).\n\n` +
@@ -305,6 +312,7 @@ export function buildSystemPrompt(opts: {
     `### Primary path — VerdictEmit tool\n` +
     `If VerdictEmit appears in your tool inventory, call it with the verdict fields. This is the preferred path.` +
     fileFallback +
+    artifactGuidance +
     otherFallbacks;
   const notesBlock = opts.systemNotes
     ? "\n\n---\n## System Reminders\n" + opts.systemNotes + "\n"
@@ -949,7 +957,13 @@ export class TeamRuntime {
                     const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
                     mkdirSync(dirname(synthesizedPath), { recursive: true });
                     writeFileSync(synthesizedPath, sections.join("\n"), { mode: 0o600 });
-                    payload.artifacts[idx] = safeName;
+                    // Rewrite to the absolute synthesized path so
+                    // downstream workflow steps that embed
+                    // verdict.artifacts[0] into the next agent's prompt
+                    // hand the next agent a path it can open directly,
+                    // not a bare basename whose resolution depends on
+                    // the next agent's cwd.
+                    payload.artifacts[idx] = synthesizedPath;
                     synthesized.push({ claimed: art, saved: safeName });
                     continue;
                   } catch {

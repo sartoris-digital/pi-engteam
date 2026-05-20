@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -48,7 +49,7 @@ When complete, call VerdictEmit with:
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { "refactor-map": verdict.artifacts?.[0] ?? "refactor-map.md" },
+        artifacts: { "refactor-map": resolveArtifactPath(ctx, verdict.artifacts?.[0], "refactor-map.md") },
       };
     } catch (err) {
       return {
@@ -102,7 +103,7 @@ When complete, call VerdictEmit with:
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { "refactor-plan": verdict.artifacts?.[0] ?? "refactor-plan.md" },
+        artifacts: { "refactor-plan": resolveArtifactPath(ctx, verdict.artifacts?.[0], "refactor-plan.md") },
       };
     } catch (err) {
       return {

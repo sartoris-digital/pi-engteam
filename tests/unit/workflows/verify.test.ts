@@ -43,7 +43,7 @@ function makeCtx(
     },
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: {} as any,
+    engine: { getRunsDir: () => "/tmp/test-runs" } as any,
   };
 
   return ctx;

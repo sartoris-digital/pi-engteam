@@ -29,7 +29,7 @@ function makeCtxWithVerdicts(
     run: run as any,
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: {} as any,
+    engine: { getRunsDir: () => "/tmp/test-runs" } as any,
   };
 
   return ctx;
@@ -133,7 +133,7 @@ describe("investigate step execution", () => {
 
     const analyzeStep = investigate.steps.find(s => s.name === "analyze")!;
     const result = await analyzeStep.run(ctx);
-    expect(result.artifacts?.["incident-report"]).toBe("incident-report.md");
+    expect(result.artifacts?.["incident-report"]).toBe("/tmp/test-runs/test-run-id/incident-report.md");
   });
 
   it("judge-gate FAIL includes previous feedback in prompt on re-run", async () => {

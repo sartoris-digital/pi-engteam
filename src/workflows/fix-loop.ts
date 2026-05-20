@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -40,7 +41,7 @@ Only call VerdictEmit with verdict="FAIL" if you were unable to complete the ana
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
         // C4: use a stable "fix-plan" key so implementStep can always find it
-        artifacts: { "fix-plan": verdict.artifacts?.[0] ?? "fix-plan.md" },
+        artifacts: { "fix-plan": resolveArtifactPath(ctx, verdict.artifacts?.[0], "fix-plan.md") },
       };
     } catch (err) {
       return {

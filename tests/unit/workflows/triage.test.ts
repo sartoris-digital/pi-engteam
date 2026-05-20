@@ -29,7 +29,7 @@ function makeCtxWithVerdicts(
     run: run as any,
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: {} as any,
+    engine: { getRunsDir: () => "/tmp/test-runs" } as any,
   };
 
   return ctx;
@@ -121,7 +121,7 @@ describe("triage step execution", () => {
     const classifyStep = triage.steps.find(s => s.name === "classify")!;
     const result = await classifyStep.run(ctx);
     expect(result.success).toBe(true);
-    expect(result.artifacts?.["triage-summary"]).toBe("triage-summary.md");
+    expect(result.artifacts?.["triage-summary"]).toBe("/tmp/test-runs/test-run-id/triage-summary.md");
   });
 
   it("classify FAIL → step returns success=false immediately", async () => {

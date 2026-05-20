@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForVerdict(
   ctx: StepContext,
@@ -44,7 +45,7 @@ Call VerdictEmit with:
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { "issue-brief": verdict.artifacts?.[0] ?? "issue-brief.md" },
+        artifacts: { "issue-brief": resolveArtifactPath(ctx, verdict.artifacts?.[0], "issue-brief.md") },
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };

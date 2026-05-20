@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -62,7 +63,7 @@ When your plan is complete, call VerdictEmit with:
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: planArtifact ? { plan: planArtifact } : {},
+        artifacts: planArtifact ? { plan: resolveArtifactPath(ctx, planArtifact, "plan.md") } : {},
       };
     } catch (err) {
       return {

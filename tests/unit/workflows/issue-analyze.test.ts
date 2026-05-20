@@ -53,7 +53,7 @@ describe("issueAnalyze workflow", () => {
       },
       team: { deliver } as any,
       observer: {} as any,
-      engine: {} as any,
+      engine: { getRunsDir: () => "/tmp/test-runs" } as any,
     });
 
     expect(result.success).toBe(true);

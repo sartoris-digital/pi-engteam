@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -36,7 +37,7 @@ Retrieve all relevant context: code paths, recent commits, configuration, logs, 
         verdict: verdict.verdict,
         issues: verdict.issues,
         // C4: stable "context" key so analyzeStep can always find it
-        artifacts: { "context": verdict.artifacts?.[0] ?? "context-pack.md" },
+        artifacts: { "context": resolveArtifactPath(ctx, verdict.artifacts?.[0], "context-pack.md") },
       };
     } catch (err) {
       return {
@@ -64,7 +65,7 @@ Build a timeline and probability-ranked hypothesis tree. Write an incident-repor
         verdict: verdict.verdict,
         issues: verdict.issues,
         // L2: stable key so judge-gate can reference the actual report path
-        artifacts: { "incident-report": verdict.artifacts?.[0] ?? "incident-report.md" },
+        artifacts: { "incident-report": resolveArtifactPath(ctx, verdict.artifacts?.[0], "incident-report.md") },
       };
     } catch (err) {
       return {

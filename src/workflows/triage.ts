@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -36,7 +37,7 @@ Classify this bug: assign P0-P3 severity, identify the owner area (security/perf
         verdict: verdict.verdict,
         issues: verdict.issues,
         // M1: stable key so routeStep can explicitly consume the classifier output
-        artifacts: { "triage-summary": verdict.artifacts?.[0] ?? "triage-summary.md" },
+        artifacts: { "triage-summary": resolveArtifactPath(ctx, verdict.artifacts?.[0], "triage-summary.md") },
       };
     } catch (err) {
       return {

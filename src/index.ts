@@ -394,7 +394,20 @@ export default async function (pi: ExtensionAPI) {
     const subRunIdEnv = process.env["PI_ENGINEERING_RUN_ID"] ?? "";
     const orchestratorWritablePaths: string[] = [];
     if (subVerdictFile) orchestratorWritablePaths.push(subVerdictFile);
-    if (subRunIdEnv) orchestratorWritablePaths.push(join(subRunsDirEnv, subRunIdEnv, "tasks.json"));
+    if (subRunIdEnv) {
+      const perRunDir = join(subRunsDirEnv, subRunIdEnv);
+      orchestratorWritablePaths.push(join(perRunDir, "tasks.json"));
+      // Provider-compat: workflow prompts ask agents to write artifact
+      // files (triage-summary.md, fix-plan.md, debug-report.md, etc.).
+      // Without per-run-dir upsert, every such write is blocked by
+      // DomainLock and we depend entirely on the orchestrator-side
+      // verdict-content synthesis fallback. Granting the per-run-dir
+      // closes that gap so the model's natural Write/Edit calls land
+      // where the orchestrator's artifact-validation already looks.
+      // The run dir is ephemeral and per-run isolated, so this does
+      // not broaden cross-run blast radius.
+      orchestratorWritablePaths.push(perRunDir);
+    }
     if (orchestratorWritablePaths.length > 0) {
       for (const policy of Object.values(subTeamsCfg.domains)) {
         if (!policy.upsert) continue;

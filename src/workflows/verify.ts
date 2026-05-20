@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -39,7 +40,7 @@ Audit the codebase for test coverage gaps. Identify untested functions, missing 
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
         // C4: stable "audit-gaps" key so writeTestsStep can always find it
-        artifacts: { "audit-gaps": verdict.artifacts?.[0] ?? "audit-gaps.md" },
+        artifacts: { "audit-gaps": resolveArtifactPath(ctx, verdict.artifacts?.[0], "audit-gaps.md") },
       };
     } catch (err) {
       return {

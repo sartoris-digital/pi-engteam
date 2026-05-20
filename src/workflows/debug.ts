@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -62,8 +63,8 @@ Call VerdictEmit with step="gather-context".`;
         success: true,
         verdict: "PASS",
         artifacts: {
-          "code-context": codeCtx.artifacts?.[0] ?? "debug-code-context.md",
-          "trace-context": traceCtx.artifacts?.[0] ?? "debug-traces.md",
+          "code-context": resolveArtifactPath(ctx, codeCtx.artifacts?.[0], "debug-code-context.md"),
+          "trace-context": resolveArtifactPath(ctx, traceCtx.artifacts?.[0], "debug-traces.md"),
         },
       };
     } catch (err) {
@@ -98,7 +99,7 @@ Call VerdictEmit with step="analyze".`;
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
         // C2: use a stable key so proposeFixStep can always resolve the report path
-        artifacts: { "root-cause": verdict.artifacts?.[0] ?? ctx.run.artifacts["root-cause"] ?? "debug-report.md" },
+        artifacts: { "root-cause": resolveArtifactPath(ctx, verdict.artifacts?.[0] ?? ctx.run.artifacts["root-cause"], "debug-report.md") },
       };
     } catch (err) {
       return {

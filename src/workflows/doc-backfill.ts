@@ -1,5 +1,6 @@
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForAgentVerdict(
   ctx: StepContext,
@@ -40,7 +41,7 @@ Write a summary of all gaps found to doc-audit-gaps.md.
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
         // M6: stable "audit-findings" key so planStep can reference the gap list
-        artifacts: { "audit-findings": verdict.artifacts?.[0] ?? "doc-audit-gaps.md" },
+        artifacts: { "audit-findings": resolveArtifactPath(ctx, verdict.artifacts?.[0], "doc-audit-gaps.md") },
       };
     } catch (err) {
       return {
@@ -79,7 +80,7 @@ When complete, call VerdictEmit with:
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { "doc-backfill-plan": verdict.artifacts?.[0] ?? "doc-backfill-plan.md" },
+        artifacts: { "doc-backfill-plan": resolveArtifactPath(ctx, verdict.artifacts?.[0], "doc-backfill-plan.md") },
       };
     } catch (err) {
       return {

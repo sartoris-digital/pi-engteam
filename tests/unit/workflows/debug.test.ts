@@ -46,7 +46,7 @@ function makeCtx(
     },
     team: team as any,
     observer: { emit: vi.fn() } as any,
-    engine: {} as any,
+    engine: { getRunsDir: () => "/tmp/test-runs" } as any,
   };
 
   return ctx;
@@ -80,8 +80,8 @@ describe("debug workflow – gather-context step", () => {
     const result = await gatherStep.run(ctx);
     expect(result.success).toBe(true);
     expect(result.verdict).toBe("PASS");
-    expect(result.artifacts?.["code-context"]).toBe("debug-code-context.md");
-    expect(result.artifacts?.["trace-context"]).toBe("debug-traces.md");
+    expect(result.artifacts?.["code-context"]).toBe("/tmp/test-runs/run-debug-1/debug-code-context.md");
+    expect(result.artifacts?.["trace-context"]).toBe("/tmp/test-runs/run-debug-1/debug-traces.md");
   });
 
   it("FAIL path: knowledge-retriever fails → halt immediately, no observability call", async () => {
@@ -155,7 +155,7 @@ describe("debug workflow – analyze/propose-fix artifact flow", () => {
 
     const analyzeStep = debug.steps.find(s => s.name === "analyze")!;
     const result = await analyzeStep.run(ctx);
-    expect(result.artifacts?.["root-cause"]).toBe("debug-report.md");
+    expect(result.artifacts?.["root-cause"]).toBe("/tmp/test-runs/run-debug-1/debug-report.md");
   });
 
 
