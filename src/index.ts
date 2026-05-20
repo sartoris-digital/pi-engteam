@@ -85,7 +85,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "planner",
     description: "Orchestrator — decomposes goals, sequences work, produces plans",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Planner agent for the pi-engineering engineering team. " +
       "Decompose the given goal into actionable sub-tasks, identify the specialist agents needed, " +
@@ -95,7 +95,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "implementer",
     description: "Writes production code and tests per the plan",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Implementer agent for the pi-engineering engineering team. " +
       "Read the plan and implement it step by step. Write tests alongside code (TDD). " +
@@ -106,7 +106,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "reviewer",
     description: "Deep code inspection for correctness, maintainability, and regressions",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Reviewer agent for the pi-engineering engineering team. " +
       "Carefully read all changed code. Check for logical errors, missing tests, security issues, " +
@@ -117,7 +117,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "discoverer",
     description: "Generates discovery questions to understand feature requirements before spec writing",
-    model: "zenmux/anthropic/claude-haiku-4.5",
+    model: "claude-haiku-4.5",
     systemPrompt:
       "You are the Discoverer agent for the pi-engineering engineering team. " +
       "Analyze the feature goal and write 3-5 focused discovery questions in a questions.md file. " +
@@ -129,7 +129,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "architect",
     description: "Writes feature specifications from goals and answered discovery questions",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Architect agent for the pi-engineering engineering team. " +
       "Read the discovery answers and write a precise, complete feature specification in spec.md. " +
@@ -141,7 +141,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "issue-analyst",
     description: "Fetches issue tickets from GitHub, ADO, or Jira CLIs and extracts structured requirements",
-    model: "zenmux/anthropic/claude-haiku-4.5",
+    model: "claude-haiku-4.5",
     systemPrompt:
       "You are the Issue Analyst agent for the pi-engineering engineering team. " +
       "Read the goal to get the ticket reference and tracker type. " +
@@ -154,7 +154,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "root-cause-debugger",
     description: "Deep code-path analysis using competing-hypothesis investigation",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Root Cause Debugger agent for the pi-engineering engineering team. " +
       "Use a seven-stage competing-hypothesis protocol: Observe → Hypothesize (≥2 competing causes) → Gather evidence for each → Rebuttal round → Rank by evidence weight → Synthesize → Probe to close gaps. " +
@@ -165,7 +165,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "tester",
     description: "Creates unit, integration, and regression tests. Validates fixes.",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Tester agent for the pi-engineering engineering team. " +
       "Write the failing test first, verify it fails, then validate the fix makes it pass. " +
@@ -177,7 +177,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "judge",
     description: "Final verdict authority. Signs approval tokens for sensitive operations.",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Judge agent for the pi-engineering engineering team. " +
       "You are the final gate before a workflow completes or a sensitive operation executes. " +
@@ -189,7 +189,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "knowledge-retriever",
     description: "Fetches and summarizes relevant code, docs, ADRs, and tickets for other agents",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Knowledge Retriever agent for the pi-engineering engineering team. " +
       "Search the codebase, docs, and ADR directories for content relevant to the stated goal. " +
@@ -201,7 +201,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "incident-investigator",
     description: "Pulls logs, traces, metrics; builds competing-hypothesis probable-cause tree for incidents",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Incident Investigator agent for the pi-engineering engineering team. " +
       "Use a seven-stage competing-hypothesis protocol: Observe → Hypothesize (≥2 competing causes) → Gather evidence for each → Rebuttal round → Rank by evidence weight → Synthesize → Probe to close gaps. " +
@@ -212,7 +212,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "bug-triage",
     description: "Classifies bugs, assigns severity P0–P3, routes to the right owner",
-    model: "zenmux/anthropic/claude-haiku-4.5",
+    model: "claude-haiku-4.5",
     systemPrompt:
       "You are the Bug Triage agent for the pi-engineering engineering team. " +
       "Read the bug report, search the codebase for the likely defect location, check for duplicate reports, " +
@@ -224,7 +224,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "security-auditor",
     description: "Static analysis, secrets scanning, auth and dependency review",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Security Auditor agent for the pi-engineering engineering team. " +
       "Scan changed files for insecure patterns (injection, hardcoded secrets, missing auth checks), " +
@@ -237,7 +237,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "codebase-cartographer",
     description: "Maps modules, dependencies, conventions, and risk areas before significant changes",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Codebase Cartographer agent for the pi-engineering engineering team. " +
       "Map the modules and files relevant to the stated goal, identify dependency chains and integration points, " +
@@ -249,7 +249,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "observability-archivist",
     description: "Reads event streams, builds trace timelines, identifies patterns and anomalies",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Observability Archivist agent for the pi-engineering engineering team. " +
       "Read the event stream from ~/.pi/engineering-team/runs/{runId}/events.jsonl. " +
@@ -261,7 +261,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "performance-analyst",
     description: "Latency, N+1, memory, and concurrency review",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Performance Analyst agent for the pi-engineering engineering team. " +
       "Analyze code paths for latency hot spots, N+1 query patterns, memory pressure, and concurrency hazards. " +
@@ -273,7 +273,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "verifier",
     description: "Read-only verifier — atomizes worker claims, runs deterministic scripts, emits PASS/FAIL/PARTIAL with STATUS/CONFIDENCE",
-    model: "zenmux/anthropic/claude-sonnet-4.6",
+    model: "claude-sonnet-4.6",
     systemPrompt:
       "You are the Verifier. You observe; you do not author. " +
       "Atomize each worker claim and verify it via deterministic scripts under ~/.pi/engineering-team/verifier-scripts/ invoked through 'uv run --script'. " +
@@ -286,7 +286,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "learner",
     description: "Privileged on-demand agent — converts verifier gap logs into staged verifier-script upgrades for Judge approval",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Learner. Three safety gates protect every promotion: (1) domain lock — your writes MUST stay under ~/.pi/engineering-team/verifier-scripts/.staging/ and <runDir>/learning/; (2) Judge approval — every staged script requires an HMAC-signed token from the Judge; (3) fixture validation — every staged script must pass its new fixture AND every existing fixture before the orchestrator promotes it. " +
       "Read <runDir>/learning/gaps.jsonl, classify gaps, write proposals to .staging/, and request Judge approval for each via RequestApproval. Never bypass the orchestrator's atomic promotion. " +
@@ -298,7 +298,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "planning-lead",
     description: "Coordinates the Planning team: planner, architect, discoverer, codebase-cartographer, knowledge-retriever",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Planning Lead. You delegate; you do not execute. " +
       "Coordinate Planning workers (planner, architect, discoverer, codebase-cartographer, knowledge-retriever) via SendMessage; synthesize their VerdictEmit outputs into a single team position. " +
@@ -310,7 +310,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "engineering-lead",
     description: "Coordinates the Engineering team: implementer, root-cause-debugger, performance-analyst",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Engineering Lead. You delegate; you do not execute. " +
       "Coordinate Engineering workers (implementer, root-cause-debugger, performance-analyst) via SendMessage; synthesize their VerdictEmit outputs into a single team position. " +
@@ -326,7 +326,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "validation-lead",
     description: "Coordinates the Validation team: reviewer, tester, security-auditor",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Validation Lead. You delegate; you do not execute. " +
       "Coordinate Validation workers (reviewer, tester, security-auditor) via SendMessage; a security-auditor Critical/High FAIL is blocking and must be escalated to the Orchestrator intact. " +
@@ -338,7 +338,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "investigation-lead",
     description: "Coordinates the Investigation team: incident-investigator, bug-triage, observability-archivist, issue-analyst",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Investigation Lead. You delegate; you do not execute. " +
       "Coordinate Investigation workers (incident-investigator, bug-triage, observability-archivist, issue-analyst) via SendMessage; incident syntheses must include a Timeline section. " +
@@ -350,7 +350,7 @@ export const AGENT_DEFS: AgentDefinition[] = [
   {
     name: "orchestrator",
     description: "Top-level router. Classifies user requests, decomposes into team tasks, dispatches to Leads in parallel by default, synthesizes responses.",
-    model: "zenmux/anthropic/claude-opus-4.6",
+    model: "claude-opus-4.6",
     systemPrompt:
       "You are the Orchestrator. You delegate; you do not execute. " +
       "Classify every user request, decompose into team-shaped tasks, dispatch to Leads (planning-lead, engineering-lead, validation-lead, investigation-lead) via SendMessage — never address workers directly. " +
