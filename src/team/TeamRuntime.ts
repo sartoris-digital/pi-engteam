@@ -897,9 +897,29 @@ export class TeamRuntime {
             // safe filename under runDir and rewriting payload.artifacts
             // to point at the synthesized file.
             if (hasContent) {
-              const safeName = normalizeArtifactName(art, payload.step);
+              let safeName = normalizeArtifactName(art, payload.step);
               if (safeName) {
-                const synthesizedPath = resolve(runDir, safeName);
+                // Collision guard: if a prior step in this run already
+                // wrote the normalized filename, suffix with the current
+                // step name so we don't clobber it (e.g. classify wrote
+                // triage-summary.md; route's "triage-summary (in-memory)"
+                // → triage-summary-route.md). This preserves both steps'
+                // content for downstream consumers.
+                let synthesizedPath = resolve(runDir, safeName);
+                if (existsSync(synthesizedPath) && payload.step) {
+                  const stepSlug = payload.step
+                    .toLowerCase()
+                    .replace(/[^a-z0-9._-]+/g, "-")
+                    .replace(/^-+|-+$/g, "");
+                  if (stepSlug) {
+                    const renamed = safeName.replace(/\.md$/, `-${stepSlug}.md`);
+                    const renamedPath = resolve(runDir, renamed);
+                    if (!existsSync(renamedPath)) {
+                      safeName = renamed;
+                      synthesizedPath = renamedPath;
+                    }
+                  }
+                }
                 if (isUnderAllowed(synthesizedPath)) {
                   try {
                     const sections: string[] = [
