@@ -379,12 +379,35 @@ export default async function (pi: ExtensionAPI) {
       runDir: RUNS_DIR,
       expertiseDir: join(ENGINEERING_DIR, "expertise"),
     });
+
+    // Provider-compat: when CoPilot (or any provider that doesn't expose
+    // our custom orchestrator tools) routes the model, the agent uses
+    // its built-in `write` tool to populate orchestrator-managed files
+    // — the verdict file and tasks.json — as documented in
+    // buildSystemPrompt's compatibility table. Those paths are
+    // controller-trusted (orchestrator owns them, validates contents
+    // post-read), so we extend each agent's `upsert` allowlist to
+    // include them. Without this, Layer D blocks the very fallback we
+    // told the model to use, and the agent fails with no verdict.
+    const subVerdictFile = process.env["PI_ENGINEERING_VERDICT_FILE"];
+    const subRunsDirEnv = process.env["PI_ENGINEERING_RUNS_DIR"] ?? RUNS_DIR;
+    const subRunIdEnv = process.env["PI_ENGINEERING_RUN_ID"] ?? "";
+    const orchestratorWritablePaths: string[] = [];
+    if (subVerdictFile) orchestratorWritablePaths.push(subVerdictFile);
+    if (subRunIdEnv) orchestratorWritablePaths.push(join(subRunsDirEnv, subRunIdEnv, "tasks.json"));
+    if (orchestratorWritablePaths.length > 0) {
+      for (const policy of Object.values(subTeamsCfg.domains)) {
+        if (!policy.upsert) continue;
+        policy.upsert = [...policy.upsert, ...orchestratorWritablePaths];
+      }
+    }
+
     // Phase 5.5 round-3 M1: pass runsDir so the tasks.json hard-block
     // works under non-standard runsDir layouts (e.g., a custom path
     // that doesn't include /runs/ in its name).
     registerHardBlockers(pi, {
       hardBlockers: { enabled: true, alwaysOn: true },
-      runsDir: process.env["PI_ENGINEERING_RUNS_DIR"] ?? RUNS_DIR,
+      runsDir: subRunsDirEnv,
       domainLock: {
         policies: subTeamsCfg.domains,
         mode: subTeamsCfg.mode,
