@@ -846,8 +846,37 @@ export class TeamRuntime {
             return false;
           };
           const missing: string[] = [];
-          const synthesized: string[] = [];
-          for (const art of payload.artifacts) {
+          const synthesized: { claimed: string; saved: string }[] = [];
+          const hasContent =
+            (payload.learnings && payload.learnings.length > 0) ||
+            (payload.decisions && payload.decisions.length > 0) ||
+            (payload.issues_found && payload.issues_found.length > 0) ||
+            (payload.gotchas && payload.gotchas.length > 0) ||
+            (payload.issues && payload.issues.length > 0);
+          // Normalize a claimed artifact name to a safe filename under
+          // runDir. Strips spaces/parens/parens-suffixed annotations
+          // (e.g. "triage-summary (in-memory)" → "triage-summary.md"),
+          // refuses absolute paths and path traversal, and defaults the
+          // extension to .md. Returns null if the input cannot be
+          // recovered into anything safe.
+          const normalizeArtifactName = (art: string, step: string | undefined): string | null => {
+            if (isAbsolute(art)) return null;
+            if (art.includes("..")) return null;
+            const base = basename(art);
+            // Drop parenthetical suffixes the model uses to communicate
+            // state (e.g. "(in-memory)", "(draft)").
+            const stripped = base.replace(/\s*\([^)]*\)\s*$/, "").trim();
+            const slug = stripped
+              .toLowerCase()
+              .replace(/[^a-z0-9._-]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .replace(/-+/g, "-");
+            if (!slug || slug === "." || slug === "..") {
+              return step ? `${step}-summary.md` : null;
+            }
+            return /\.md$/.test(slug) ? slug : `${slug}.md`;
+          };
+          for (const [idx, art] of payload.artifacts.entries()) {
             const candidates = isAbsolute(art)
               ? [art]
               : [resolve(this.config.cwd, art), resolve(runDir, art)];
@@ -862,63 +891,61 @@ export class TeamRuntime {
             // writing the claimed artifact file. The work is real; only
             // the channel is wrong. Synthesize the missing markdown
             // artifact from the verdict content so downstream steps
-            // that expect to read the file find it. Only triggers when
-            // BOTH (a) the artifact path is a plain `.md` filename
-            // under runDir (no absolute paths, no path traversal) AND
-            // (b) at least one of the content fields is non-empty.
-            const isSafeMdName =
-              !isAbsolute(art) &&
-              /^[A-Za-z0-9._-]+\.md$/.test(art) &&
-              !art.includes("..");
-            const hasContent =
-              (payload.learnings && payload.learnings.length > 0) ||
-              (payload.decisions && payload.decisions.length > 0) ||
-              (payload.issues_found && payload.issues_found.length > 0) ||
-              (payload.gotchas && payload.gotchas.length > 0) ||
-              (payload.issues && payload.issues.length > 0);
-            if (isSafeMdName && hasContent) {
-              const synthesizedPath = resolve(runDir, art);
-              if (isUnderAllowed(synthesizedPath)) {
-                try {
-                  const sections: string[] = [
-                    `# ${art.replace(/\.md$/, "")}`,
-                    "",
-                    `_Synthesized by orchestrator from agent verdict — the agent (${to}) emitted analysis in verdict fields instead of writing the file directly. Step: ${payload.step}. Verdict: ${payload.verdict}._`,
-                    "",
-                  ];
-                  if (payload.decisions && payload.decisions.length > 0) {
-                    sections.push("## Decisions", ...payload.decisions.map((d) => `- ${d}`), "");
+            // that expect to read the file find it. Round-12: also
+            // recover when the model emits a non-filename descriptor
+            // (e.g. "triage-summary (in-memory)") by normalizing to a
+            // safe filename under runDir and rewriting payload.artifacts
+            // to point at the synthesized file.
+            if (hasContent) {
+              const safeName = normalizeArtifactName(art, payload.step);
+              if (safeName) {
+                const synthesizedPath = resolve(runDir, safeName);
+                if (isUnderAllowed(synthesizedPath)) {
+                  try {
+                    const sections: string[] = [
+                      `# ${safeName.replace(/\.md$/, "")}`,
+                      "",
+                      `_Synthesized by orchestrator from agent verdict — the agent (${to}) emitted analysis in verdict fields instead of writing the file directly. Step: ${payload.step}. Verdict: ${payload.verdict}. Original claimed artifact: ${JSON.stringify(art)}._`,
+                      "",
+                    ];
+                    if (payload.decisions && payload.decisions.length > 0) {
+                      sections.push("## Decisions", ...payload.decisions.map((d) => `- ${d}`), "");
+                    }
+                    if (payload.learnings && payload.learnings.length > 0) {
+                      sections.push("## Learnings", ...payload.learnings.map((l) => `- ${l}`), "");
+                    }
+                    if (payload.issues_found && payload.issues_found.length > 0) {
+                      sections.push("## Issues Found", ...payload.issues_found.map((i) => `- ${i}`), "");
+                    }
+                    if (payload.gotchas && payload.gotchas.length > 0) {
+                      sections.push("## Gotchas", ...payload.gotchas.map((g) => `- ${g}`), "");
+                    }
+                    if (payload.issues && payload.issues.length > 0) {
+                      sections.push("## Issues", ...payload.issues.map((i) => `- ${i}`), "");
+                    }
+                    if (payload.handoffHint) {
+                      sections.push("## Handoff Hint", payload.handoffHint, "");
+                    }
+                    const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
+                    mkdirSync(dirname(synthesizedPath), { recursive: true });
+                    writeFileSync(synthesizedPath, sections.join("\n"), { mode: 0o600 });
+                    payload.artifacts[idx] = safeName;
+                    synthesized.push({ claimed: art, saved: safeName });
+                    continue;
+                  } catch {
+                    // fall through to "missing" if synthesis fails
                   }
-                  if (payload.learnings && payload.learnings.length > 0) {
-                    sections.push("## Learnings", ...payload.learnings.map((l) => `- ${l}`), "");
-                  }
-                  if (payload.issues_found && payload.issues_found.length > 0) {
-                    sections.push("## Issues Found", ...payload.issues_found.map((i) => `- ${i}`), "");
-                  }
-                  if (payload.gotchas && payload.gotchas.length > 0) {
-                    sections.push("## Gotchas", ...payload.gotchas.map((g) => `- ${g}`), "");
-                  }
-                  if (payload.issues && payload.issues.length > 0) {
-                    sections.push("## Issues", ...payload.issues.map((i) => `- ${i}`), "");
-                  }
-                  if (payload.handoffHint) {
-                    sections.push("## Handoff Hint", payload.handoffHint, "");
-                  }
-                  const { writeFileSync, mkdirSync } = require("fs") as typeof import("fs");
-                  mkdirSync(dirname(synthesizedPath), { recursive: true });
-                  writeFileSync(synthesizedPath, sections.join("\n"), { mode: 0o600 });
-                  synthesized.push(art);
-                  continue;
-                } catch {
-                  // fall through to "missing" if synthesis fails
                 }
               }
             }
             missing.push(art);
           }
           if (synthesized.length > 0) {
+            const summary = synthesized
+              .map((s) => (s.claimed === s.saved ? s.saved : `${JSON.stringify(s.claimed)}→${s.saved}`))
+              .join(", ");
             console.error(
-              `[pi-team] agent ${to} (${runId}) claimed artifact(s) without writing them; synthesized from verdict fields: ${synthesized.join(", ")}.`,
+              `[pi-team] agent ${to} (${runId}) claimed artifact(s) without writing them; synthesized from verdict fields: ${summary}.`,
             );
           }
           if (missing.length > 0) {
