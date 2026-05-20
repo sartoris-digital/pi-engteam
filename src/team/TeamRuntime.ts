@@ -157,6 +157,65 @@ function validateVerdictPayload(raw: unknown): VerdictPayload | undefined {
 // markdown headings or sentinels could otherwise corrupt the Team
 // Context section's framing.
 const AGENT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/**
+ * Provider-compat fallback: when the agent subprocess exits cleanly
+ * without writing the verdict file (common under CoPilot-routed small
+ * models that ignore the VerdictEmit protocol and just print the
+ * verdict JSON as text), scan the captured stdout for a JSON object
+ * containing a "verdict" field and return the JSON string.
+ *
+ * Tries markdown-fenced ```json blocks first (the common shape models
+ * produce), then falls back to brace-balanced scanning from the end of
+ * the buffer (the LAST verdict-shaped object is the most recent one
+ * the model emitted).
+ *
+ * The returned string is fed to the same JSON.parse +
+ * validateVerdictPayload pipeline as a real verdict file, so a
+ * malformed or schema-invalid extraction is rejected downstream.
+ */
+export function extractVerdictJsonFromStdout(buf: string): string | null {
+  if (!buf) return null;
+  // 1) Fenced ```json or ``` blocks. Iterate ALL matches and keep the
+  // last one that mentions "verdict" — models often print intermediate
+  // examples before the final answer.
+  const fenceRe = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
+  let lastFenced: string | null = null;
+  let fenceMatch: RegExpExecArray | null;
+  while ((fenceMatch = fenceRe.exec(buf)) !== null) {
+    if (/"verdict"\s*:/i.test(fenceMatch[1])) lastFenced = fenceMatch[1];
+  }
+  if (lastFenced) return lastFenced;
+
+  // 2) Brace-balanced scan from the END of the buffer. Find each '{'
+  // (rightmost first), walk forward with brace + quote tracking until
+  // the matching '}'. Accept the first balanced object that contains
+  // a "verdict" key.
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i] !== "{") continue;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let end = -1;
+    for (let j = i; j < buf.length; j++) {
+      const ch = buf[j];
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { end = j; break; }
+      }
+    }
+    if (end > i) {
+      const candidate = buf.slice(i, end + 1);
+      if (/"verdict"\s*:/i.test(candidate)) return candidate;
+    }
+  }
+  return null;
+}
 export function buildSystemPrompt(opts: {
   baseSystemPrompt: string;
   agentName: string;
@@ -532,6 +591,12 @@ export class TeamRuntime {
         }, 10_000);
       }, this.config.agentTimeoutMs ?? 10 * 60 * 1000);
 
+      // Stdout buffer for the verdict-text-scan fallback. Bounded so an
+      // unbounded emit can't pin controller heap. Real verdicts + a
+      // little surrounding model commentary are well under 256KB.
+      const MAX_STDOUT_BUFFER_BYTES = 256 * 1024;
+      let stdoutBuffer = "";
+
       try {
         await new Promise<void>((resolve, reject) => {
           // Codex round-14 HIGH: previously spawned with `...process.env`,
@@ -653,6 +718,16 @@ export class TeamRuntime {
                 const trimmed = line.trim();
                 if (trimmed) this.agentLineCallback?.(to, trimmed);
               }
+              // Buffer stdout so the verdict-file-missing fallback can scan
+              // it for a JSON blob the agent emitted as TEXT instead of via
+              // tool/file (common under CoPilot routing where small models
+              // ignore the protocol contract and just print the verdict).
+              // Cap the buffer at MAX_STDOUT_BUFFER_BYTES so an unbounded
+              // emit can't pin controller memory.
+              if (stdoutBuffer.length < MAX_STDOUT_BUFFER_BYTES) {
+                const remaining = MAX_STDOUT_BUFFER_BYTES - stdoutBuffer.length;
+                stdoutBuffer += chunk.length <= remaining ? chunk : chunk.slice(0, remaining);
+              }
             });
           }
           proc.on("close", (code, signal) => {
@@ -706,8 +781,23 @@ export class TeamRuntime {
               `[pi-team] verdict file read failed for ${to} (${runId}):`,
               err instanceof Error ? err.message : String(err),
             );
+            return undefined;
           }
-          return undefined;
+          // Verdict file missing — stdout-scan fallback. Under CoPilot
+          // routing (and similar providers), small instruction-tuned
+          // models often emit the verdict JSON as the FINAL TEXT
+          // response instead of calling VerdictEmit or writing the
+          // file. Scan the captured subprocess stdout for a balanced
+          // JSON object containing a "verdict" field and synthesize
+          // the verdict from there. Same downstream validation
+          // (validateVerdictPayload) gates whatever we find.
+          const extracted = extractVerdictJsonFromStdout(stdoutBuffer);
+          if (!extracted) return undefined;
+          console.error(
+            `[pi-team] agent ${to} (${runId}) exited without verdict file; ` +
+              `recovered verdict JSON from stdout-scan fallback.`,
+          );
+          data = extracted;
         }
         await unlink(verdictFile).catch(() => {});
         let raw: unknown;

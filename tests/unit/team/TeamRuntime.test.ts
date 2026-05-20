@@ -164,3 +164,59 @@ describe("TeamRuntime.deliver — subprocess mode", () => {
     expect(() => team.setAgentLineCallback(undefined)).not.toThrow();
   });
 });
+
+describe("extractVerdictJsonFromStdout — stdout-scan verdict-recovery fallback", () => {
+  it("extracts a JSON blob from inside a ```json fenced code block", async () => {
+    const { extractVerdictJsonFromStdout } = await import("../../../src/team/TeamRuntime.js");
+    const buf = 'Done analyzing.\n\n```json\n{"step": "classify", "verdict": "PASS", "artifacts": ["triage-summary.md"]}\n```\n';
+    const out = extractVerdictJsonFromStdout(buf);
+    expect(out).toBeTruthy();
+    if (out) {
+      const parsed = JSON.parse(out);
+      expect(parsed.step).toBe("classify");
+      expect(parsed.verdict).toBe("PASS");
+    }
+  });
+
+  it("extracts a bare JSON object via brace-balanced scan", async () => {
+    const { extractVerdictJsonFromStdout } = await import("../../../src/team/TeamRuntime.js");
+    const buf = 'I am done. Here is the verdict:\n{"step":"classify","verdict":"FAIL","issues":["nothing found"]}\nThat is all.\n';
+    const out = extractVerdictJsonFromStdout(buf);
+    expect(out).toBeTruthy();
+    if (out) expect(JSON.parse(out).verdict).toBe("FAIL");
+  });
+
+  it("returns the LAST verdict-shaped object when multiple appear", async () => {
+    const { extractVerdictJsonFromStdout } = await import("../../../src/team/TeamRuntime.js");
+    const buf =
+      '```json\n{"step":"draft","verdict":"NEEDS_MORE"}\n```\n\nFinal answer:\n```json\n{"step":"classify","verdict":"PASS"}\n```\n';
+    const out = extractVerdictJsonFromStdout(buf);
+    expect(out).toBeTruthy();
+    if (out) expect(JSON.parse(out).verdict).toBe("PASS");
+  });
+
+  it("ignores JSON objects that do not contain a verdict field", async () => {
+    const { extractVerdictJsonFromStdout } = await import("../../../src/team/TeamRuntime.js");
+    const buf = '```json\n{"step":"classify","status":"working"}\n```\n';
+    const out = extractVerdictJsonFromStdout(buf);
+    expect(out).toBeNull();
+  });
+
+  it("returns null for empty or verdict-free buffers", async () => {
+    const { extractVerdictJsonFromStdout } = await import("../../../src/team/TeamRuntime.js");
+    expect(extractVerdictJsonFromStdout("")).toBeNull();
+    expect(extractVerdictJsonFromStdout("just text, no JSON")).toBeNull();
+  });
+
+  it("handles JSON with escaped quotes in string values", async () => {
+    const { extractVerdictJsonFromStdout } = await import("../../../src/team/TeamRuntime.js");
+    const buf = '{"step":"classify","verdict":"FAIL","issues":["he said \\"oops\\""]}';
+    const out = extractVerdictJsonFromStdout(buf);
+    expect(out).toBeTruthy();
+    if (out) {
+      const parsed = JSON.parse(out);
+      expect(parsed.verdict).toBe("FAIL");
+      expect(parsed.issues[0]).toContain("oops");
+    }
+  });
+});
