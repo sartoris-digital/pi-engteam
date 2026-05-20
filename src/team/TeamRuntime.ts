@@ -170,6 +170,14 @@ export function buildSystemPrompt(opts: {
    * this file regardless of whether VerdictEmit or `write` produced it.
    */
   verdictFilePath?: string;
+  /**
+   * Per-run directory `<runsDir>/<runId>`. Used to derive concrete
+   * paths for the other custom-tool fallbacks (tasks.json, approval
+   * markers, etc.) so the model can emulate them with built-in
+   * `read`/`write` tools under providers that don't expose our
+   * orchestrator-side custom tools.
+   */
+  runDir?: string;
 }): string {
   const safeAgent = AGENT_NAME_RE.test(opts.agentName) ? opts.agentName : "agent";
   // Verdict-emit enforcement (HARD requirement, not advisory): some models
@@ -196,6 +204,36 @@ export function buildSystemPrompt(opts: {
       `  ${verdictSchema}\n` +
       `The orchestrator reads this file regardless of which path you took. Writing the file is FUNCTIONALLY EQUIVALENT to calling VerdictEmit. One of the two — VerdictEmit tool call OR write to the file — is required.`
     : "";
+  // Per-tool fallback documentation for providers (like GitHub CoPilot)
+  // that don't expose orchestrator-registered custom tools to the model.
+  // Each fallback uses built-in tools (write / read) on the same on-disk
+  // contracts the custom tools would have used. Tools that involve
+  // security primitives (HMAC signing, secret material, admission locks)
+  // have NO file-write fallback — they require a provider that exposes
+  // the custom tool.
+  const tasksPath = opts.runDir ? `${opts.runDir}/tasks.json` : undefined;
+  const approvalsDir = opts.runDir ? `${opts.runDir}/approvals` : undefined;
+  const otherFallbacks = opts.runDir
+    ? `\n\n### Other custom tools — provider compatibility table\n` +
+      `The orchestrator may register additional custom tools. If a tool you want is NOT in your tool inventory and a fallback is listed here, use the fallback. Tools with NO fallback REQUIRE a provider that exposes orchestrator-side custom tools — if those are missing, fail-fast with a FAIL verdict citing the missing tool.\n\n` +
+      `**TaskList / TaskUpdate** (sub-task tracking)\n` +
+      `  Fallback: use the built-in \`write\` tool to atomically rewrite **${tasksPath}** with the full task list as JSON: \`{ "tasks": [{ "id", "title", "status": "pending"|"in_progress"|"done", "notes" }] }\`. Read with \`read\` on the same path. If you don't need persistent sub-tasks, you can also just track them in your own context and skip the file entirely.\n\n` +
+      `**CheckApproval** (poll for granted approval)\n` +
+      `  Fallback: use the built-in \`read\` tool to inspect approval files directly.\n` +
+      `  - Pending request: **${approvalsDir}/pending/<requestId>.json** exists → status is "pending".\n` +
+      `  - Granted marker: **${approvalsDir}/pending/<requestId>.json.granted** exists → Judge approved; the token write is in flight or done.\n` +
+      `  - Token: **${approvalsDir}/<tokenId>.json** with matching \`requestId\` field and unexpired \`expiresAt\` → status is "granted".\n` +
+      `  - Quarantine: **${approvalsDir}/quarantine/<requestId>.json** → status is "denied" with the reason in that file.\n` +
+      `  None of these → "not-found".\n\n` +
+      `**SendMessage** (cross-agent communication)\n` +
+      `  Status in subprocess mode: NO-OP regardless of provider. There is no live message bus inside the agent subprocess — every agent runs independently per step. Skip SendMessage in subprocess mode; communicate via VerdictEmit fields (handoffHint, issues) and shared artifacts instead.\n\n` +
+      `**RequestApproval** (request Judge approval for a destructive op)\n` +
+      `  NO file-write fallback. The tool enforces per-run admission lock, pending cap, duplicate collapse, ALLOWED_OPS allowlist, atomic temp+rename, and metadata stamping under the watcher contract. Writing the pending file directly bypasses these safeguards (security downgrade). If RequestApproval is not in your tool inventory, emit verdict="FAIL" with reason="RequestApproval-required" and stop.\n\n` +
+      `**GrantApproval** (Judge mints approval token)\n` +
+      `  NO file-write fallback. Token signing requires the per-run secret + HMAC over (runId, tokenId, op, argsHash, expiresAt, pauseEpoch). The model has no path to the secret. If GrantApproval is not in your tool inventory and you are the Judge, emit verdict="FAIL" with reason="GrantApproval-required" and stop.\n\n` +
+      `**UseSecret** (retrieve secret material)\n` +
+      `  NO file-write fallback. Secrets MUST NOT be written to disk in the run dir. If UseSecret is not in your tool inventory, emit verdict="FAIL" with reason="UseSecret-required" and stop — do not improvise an alternative.`
+    : "";
   const teamSuffix =
     `\n\n---\n## Team Context\nYour name in the team is: **${safeAgent}**\n` +
     `Use SendMessage to communicate with other agents (if SendMessage is in your tool inventory).\n\n` +
@@ -207,7 +245,8 @@ export function buildSystemPrompt(opts: {
     `Ending a turn WITHOUT a verdict signal is a protocol violation that wastes orchestrator time and forces a forcing re-prompt. NEVER do this.\n\n` +
     `### Primary path — VerdictEmit tool\n` +
     `If VerdictEmit appears in your tool inventory, call it with the verdict fields. This is the preferred path.` +
-    fileFallback;
+    fileFallback +
+    otherFallbacks;
   const notesBlock = opts.systemNotes
     ? "\n\n---\n## System Reminders\n" + opts.systemNotes + "\n"
     : "";
@@ -457,6 +496,7 @@ export class TeamRuntime {
         systemNotes,
         expertise,
         verdictFilePath: verdictFile,
+        runDir: join(this.config.runsDir, runId),
       });
       await writeFile(systemPromptFile, fullPrompt);
 
