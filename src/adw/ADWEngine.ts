@@ -70,6 +70,10 @@ type UiCallbacks = {
 };
 
 export class ADWEngine {
+  // Phase B item 13: per-run activity queues. Keyed by runId so
+  // parallel runs each own their own writer + lock. Released on
+  // run-end (success or failure path).
+  private activityQueues = new Map<string, import("../team/RunActivityQueue.js").RunActivityQueue>();
   private uiCallbacks?: UiCallbacks;
   // Phase 5.6 round-3 M1: track which runId owns the current callbacks so
   // a finishing run doesn't clear another concurrently-active run's
@@ -109,6 +113,24 @@ export class ADWEngine {
   setUiCallbacks(cbs: UiCallbacks, runId?: string): void {
     this.uiCallbacks = cbs;
     this.uiCallbacksOwner = runId;
+  }
+
+  /**
+   * Phase B item 13: release the per-run activity queue. Called at
+   * every run.end site (success / fail / abort). Best-effort: a
+   * stuck lock should never block the engine from finalizing the
+   * run.
+   */
+  private releaseActivityQueue(runId: string): void {
+    const q = this.activityQueues.get(runId);
+    if (!q) return;
+    try {
+      q.release();
+    } catch { /* best-effort */ }
+    this.activityQueues.delete(runId);
+    try {
+      this.config.team.setActivityQueue(undefined);
+    } catch { /* best-effort */ }
   }
 
   /** Detach UI callbacks (called at run end or when context is no longer valid). */
@@ -402,6 +424,29 @@ export class ADWEngine {
       }
       await saveRunState(this.config.runsDir, state);
     }
+
+    // Phase B item 13: per-run activity queue. Created at run start
+    // when PI_ENGINEERING_ACTIVITY_STREAM=1, attached to TeamRuntime
+    // so deliverOnce can classify + enqueue subprocess stdout, and
+    // released at run.end (see watchRun loop).
+    try {
+      const { getPhaseAConfig } = await import("../team/phaseA-config.js");
+      const cfg = getPhaseAConfig();
+      if (cfg.activityStreamEnabled && !cfg.legacyMode) {
+        const { RunActivityQueue } = await import("../team/RunActivityQueue.js");
+        const queue = new RunActivityQueue({ runsDir: this.config.runsDir, runId });
+        try {
+          queue.acquireLock();
+          this.config.team.setActivityQueue(queue);
+          this.activityQueues.set(runId, queue);
+        } catch (err) {
+          console.error(
+            `[pi-eng] activity queue lock failed for ${runId}; continuing without realtime stream:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+    } catch { /* never block run start */ }
 
     this.config.observer.emit({
       runId,
@@ -891,6 +936,7 @@ export class ADWEngine {
     });
 
     this.clearUiStatus(runId);
+    this.releaseActivityQueue(runId);
 
     this.config.observer.emit({
       runId,

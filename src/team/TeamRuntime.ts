@@ -363,6 +363,11 @@ export class TeamRuntime {
   private currentRunId?: string;
   private currentStepName?: string;
   private agentLineCallback?: (agent: string, line: string) => void;
+  // Phase B item 13: optional per-run activity queue. ADWEngine sets
+  // this at run start and clears at run end. When set, deliverOnce
+  // classifies every stdout line via StreamClassifier and enqueues
+  // an AgentActivityEvent.
+  private activityQueue?: import("./RunActivityQueue.js").RunActivityQueue;
 
   constructor(private config: TeamRuntimeConfig) {
     for (const def of config.agentDefs ?? []) {
@@ -384,6 +389,16 @@ export class TeamRuntime {
   /** Set (or clear) a callback that receives each line of agent subprocess stdout. */
   setAgentLineCallback(fn: ((agent: string, line: string) => void) | undefined): void {
     this.agentLineCallback = fn;
+  }
+
+  /**
+   * Phase B item 13: attach a per-run activity queue. While set,
+   * each subprocess stdout line is classified via StreamClassifier
+   * and enqueued as an AgentActivityEvent. Caller (ADWEngine.startRun)
+   * is responsible for `acquireLock()` and `release()`.
+   */
+  setActivityQueue(queue: import("./RunActivityQueue.js").RunActivityQueue | undefined): void {
+    this.activityQueue = queue;
   }
 
   /**
@@ -762,6 +777,23 @@ export class TeamRuntime {
               for (const line of lines) {
                 const trimmed = line.trim();
                 if (trimmed) this.agentLineCallback?.(to, trimmed);
+                // Phase B items 11+12: classify + enqueue per line.
+                // Best-effort — queue errors must not break the
+                // subprocess drain.
+                if (this.activityQueue && trimmed) {
+                  try {
+                    const { classifyChunk } = require("./StreamClassifier.js") as typeof import("./StreamClassifier.js");
+                    const classified = classifyChunk(trimmed, "stdout");
+                    this.activityQueue.enqueue({
+                      runId: opts?.runId ?? this.currentRunId ?? "unknown",
+                      agentName: to,
+                      step: opts?.hostStep ?? this.currentStepName ?? "unknown",
+                      kind: classified.kind,
+                      body: classified.body,
+                      sourceClass: classified.sourceClass,
+                    });
+                  } catch { /* never block */ }
+                }
               }
               // Buffer stdout so the verdict-file-missing fallback can scan
               // it for a JSON blob the agent emitted as TEXT instead of via

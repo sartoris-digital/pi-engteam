@@ -31,6 +31,10 @@ export type PhaseAConfig = {
 
   // Round 13 MED #1: granular kill switches (subset).
   noNewWrites: boolean;
+
+  // Phase B: real-time activity stream. Gated behind
+  // PI_ENGINEERING_ACTIVITY_STREAM until E3 canary criteria are met.
+  activityStreamEnabled: boolean;
 };
 
 const DEFAULT_PHASE_A_CONFIG: PhaseAConfig = {
@@ -46,6 +50,7 @@ const DEFAULT_PHASE_A_CONFIG: PhaseAConfig = {
   telemetryEnabled: false,
   expandedStateProtection: true,
   noNewWrites: false,
+  activityStreamEnabled: false,
 };
 
 let cached: PhaseAConfig | undefined;
@@ -97,6 +102,7 @@ export function getPhaseAConfig(opts?: { force?: boolean }): PhaseAConfig {
       forcedRetryBudget: 0,
       telemetryEnabled: false,
       expandedStateProtection: false,
+      activityStreamEnabled: false,
     };
     return cached;
   }
@@ -111,6 +117,7 @@ export function getPhaseAConfig(opts?: { force?: boolean }): PhaseAConfig {
     telemetryEnabled: parseBool(process.env.PI_ENGINEERING_TELEMETRY, DEFAULT_PHASE_A_CONFIG.telemetryEnabled),
     expandedStateProtection: parseBool(process.env.PI_ENGINEERING_EXPANDED_STATE_PROTECTION, DEFAULT_PHASE_A_CONFIG.expandedStateProtection),
     noNewWrites: parseBool(process.env.PI_ENGINEERING_EMERGENCY_NO_NEW_WRITES, DEFAULT_PHASE_A_CONFIG.noNewWrites),
+    activityStreamEnabled: parseBool(process.env.PI_ENGINEERING_ACTIVITY_STREAM, DEFAULT_PHASE_A_CONFIG.activityStreamEnabled),
   };
   return cached;
 }
