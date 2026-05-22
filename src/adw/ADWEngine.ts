@@ -447,6 +447,36 @@ export class ADWEngine {
       await saveRunState(this.config.runsDir, state);
     }
 
+    // Phase D item 24: snapshot the Phase A feature flags + cohort
+    // key into `<runDir>/feature-decisions.json` so every step of
+    // this run reads the SAME values — `rollout.json` edits and
+    // mid-run env-var changes only affect new runs.
+    try {
+      const { getPhaseAConfig } = await import("../team/phaseA-config.js");
+      const { snapshotFeatureVector, computeCohortKey, writeFrozenDecisions } = await import("./feature-decisions.js");
+      const { buildRuntimeFingerprint } = await import("../team/phaseA-runtime.js");
+      const fp = buildRuntimeFingerprint({});
+      const cohort = computeCohortKey({
+        provider: fp.provider,
+        modelId: fp.modelId,
+        accountFingerprint: fp.accountFingerprint,
+        piVersion: fp.piVersion,
+        piBuildHash: fp.piBuildHash,
+        hostId: process.env.HOSTNAME ?? "unknown-host",
+      });
+      writeFrozenDecisions(joinPath(this.config.runsDir, runId), {
+        schemaVersion: 1,
+        runId,
+        cohortKey: cohort.key,
+        cohortHash: cohort.hash,
+        frozenAt: new Date().toISOString(),
+        features: snapshotFeatureVector(getPhaseAConfig()),
+      });
+    } catch (err) {
+      // Never block run start on telemetry/snapshot wiring.
+      console.error("[pi-eng] feature-decisions snapshot failed:", err instanceof Error ? err.message : String(err));
+    }
+
     // Phase B item 13: per-run activity queue. Created at run start
     // when PI_ENGINEERING_ACTIVITY_STREAM=1, attached to TeamRuntime
     // so deliverOnce can classify + enqueue subprocess stdout, and
