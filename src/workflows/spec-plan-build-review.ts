@@ -1,4 +1,5 @@
 import { join } from "path";
+import { writeFileSync, existsSync } from "fs";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -239,12 +240,21 @@ Set handoffHint: "security" | "perf" | "re-plan" if the failure category warrant
 
     try {
       const verdict = await waitForVerdict(ctx, "reviewer", prompt, "review");
+      const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+      const reviewMdPath = join(runDir, "review.md");
+      // Fallback: write review.md from verdict data if agent didn't produce it
+      if (!existsSync(reviewMdPath)) {
+        const lines = [`# Code Review: ${verdict.verdict}`];
+        if (verdict.issues?.length) lines.push(`\n## Issues\n${verdict.issues.map(i => `- ${i}`).join("\n")}`);
+        if (verdict.handoffHint) lines.push(`\n## Escalation: ${verdict.handoffHint}`);
+        writeFileSync(reviewMdPath, lines.join("\n") + "\n");
+      }
       return {
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: { "review": resolveArtifactPath(ctx, verdict.artifacts?.[0], "review.md") },
+        artifacts: { "review": reviewMdPath },
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
