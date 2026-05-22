@@ -17,6 +17,7 @@ import { mkdir, appendFile } from "fs/promises";
 import { join as joinPath } from "path";
 import { loadTasks } from "../team/tools/TaskList.js";
 import { formatTillDoneFooter } from "./TillDoneFooter.js";
+import { buildRuntimeFingerprint, makeCapabilityMatrix, performCapabilityCheck, defaultStepTimeoutSeconds, runWithStepTimeout, StepTimeoutError } from "../team/phaseA-runtime.js";
 
 // Phase 5.7 round-1 H1/H2/H3: per-runId footer refresh tracking. Each
 // pending entry tracks: the debounce timer (cleared/replaced when a new
@@ -329,6 +330,30 @@ export class ADWEngine {
     const runId = crypto.randomUUID();
     const workflow = this.config.workflows.get(params.workflow);
     if (!workflow) throw new Error(`Workflow '${params.workflow}' not found`);
+
+    // Phase A item 1: capability gate at run start. In `observe`/`warn`
+    // mode this logs warnings and proceeds; in `enforce` mode a missing
+    // / wildcard-only / stale bundle refuses the run with a clear
+    // `provider-missing-capability` error. Legacy mode bypasses
+    // entirely.
+    try {
+      const matrix = makeCapabilityMatrix();
+      const fp = buildRuntimeFingerprint({});
+      const cap = performCapabilityCheck(matrix, fp);
+      if (!cap.allowed) {
+        throw new Error(cap.reason);
+      }
+    } catch (err) {
+      // Re-throw provider-missing-capability errors so the operator
+      // sees them immediately; swallow ENOENT/permission errors from
+      // a missing capabilities dir on first install so a fresh
+      // checkout doesn't refuse to run before the operator has
+      // probed.
+      if (err instanceof Error && /provider-missing-capability/.test(err.message)) {
+        throw err;
+      }
+    }
+
     // Codex round-4 MEDIUM: workflow.defaults (e.g. triage's $5/600s) was
     // dead code — startRun only consulted params.budget so every workflow
     // landed on the global default ($20/3600s). Merge: workflow defaults
@@ -527,13 +552,25 @@ export class ADWEngine {
           observer: this.config.observer,
           engine: this,
         };
-        result = await stepDef.run(ctx);
+        const timeoutSeconds = stepDef.timeoutSeconds ?? defaultStepTimeoutSeconds(stepDef.name);
+        result = await runWithStepTimeout(stepDef.name, timeoutSeconds, () => stepDef.run(ctx));
       } catch (err) {
-        result = {
-          success: false,
-          verdict: "FAIL",
-          error: err instanceof Error ? err.message : String(err),
-        };
+        if (err instanceof StepTimeoutError) {
+          result = {
+            success: false,
+            verdict: "FAIL",
+            error: err.message,
+            issues: [
+              `Step '${err.stepName}' timed out after ${err.elapsedMs}ms (budget ${err.budgetMs}ms). The agent did not emit a verdict within the step's allotted wall-clock budget.`,
+            ],
+          };
+        } else {
+          result = {
+            success: false,
+            verdict: "FAIL",
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
       } finally {
         this.config.team.markStepComplete(state.currentStep);
       }
@@ -992,13 +1029,25 @@ export class ADWEngine {
         observer: this.config.observer,
         engine: this,
       };
-      result = await stepDef.run(ctx);
+      const timeoutSeconds = stepDef.timeoutSeconds ?? defaultStepTimeoutSeconds(stepDef.name);
+      result = await runWithStepTimeout(stepDef.name, timeoutSeconds, () => stepDef.run(ctx));
     } catch (err) {
-      result = {
-        success: false,
-        verdict: "FAIL",
-        error: err instanceof Error ? err.message : String(err),
-      };
+      if (err instanceof StepTimeoutError) {
+        result = {
+          success: false,
+          verdict: "FAIL",
+          error: err.message,
+          issues: [
+            `Step '${err.stepName}' timed out after ${err.elapsedMs}ms (budget ${err.budgetMs}ms). The agent did not emit a verdict within the step's allotted wall-clock budget.`,
+          ],
+        };
+      } else {
+        result = {
+          success: false,
+          verdict: "FAIL",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     } finally {
       this.config.team.markStepComplete(stepDef.name);
     }

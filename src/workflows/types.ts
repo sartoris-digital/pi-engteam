@@ -54,6 +54,14 @@ export type Step = {
   parallel?: boolean;
   /** Phase 4: step names that must complete (any verdict) before this step is eligible. */
   dependsOn?: string[];
+  /**
+   * Phase A item 5: absolute wall-clock budget for the step's
+   * agent-deliver call. Defaults to 240s for normal steps and 360s
+   * for judge-gate steps (handled at the engine level — workflows
+   * may override). Includes any forced-retry attempts (the budget
+   * is per-step, not per-attempt).
+   */
+  timeoutSeconds?: number;
   run: (ctx: StepContext) => Promise<StepResult>;
 };
 

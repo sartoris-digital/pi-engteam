@@ -42,6 +42,38 @@ describe("isProtectedPath", () => {
     expect(isProtectedPath("/home/user/proj/.pi/engineering-team/expertise/eng.md").blocked).toBe(true));
   it("blocks _readonly subdir writes (Phase 5 §8.5)", () =>
     expect(isProtectedPath("/home/user/proj/.pi/engineering-team/expertise/_readonly/billing.md").blocked).toBe(true));
+
+  // Phase A item 9 + round 2 HIGH #1: orchestrator-owned paths under runDir.
+  describe("Phase A: orchestrator-owned paths under runDir", () => {
+    const runsDir = "/home/user/.pi/engineering-team/runs";
+    it("blocks state.json", () => {
+      expect(isProtectedPath(`${runsDir}/abc/state.json`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks events.jsonl", () => {
+      expect(isProtectedPath(`${runsDir}/abc/events.jsonl`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks conversation.jsonl", () => {
+      expect(isProtectedPath(`${runsDir}/abc/conversation.jsonl`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks agent-activity.jsonl", () => {
+      expect(isProtectedPath(`${runsDir}/abc/agent-activity.jsonl`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks feature-decisions.json (round 15 HIGH #3)", () => {
+      expect(isProtectedPath(`${runsDir}/abc/feature-decisions.json`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks _verdicts/ subtree (round 2 HIGH #2)", () => {
+      expect(isProtectedPath(`${runsDir}/abc/_verdicts/foo.json`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks _telemetry/ subtree", () => {
+      expect(isProtectedPath(`${runsDir}/abc/_telemetry/fallbacks.jsonl`, { runsDir }).blocked).toBe(true);
+    });
+    it("blocks _activity/ subtree (round 4 MED #4)", () => {
+      expect(isProtectedPath(`${runsDir}/_activity/abc/agent-activity.jsonl`, { runsDir }).blocked).toBe(true);
+    });
+    it("allows a normal artifact file under runDir", () => {
+      expect(isProtectedPath(`${runsDir}/abc/triage-summary.md`, { runsDir }).blocked).toBe(false);
+    });
+  });
 });
 
 describe("isForcePush", () => {

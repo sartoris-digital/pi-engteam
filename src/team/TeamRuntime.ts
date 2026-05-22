@@ -431,31 +431,40 @@ export class TeamRuntime {
   ): Promise<VerdictPayload | undefined> {
     const first = await this.deliverOnce(to, message, opts);
     if (first) return first;
-    // Re-prompt with a forcing instruction. We MUST also append the
-    // forcing instruction to the system prompt for the retry pass so a
-    // model that ignored the prior teamSuffix has a second chance to
-    // honor the contract.
-    const forcedMessage: TeamMessage = {
-      ...message,
-      id: message.id, // keep same id so events thread; eventToken differs per deliver
-      message:
-        message.message +
-        "\n\n---\n" +
-        "[ORCHESTRATOR RE-PROMPT — VERDICT REQUIRED]\n" +
-        "Your previous turn ended WITHOUT a verdict signal. That is a protocol violation.\n" +
-        "You MUST signal a verdict NOW based on your investigation above. Two equivalent ways:\n" +
-        "  1. Call the VerdictEmit tool, IF it appears in your tool inventory.\n" +
-        "  2. If VerdictEmit is NOT in your tool inventory (some providers do not expose custom orchestrator tools), use the built-in `write` tool to write your verdict JSON to the verdictFilePath that was specified in your system prompt. The file path was provided above. The orchestrator reads that file the same way it reads VerdictEmit's output.\n" +
-        "Verdict content rules:\n" +
-        "  - If your prior investigation was sufficient: verdict=\"PASS\" or \"FAIL\" with artifacts.\n" +
-        "  - If you ran out of investigation paths or hit a blocker: verdict=\"FAIL\" with the blocker / dead ends / what you DID learn in the issues array.\n" +
-        "  - If you genuinely need more input: verdict=\"NEEDS_MORE\" describing exactly what would unblock you.\n" +
-        "DO NOT investigate further. DO NOT end this turn without signaling a verdict via VerdictEmit OR a write to the verdict file. Pick one and do it now.",
-    };
-    console.error(
-      `[pi-team] agent ${to} did not emit VerdictEmit on first pass; re-prompting with forcing instruction.`,
-    );
-    return this.deliverOnce(to, forcedMessage, opts);
+    // Phase A item 6: forced verdict re-prompt with a configurable
+    // attempt budget (default 1; can be lifted to N=2+ via
+    // PI_ENGINEERING_FORCED_RETRY_BUDGET). LEGACY_MODE disables
+    // retries entirely.
+    const { getPhaseAConfig } = await import("./phaseA-config.js");
+    const cfg = getPhaseAConfig();
+    if (!cfg.forcedRetriesEnabled || cfg.forcedRetryBudget < 1) return undefined;
+
+    const forcingInstruction =
+      "\n\n---\n" +
+      "[ORCHESTRATOR RE-PROMPT — VERDICT REQUIRED]\n" +
+      "Your previous turn ended WITHOUT a verdict signal. That is a protocol violation.\n" +
+      "You MUST signal a verdict NOW based on your investigation above. Two equivalent ways:\n" +
+      "  1. Call the VerdictEmit tool, IF it appears in your tool inventory.\n" +
+      "  2. If VerdictEmit is NOT in your tool inventory (some providers do not expose custom orchestrator tools), use the built-in `write` tool to write your verdict JSON to the verdictFilePath that was specified in your system prompt. The file path was provided above. The orchestrator reads that file the same way it reads VerdictEmit's output.\n" +
+      "Verdict content rules:\n" +
+      "  - If your prior investigation was sufficient: verdict=\"PASS\" or \"FAIL\" with artifacts.\n" +
+      "  - If you ran out of investigation paths or hit a blocker: verdict=\"FAIL\" with the blocker / dead ends / what you DID learn in the issues array.\n" +
+      "  - If you genuinely need more input: verdict=\"NEEDS_MORE\" describing exactly what would unblock you.\n" +
+      "DO NOT investigate further. DO NOT end this turn without signaling a verdict via VerdictEmit OR a write to the verdict file. Pick one and do it now.";
+
+    for (let attempt = 1; attempt <= cfg.forcedRetryBudget; attempt++) {
+      const forcedMessage: TeamMessage = {
+        ...message,
+        id: message.id, // keep same id so events thread
+        message: message.message + forcingInstruction + (attempt > 1 ? `\n(attempt ${attempt} of ${cfg.forcedRetryBudget})` : ""),
+      };
+      console.error(
+        `[pi-team] agent ${to} did not emit VerdictEmit on attempt ${attempt}; re-prompting (budget ${attempt}/${cfg.forcedRetryBudget}).`,
+      );
+      const result = await this.deliverOnce(to, forcedMessage, opts);
+      if (result) return result;
+    }
+    return undefined;
   }
 
   private async deliverOnce(

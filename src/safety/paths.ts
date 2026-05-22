@@ -167,6 +167,35 @@ export function isProtectedPath(filePath: string, opts?: { runsDir?: string }): 
         };
       }
     }
+
+    // Phase A item 9 + round 2 HIGH #1 + round 15 HIGH #3: extend
+    // orchestrator-owned path protection under runDir. Each path is
+    // host-managed; agents read but never write. Layer D upserts may
+    // include the parent runDir for artifact synthesis, but these
+    // specific files must remain orchestrator-only even then.
+    const runUnderRuns =
+      (runsDirAbs && (cand === runsDirAbs || cand.startsWith(runsDirAbs + "/"))) ||
+      /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(cand);
+    if (runUnderRuns) {
+      const ORCH_OWNED = [
+        /\/state\.json$/i,
+        /\/events\.jsonl$/i,
+        /\/conversation\.jsonl$/i,
+        /\/agent-activity\.jsonl$/i,
+        /\/feature-decisions\.json$/i,
+        /(^|\/)_verdicts(\/|$)/i,
+        /(^|\/)_telemetry(\/|$)/i,
+        /(^|\/)_activity(\/|$)/i,
+      ];
+      for (const pat of ORCH_OWNED) {
+        if (pat.test(cand)) {
+          return {
+            blocked: true,
+            reason: `Orchestrator-owned path under runDir (${pat.source}) — agents read but never write.`,
+          };
+        }
+      }
+    }
   }
 
   return { blocked: false };
