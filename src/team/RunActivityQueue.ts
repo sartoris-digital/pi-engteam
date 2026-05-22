@@ -102,6 +102,18 @@ export class RunActivityQueue {
   private pendingToolStart: number | undefined; // when an unmatched tool_call_invoke is open
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private stuckWarned: boolean = false;
+  // Phase E item E17 — stuck-warning false-positive accounting.
+  // Track per-outcome counts so callers (or external scrapers)
+  // can compute the false-positive ratio.
+  private stuckResolved: { true_stuck: number; false_positive: number; unknown: number } = {
+    true_stuck: 0,
+    false_positive: 0,
+    unknown: 0,
+  };
+  // Timestamp of the last unresolved warning (used to mark a
+  // verdict-within-window as a false positive).
+  private lastWarningTs: number | undefined;
+  private readonly falsePositiveWindowMs: number = 120_000; // 120s per PLAN item E17
   // Phase C item 19 — per-step volume caps. 8 MB / 50k events per
   // step before non-essential events collapse to a summary.
   private readonly STEP_VOLUME_BYTE_CAP = 8 * 1024 * 1024;
@@ -269,6 +281,18 @@ export class RunActivityQueue {
       this.stepVolumeSuppressed = 0;
     }
 
+    // Phase E item E17 — auto-resolve a pending stuck-warning when
+    // a verdict (or error) lands within the false-positive window:
+    // the warning was premature.
+    if (this.stuckWarned && this.lastWarningTs !== undefined) {
+      const sinceWarning = Date.now() - this.lastWarningTs;
+      if (sinceWarning <= this.falsePositiveWindowMs && (ev.kind === "verdict" || ev.kind === "tool_call_result")) {
+        this.stuckResolved.false_positive++;
+        this.stuckWarned = false;
+        this.lastWarningTs = undefined;
+      }
+    }
+
     // Stuck-detector bookkeeping (item 16).
     this.lastEnqueueTs = Date.now();
     this.lastAgent = ev.agentName;
@@ -322,6 +346,7 @@ export class RunActivityQueue {
     // it but don't double-warn.)
     if (state === "model-silent" && !this.stuckWarned) {
       this.stuckWarned = true;
+      this.lastWarningTs = now;
       const warning: AgentActivityEvent = {
         runId: this.opts.runId,
         agentName: this.lastAgent || "system",
@@ -340,6 +365,27 @@ export class RunActivityQueue {
   /** True when latched auto-disable has fired. */
   isAutoDisabled(): boolean {
     return this.autoDisabled;
+  }
+
+  /**
+   * Phase E item E17 — explicit resolution of an outstanding
+   * stuck-warning. Called by ADWEngine on run-end:
+   *   - process exited cleanly with verdict → false_positive (the
+   *     warning was premature; already auto-resolved in enqueue).
+   *   - process died OR run cancelled externally → true_stuck.
+   *   - cannot determine cause → unknown.
+   * No-op when no warning is outstanding.
+   */
+  resolveStuckWarning(outcome: "true_stuck" | "false_positive" | "unknown"): void {
+    if (!this.stuckWarned) return;
+    this.stuckResolved[outcome]++;
+    this.stuckWarned = false;
+    this.lastWarningTs = undefined;
+  }
+
+  /** Diagnostic — current resolved-outcome counts. */
+  getStuckOutcomes(): { true_stuck: number; false_positive: number; unknown: number } {
+    return { ...this.stuckResolved };
   }
 
   /** Diagnostic — current ring depth. */

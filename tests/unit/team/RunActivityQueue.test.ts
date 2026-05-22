@@ -172,4 +172,38 @@ describe("RunActivityQueue — stuck detector (item 16)", () => {
     expect(last).toBeDefined();
     expect(JSON.parse(last!.body).state).toBe("idle");
   });
+
+  // Phase E item E17 — stuck-warning resolved outcome accounting.
+  it("auto-resolves a stuck-warning as false_positive when a verdict arrives in-window", () => {
+    const q = new RunActivityQueue({
+      runsDir, runId, ringCapacity: 16,
+      heartbeatIntervalMs: 1000,
+      stuckThresholdMs: 5000,
+    });
+    q.enqueue({ runId, agentName: "a", step: "s", kind: "assistant_text", body: "hi", sourceClass: "stdout" });
+    // Trigger stuck-warning.
+    q.tickHeartbeat(Date.now() + 10_000);
+    expect(q.getStuckOutcomes().false_positive).toBe(0);
+    // Verdict arrives now (well within the 120s false-positive window).
+    q.enqueue({ runId, agentName: "a", step: "s", kind: "verdict", body: "PASS", sourceClass: "stdout" });
+    expect(q.getStuckOutcomes().false_positive).toBe(1);
+  });
+
+  it("manual resolveStuckWarning marks the outcome explicitly", () => {
+    const q = new RunActivityQueue({
+      runsDir, runId, ringCapacity: 16,
+      heartbeatIntervalMs: 1000,
+      stuckThresholdMs: 5000,
+    });
+    q.enqueue({ runId, agentName: "a", step: "s", kind: "assistant_text", body: "hi", sourceClass: "stdout" });
+    q.tickHeartbeat(Date.now() + 10_000);
+    q.resolveStuckWarning("true_stuck");
+    expect(q.getStuckOutcomes().true_stuck).toBe(1);
+  });
+
+  it("resolveStuckWarning is a no-op when no warning is outstanding", () => {
+    const q = new RunActivityQueue({ runsDir, runId, ringCapacity: 16 });
+    q.resolveStuckWarning("unknown");
+    expect(q.getStuckOutcomes()).toEqual({ true_stuck: 0, false_positive: 0, unknown: 0 });
+  });
 });
