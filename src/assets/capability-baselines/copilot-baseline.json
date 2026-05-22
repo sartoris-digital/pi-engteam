@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "baselineOnly": true,
+  "provenance": {
+    "provider": "copilot",
+    "modelId": "*",
+    "accountFingerprint": "*",
+    "piVersion": "*",
+    "piBuildHash": "*",
+    "piEngVersion": "2.1.0",
+    "protocolVersion": "*",
+    "runtimeFlags": ["*"],
+    "probeTs": "2026-01-01T00:00:00.000Z",
+    "probeBundleHash": "baseline",
+    "harnessVersion": "0.0.0-baseline"
+  },
+  "observedTools": [
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "glob",
+    "grep"
+  ],
+  "sentinelResults": {
+    "VerdictEmit": "tool-not-in-inventory",
+    "SendMessage": "tool-not-in-inventory",
+    "RequestApproval": "tool-not-in-inventory",
+    "GrantApproval": "tool-not-in-inventory",
+    "UseSecret": "tool-not-in-inventory",
+    "TaskList": "tool-not-in-inventory",
+    "TaskUpdate": "tool-not-in-inventory",
+    "CheckApproval": "tool-not-in-inventory",
+    "write": "ok",
+    "edit": "ok",
+    "read": "ok"
+  },
+  "streams": {
+    "thinking": "stdout",
+    "tool_call_invoke": "stdout",
+    "tool_call_result": "stdout",
+    "assistant_text": "stdout",
+    "error": "stderr"
+  },
+  "notes": "Bundled baseline for GitHub CoPilot routing — Pi does NOT expose orchestrator custom tools to the CoPilot model. The verdict + task + approval surfaces must use the file-write fallbacks documented in TeamRuntime.buildSystemPrompt. Realtime chunks observed on stdout via the pi -p --no-session protocol. Wildcards on model/account/piVersion mean this is usable only in observe/warn modes."
+}

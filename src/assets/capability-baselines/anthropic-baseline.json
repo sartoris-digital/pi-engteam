@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "baselineOnly": true,
+  "provenance": {
+    "provider": "anthropic",
+    "modelId": "*",
+    "accountFingerprint": "*",
+    "piVersion": "*",
+    "piBuildHash": "*",
+    "piEngVersion": "2.1.0",
+    "protocolVersion": "*",
+    "runtimeFlags": ["*"],
+    "probeTs": "2026-01-01T00:00:00.000Z",
+    "probeBundleHash": "baseline",
+    "harnessVersion": "0.0.0-baseline"
+  },
+  "observedTools": [
+    "VerdictEmit",
+    "SendMessage",
+    "RequestApproval",
+    "GrantApproval",
+    "UseSecret",
+    "TaskList",
+    "TaskUpdate",
+    "CheckApproval",
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "glob",
+    "grep"
+  ],
+  "sentinelResults": {
+    "VerdictEmit": "ok",
+    "write": "ok",
+    "edit": "ok",
+    "read": "ok",
+    "SendMessage": "ok"
+  },
+  "streams": {
+    "thinking": "stdout",
+    "tool_call_invoke": "stdout",
+    "tool_call_result": "stdout",
+    "assistant_text": "stdout",
+    "error": "stderr"
+  },
+  "notes": "Bundled baseline for Anthropic-direct routing — Pi exposes the full orchestrator custom-tool registry and emits realtime chunks on stdout. Wildcards on model/account/piVersion mean this is usable only in observe/warn modes; enforce requires a probed bundle."
+}
