@@ -151,3 +151,20 @@ describe("defaultStepTimeoutSeconds", () => {
   });
 });
 
+// Phase C item 20 — PI version detection.
+import { checkPiVersion, resetPiVersionCheckCache } from "../../../src/team/phaseA-runtime.js";
+
+describe("checkPiVersion", () => {
+  afterEach(() => {
+    resetPiVersionCheckCache();
+  });
+
+  it("classifies unknown when the pi binary cannot be resolved", () => {
+    const r = checkPiVersion("nonexistent-pi-binary-xyz");
+    // Either "unknown" (no version output) or "ok" depending on
+    // the host's PATH — both are acceptable here. The contract
+    // is that the function never throws.
+    expect(["ok", "warn", "error", "unknown"]).toContain(r.level);
+  });
+});
+

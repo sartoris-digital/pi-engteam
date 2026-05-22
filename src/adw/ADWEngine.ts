@@ -86,6 +86,28 @@ export class ADWEngine {
     for (const wf of config.workflows.values()) {
       validateWorkflow(wf);
     }
+    // Phase C item 20: PI version detection. WARN at < 0.73,
+    // refuse at < 0.65 (peer-dep floor). Skipped in LEGACY_MODE
+    // since the operator has explicitly opted into 2.0.x semantics.
+    try {
+      const { getPhaseAConfig } = require("../team/phaseA-config.js") as typeof import("../team/phaseA-config.js");
+      if (!getPhaseAConfig().legacyMode) {
+        const { checkPiVersion } = require("../team/phaseA-runtime.js") as typeof import("../team/phaseA-runtime.js");
+        const v = checkPiVersion();
+        if (v.level === "error") {
+          throw new Error(v.message);
+        }
+        if (v.level === "warn" || v.level === "unknown") {
+          console.error(`[pi-eng] ${v.message}`);
+        }
+      }
+    } catch (err) {
+      // Re-throw the hard-fail; swallow anything else so a missing
+      // pi binary in tests doesn't crash the engine.
+      if (err instanceof Error && /below the 0\.65 peer-dep floor/.test(err.message)) {
+        throw err;
+      }
+    }
   }
 
   /** Phase 4: expose the runs directory so workflow steps can locate <run>/conversation.jsonl. */

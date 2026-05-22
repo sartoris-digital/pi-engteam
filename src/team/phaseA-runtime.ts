@@ -147,6 +147,71 @@ export function makeCapabilityMatrix(): CapabilityMatrix {
 }
 
 /**
+ * Phase C item 20: PI version detection at boot. Parses
+ * `pi --version` once, returns a structured comparison result.
+ *
+ * Floors:
+ *   - < 0.65 → HARD FAIL (peer-dep floor; subprocess flow won't work).
+ *   - < 0.73 → WARN (GHCP-subprocess gaps known to be open).
+ *   - >= 0.73 → OK.
+ *
+ * Returns `{ piVersion, ok, level, message }`. Caller decides
+ * whether to throw on level==="error".
+ */
+export type PiVersionCheck = {
+  piVersion: string;
+  level: "ok" | "warn" | "error" | "unknown";
+  message: string;
+};
+
+let cachedVersionCheck: PiVersionCheck | undefined;
+
+export function checkPiVersion(piBinary = "pi"): PiVersionCheck {
+  if (cachedVersionCheck) return cachedVersionCheck;
+  const { piVersion } = resolvePiBinaryFingerprint(piBinary);
+  if (piVersion === "unknown") {
+    cachedVersionCheck = {
+      piVersion,
+      level: "unknown",
+      message: `pi-engineering: could not detect 'pi --version'. Phase A/B behaviors that depend on Pi subprocess routing may not work as expected.`,
+    };
+    return cachedVersionCheck;
+  }
+  const cmp = compareSemver(piVersion);
+  if (cmp.major === 0 && cmp.minor < 65) {
+    cachedVersionCheck = {
+      piVersion,
+      level: "error",
+      message: `pi-engineering: detected pi ${piVersion} which is below the 0.65 peer-dep floor. Upgrade pi-cli to >= 0.73 before continuing.`,
+    };
+  } else if (cmp.major === 0 && cmp.minor < 73) {
+    cachedVersionCheck = {
+      piVersion,
+      level: "warn",
+      message: `pi-engineering: detected pi ${piVersion}. The CoPilot-compat fixes shipped in pi-engineering 2.0.11-2.0.15 + 2.1.x rely on pi-cli >= 0.73 for stable subprocess routing. Consider upgrading.`,
+    };
+  } else {
+    cachedVersionCheck = {
+      piVersion,
+      level: "ok",
+      message: `pi-engineering: pi ${piVersion} OK.`,
+    };
+  }
+  return cachedVersionCheck;
+}
+
+/** Test-only — clears the cached version check so the next call re-reads. */
+export function resetPiVersionCheckCache(): void {
+  cachedVersionCheck = undefined;
+}
+
+function compareSemver(v: string): { major: number; minor: number; patch: number } {
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return { major: 0, minor: 0, patch: 0 };
+  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3], 10) };
+}
+
+/**
  * Phase A item 5: typed step-timeout error. ADWEngine catches and
  * converts to a FAIL verdict with a clear message.
  */

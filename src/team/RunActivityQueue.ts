@@ -21,6 +21,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, writeFile
 import { constants } from "fs";
 import { dirname, resolve } from "path";
 import { getActivityPaths, type ActivityPaths } from "./activity-paths.js";
+import { redact } from "./Redactor.js";
 
 export type ActivityKind =
   | "thinking"
@@ -101,6 +102,14 @@ export class RunActivityQueue {
   private pendingToolStart: number | undefined; // when an unmatched tool_call_invoke is open
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private stuckWarned: boolean = false;
+  // Phase C item 19 — per-step volume caps. 8 MB / 50k events per
+  // step before non-essential events collapse to a summary.
+  private readonly STEP_VOLUME_BYTE_CAP = 8 * 1024 * 1024;
+  private readonly STEP_VOLUME_COUNT_CAP = 50_000;
+  private stepVolumeKey = "";
+  private stepVolumeBytes = 0;
+  private stepVolumeCount = 0;
+  private stepVolumeSuppressed = 0;
 
   constructor(opts: QueueOptions) {
     this.opts = {
@@ -167,12 +176,31 @@ export class RunActivityQueue {
   }
 
   /**
-   * Enqueue an event. Truncates body to `maxBodyBytes`. Returns
-   * { accepted, drops } so callers can spot pressure.
+   * Enqueue an event. Order: redact → truncate (Phase C item 18+19).
+   * Returns { accepted, dropped } so callers can spot pressure.
+   *
+   * Per-step cumulative cap (item 19): once `stepVolumeBytes` or
+   * `stepVolumeCount` is reached on the current step, subsequent
+   * non-essential events collapse to a single
+   * "(N more events suppressed)" summary.
    */
   enqueue(partial: Omit<AgentActivityEvent, "seq" | "sourceTs"> & { sourceTs?: string }): { accepted: boolean; dropped?: ActivityKind } {
     if (this.autoDisabled) return { accepted: false, dropped: partial.kind };
-    const body = this.truncateBody(partial.body);
+    // Per-step volume cap (item 19). Reset when step changes.
+    if (this.stepVolumeKey !== `${partial.agentName}:${partial.step}`) {
+      this.stepVolumeKey = `${partial.agentName}:${partial.step}`;
+      this.stepVolumeBytes = 0;
+      this.stepVolumeCount = 0;
+      this.stepVolumeSuppressed = 0;
+    }
+    if (this.stepVolumeBytes > this.STEP_VOLUME_BYTE_CAP || this.stepVolumeCount > this.STEP_VOLUME_COUNT_CAP) {
+      if (DROP_FIRST_KINDS.has(partial.kind) || partial.kind === "assistant_text") {
+        this.stepVolumeSuppressed++;
+        return { accepted: false, dropped: partial.kind };
+      }
+      // Essential events still go through — caller needs them.
+    }
+    const body = this.truncateBody(redact(partial.body));
     const ev: AgentActivityEvent = {
       runId: partial.runId,
       agentName: partial.agentName,
@@ -216,6 +244,30 @@ export class RunActivityQueue {
     if (this.ring.length > this.opts.ringCapacity * 2) this.ring.shift();
     this.persist(ev);
     this.opts.onEvent?.(ev);
+
+    // Step volume accounting (item 19).
+    this.stepVolumeBytes += Buffer.byteLength(body, "utf8");
+    this.stepVolumeCount++;
+    if (
+      this.stepVolumeSuppressed > 0 &&
+      ev.kind !== "essential-coalesced"
+    ) {
+      // We've just admitted an event after a suppression episode —
+      // emit a one-line summary noting how many were dropped.
+      const summary: AgentActivityEvent = {
+        runId: ev.runId,
+        agentName: ev.agentName,
+        step: ev.step,
+        seq: this.nextSeq(),
+        sourceTs: new Date().toISOString(),
+        kind: "essential-coalesced",
+        body: `(${this.stepVolumeSuppressed} non-essential events suppressed past per-step volume cap)`,
+        sourceClass: "synthetic",
+      };
+      this.persist(summary);
+      this.opts.onEvent?.(summary);
+      this.stepVolumeSuppressed = 0;
+    }
 
     // Stuck-detector bookkeeping (item 16).
     this.lastEnqueueTs = Date.now();
