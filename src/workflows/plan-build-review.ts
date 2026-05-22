@@ -27,6 +27,7 @@ async function waitForAgentVerdict(
 const planStep: Step = {
   name: "plan",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are being asked to plan the following goal:
 
@@ -78,6 +79,7 @@ When your plan is complete, call VerdictEmit with:
 const buildStep: Step = {
   name: "build",
   required: true,
+  timeoutSeconds: 1800,
   verify: true,
   agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
@@ -121,6 +123,7 @@ When implementation is complete and tests pass, call VerdictEmit with:
 const reviewStep: Step = {
   name: "review",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are the reviewer. Please review the implementation for the following goal:
 

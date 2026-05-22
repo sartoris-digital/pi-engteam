@@ -26,6 +26,7 @@ async function waitForVerdict(
 const discoverStep: Step = {
   name: "discover",
   required: true,
+  timeoutSeconds: 1800,
   // L3: allow the user to write answers.md via the Pi session while paused in the answering phase
   planMode: false,
   pauseAfter: "answering",
@@ -80,6 +81,7 @@ Call VerdictEmit with step: "discover", verdict: "PASS", artifacts: ["${question
 const designStep: Step = {
   name: "design",
   required: true,
+  timeoutSeconds: 1800,
   pauseAfter: "approving",
   run: async (ctx: StepContext): Promise<StepResult> => {
     // Give the architect the absolute run-dir paths (mirrors the discover-step
@@ -139,6 +141,7 @@ Call VerdictEmit with step: "design", verdict: "PASS", artifacts: ["${specAbsPat
 const planStep: Step = {
   name: "plan",
   required: true,
+  timeoutSeconds: 1800,
   pauseAfter: "approving",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const specArtifact = ctx.run.artifacts["spec"] ?? join(ctx.engine.getRunsDir(), ctx.run.runId, "spec.md");
@@ -182,6 +185,7 @@ Call VerdictEmit with step: "plan", verdict: "PASS", artifacts: ["${planAbsPath}
 const buildStep: Step = {
   name: "build",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["plan"] ?? "No plan artifact found";
     const prompt = `You are the implementer. Execute the plan:
@@ -215,6 +219,7 @@ Call VerdictEmit with step: "build", verdict: "PASS" when implementation is comp
 const reviewStep: Step = {
   name: "review",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const specArtifact = ctx.run.artifacts["spec"] ?? "spec.md";
     const reviewPath = resolveArtifactPath(ctx, undefined, "review.md");

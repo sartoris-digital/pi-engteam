@@ -35,6 +35,7 @@ const ADHOC_DEFAULT_HOLD_HOURS = 8;
 const openStep: Step = {
   name: "open",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     // Record an initial adhocHoldExpiresAt so the watcher's stale gate
     // (Phase 9) gives the user a generous window before refusing fresh

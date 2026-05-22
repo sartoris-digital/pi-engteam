@@ -45,6 +45,7 @@ async function preludeFor(ctx: StepContext): Promise<string> {
 const dispatchStep: Step = {
   name: "dispatch",
   required: true,
+  timeoutSeconds: 1800,
   agent: "orchestrator",
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prelude = await preludeFor(ctx);
@@ -128,6 +129,7 @@ function makePositionStep(leadAgent: string, round: number = 1, allShorts?: stri
   return {
     name: stepName,
     required: true,
+  timeoutSeconds: 1800,
     agent: leadAgent,
     dependsOn,
     run: async (ctx: StepContext): Promise<StepResult> => {
@@ -274,6 +276,7 @@ function makeAdversarialStep(leadAgent: string, round: number = 1, allShorts?: s
   return {
     name: stepName,
     required: true,
+  timeoutSeconds: 1800,
     agent: leadAgent,
     dependsOn,
     run: async (ctx: StepContext): Promise<StepResult> => {
@@ -382,6 +385,7 @@ function makeSynthesisStep(rounds: number, allShorts: string[]): Step {
   return {
     name: "synthesis",
     required: true,
+  timeoutSeconds: 1800,
     agent: "orchestrator",
     dependsOn: lastRoundAdversarials,
     run: async (ctx: StepContext): Promise<StepResult> => {

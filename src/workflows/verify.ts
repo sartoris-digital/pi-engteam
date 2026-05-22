@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const auditStep: Step = {
   name: "audit",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
 
@@ -56,6 +57,7 @@ Audit the codebase for test coverage gaps. Identify untested functions, missing 
 const writeTestsStep: Step = {
   name: "write-tests",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const reviewIssues = ctx.run.steps.findLast(s => s.name === "review")?.issues;
     const validateHint = ctx.run.steps.findLast(s => s.name === "validate")?.handoffHint;
@@ -94,6 +96,7 @@ Write the missing tests. Call VerdictEmit with step="write-tests".`;
 const validateStep: Step = {
   name: "validate",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `Run the test suite and report results.
@@ -128,6 +131,7 @@ Call VerdictEmit with step="validate".`;
 const reviewStep: Step = {
   name: "review",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `Review the newly written tests for quality: do they actually test the right behavior, cover edge cases, use correct assertions?
 Do NOT write any files. Do NOT include artifacts in your VerdictEmit call — emit only step, verdict, and issues.
@@ -154,6 +158,7 @@ Call VerdictEmit with step="review".`;
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
     const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
@@ -192,7 +197,7 @@ export const verify: Workflow = {
   steps: [auditStep, writeTestsStep, validateStep, reviewStep, judgeGateStep],
   transitions: [
     { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint !== "no-gaps", to: "write-tests" },
-    { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint === "no-gaps", to: "halt" },
+    { from: "audit",       when: (r) => r.verdict === "PASS" && r.handoffHint === "no-gaps", to: "validate" },
     { from: "audit",       when: (r) => r.verdict !== "PASS",                                to: "halt" },
     { from: "write-tests", when: (r) => r.verdict === "PASS",  to: "validate" },
     // M3: retry write-tests instead of halting — budget exhaustion is the backstop

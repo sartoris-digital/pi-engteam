@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const planStep: Step = {
   name: "plan",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     // Codex round-9 HIGH: fence worker-supplied feedback fields so a
     // tester/judge cannot inject instructions via issues[].
@@ -79,6 +80,7 @@ When complete, call VerdictEmit with:
 const securityReviewStep: Step = {
   name: "security-review",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
     const prompt = `You are a security auditor reviewing a database migration plan.
@@ -119,6 +121,7 @@ When complete, call VerdictEmit with:
 const implementStep: Step = {
   name: "implement",
   required: true,
+  timeoutSeconds: 1800,
   verify: true,
   agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
@@ -164,6 +167,7 @@ When complete, call VerdictEmit with:
 const testStep: Step = {
   name: "test",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
@@ -207,6 +211,7 @@ When complete, call VerdictEmit with:
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
     const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);

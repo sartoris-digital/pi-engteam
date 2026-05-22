@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const auditStep: Step = {
   name: "audit",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
 
@@ -57,6 +58,7 @@ Write a summary of all gaps found to doc-audit-gaps.md.
 const planStep: Step = {
   name: "plan",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are a planner producing a prioritized documentation backfill list.
 
@@ -96,6 +98,7 @@ When complete, call VerdictEmit with:
 const writeStep: Step = {
   name: "write",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     // Codex round-10 HIGH: fence worker-supplied review issues.
     const { fenceArray } = await import("../safety/prompt-fence.js");
@@ -146,6 +149,7 @@ When complete, call VerdictEmit with:
 const reviewStep: Step = {
   name: "review",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are a reviewer validating documentation accuracy.
 
@@ -183,6 +187,7 @@ When complete, call VerdictEmit with:
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
     const verdictPath = join(runDir, "verdict.md");

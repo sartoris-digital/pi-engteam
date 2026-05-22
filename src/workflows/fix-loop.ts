@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const analyzeStep: Step = {
   name: "analyze",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false, // needs Write to produce fix-plan.md
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
@@ -57,6 +58,7 @@ Only call VerdictEmit with verdict="FAIL" if you were unable to complete the ana
 const implementStep: Step = {
   name: "implement",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   verify: true,
   agent: "implementer",
@@ -100,6 +102,7 @@ Implement the fix. Call VerdictEmit with step="implement".`;
 const testStep: Step = {
   name: "test",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const changedFiles = Object.entries(ctx.run.artifacts)
@@ -143,6 +146,7 @@ Call VerdictEmit with step="test".`;
 const reviewStep: Step = {
   name: "review",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
@@ -172,6 +176,7 @@ Call VerdictEmit with step="review".`;
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;

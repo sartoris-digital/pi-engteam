@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const gatherContextStep: Step = {
   name: "gather-context",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const codePrompt = `GOAL: ${ctx.run.goal}
 
@@ -81,6 +82,7 @@ Call VerdictEmit with step="gather-context".`;
 const analyzeStep: Step = {
   name: "analyze",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const codeContext = ctx.run.artifacts["code-context"] ?? "debug-code-context.md";
     const traceContext = ctx.run.artifacts["trace-context"] ?? "debug-traces.md";
@@ -115,6 +117,7 @@ Call VerdictEmit with step="analyze".`;
 const proposeFixStep: Step = {
   name: "propose-fix",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const analysisNotes = ctx.run.steps.findLast(s => s.name === "analyze")?.issues;
 
@@ -147,6 +150,7 @@ Call VerdictEmit with step="propose-fix".`;
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
 

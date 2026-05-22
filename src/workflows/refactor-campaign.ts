@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const mapStep: Step = {
   name: "map",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are a codebase cartographer mapping all files affected by a refactor.
 
@@ -65,6 +66,7 @@ When complete, call VerdictEmit with:
 const designStep: Step = {
   name: "design",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     // Codex round-10 HIGH: fence judge feedback so a judge cannot inject
     // instructions into the architect's prompt via issues[].
@@ -119,6 +121,7 @@ When complete, call VerdictEmit with:
 const implementStep: Step = {
   name: "implement",
   required: true,
+  timeoutSeconds: 1800,
   verify: true,
   planMode: false,
   agent: "implementer",
@@ -179,6 +182,7 @@ When complete, call VerdictEmit with:
 const verifyStep: Step = {
   name: "verify",
   required: true,
+  timeoutSeconds: 1800,
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are a tester running the full test suite after a refactor.
@@ -220,6 +224,7 @@ When complete, call VerdictEmit with:
 const reviewStep: Step = {
   name: "review",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are a reviewer checking a completed refactor campaign.
 
@@ -259,6 +264,7 @@ When complete, call VerdictEmit with:
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
     const verdictPath = join(runDir, "verdict.md");

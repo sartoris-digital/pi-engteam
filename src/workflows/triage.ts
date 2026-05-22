@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const classifyStep: Step = {
   name: "classify",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `BUG REPORT: ${ctx.run.goal}
 
@@ -53,6 +54,7 @@ Classify this bug: assign P0-P3 severity, identify the owner area (security/perf
 const routeStep: Step = {
   name: "route",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const triageSummary = ctx.run.artifacts["triage-summary"] ?? "triage-summary.md";
     const prompt = `BUG: ${ctx.run.goal}
@@ -84,6 +86,7 @@ Write a routing recommendation: which workflow should handle this (debug/fix-loo
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const previousFeedback = [...ctx.run.steps].reverse().find(s => s.name === "judge-gate")?.issues;
     const feedbackSection = previousFeedback

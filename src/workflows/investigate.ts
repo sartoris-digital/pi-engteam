@@ -26,6 +26,7 @@ async function waitForAgentVerdict(
 const gatherStep: Step = {
   name: "gather",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL / INCIDENT: ${ctx.run.goal}
 
@@ -53,6 +54,7 @@ Retrieve all relevant context: code paths, recent commits, configuration, logs, 
 const analyzeStep: Step = {
   name: "analyze",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `INCIDENT: ${ctx.run.goal}
 CONTEXT PACK: ${ctx.run.artifacts["context"] ?? "See context-pack.md"}
@@ -81,6 +83,7 @@ Build a timeline and probability-ranked hypothesis tree. Write an investigation.
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const previousFeedback = [...ctx.run.steps].reverse().find(s => s.name === "judge-gate")?.issues;
     const feedbackSection = previousFeedback

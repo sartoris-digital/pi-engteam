@@ -28,25 +28,28 @@ type LockPayload = { pid: number; ts: string };
 function resolveLockPath(configDir: string): string {
   const probe = join(configDir, ".rollback.lock.probe");
   let fd: number | undefined;
+  let shouldCleanupProbe = false;
+  
   try {
     fd = openSync(probe, O_CREAT | O_WRONLY, 0o600);
-    try {
-      closeSync(fd);
-      return join(configDir, LOCK_FILENAME);
-    } finally {
-      // Guaranteed cleanup attempt regardless of closeSync success/failure
+    shouldCleanupProbe = true;
+    
+    closeSync(fd);
+    return join(configDir, LOCK_FILENAME);
+  } catch {
+    return FALLBACK_LOCK;
+  } finally {
+    // This ALWAYS runs, regardless of return or exception in try/catch
+    if (shouldCleanupProbe) {
       try {
         unlinkSync(probe);
       } catch (err: unknown) {
         const e = err as NodeJS.ErrnoException;
-        // ENOENT is expected if another process cleaned up or directory was deleted
         if (e.code !== 'ENOENT') {
-          console.warn(`drain-lock: failed to cleanup probe file ${probe}: ${e.code || e.message}`);
+          console.error(`drain-lock: UNABLE to cleanup probe file ${probe}: ${e.code || e.message}`);
         }
       }
     }
-  } catch {
-    return FALLBACK_LOCK;
   }
 }
 

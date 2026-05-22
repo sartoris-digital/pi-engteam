@@ -112,9 +112,9 @@ describe("verify workflow – transitions", () => {
     expect(transition.when({ success: true, verdict: "PASS", handoffHint: "no-gaps" })).toBe(false);
   });
 
-  it("audit PASS (handoffHint=no-gaps) → halt [success path]", () => {
+  it("audit PASS (handoffHint=no-gaps) → validate [runs existing tests]", () => {
     const transition = verify.transitions.find(
-      t => t.from === "audit" && t.to === "halt",
+      t => t.from === "audit" && t.to === "validate",
     )!;
     expect(transition).toBeDefined();
     expect(transition.when({ success: true, verdict: "PASS", handoffHint: "no-gaps" })).toBe(true);

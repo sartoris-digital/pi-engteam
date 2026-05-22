@@ -25,6 +25,7 @@ async function waitForVerdict(
 const analyzeStep: Step = {
   name: "analyze",
   required: true,
+  timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are analyzing an issue.
 
