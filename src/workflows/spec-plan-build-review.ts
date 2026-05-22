@@ -1,6 +1,7 @@
 import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
+import { resolveArtifactPath } from "./helpers.js";
 
 async function waitForVerdict(
   ctx: StepContext,
@@ -216,6 +217,7 @@ const reviewStep: Step = {
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const specArtifact = ctx.run.artifacts["spec"] ?? "spec.md";
+    const reviewPath = resolveArtifactPath(ctx, undefined, "review.md");
     const prompt = `You are the reviewer. Review the implementation for:
 
 GOAL: ${ctx.run.goal}
@@ -223,7 +225,11 @@ SPEC: ${specArtifact}
 
 Check all changed/created files for logical errors, missing tests, security issues, and spec compliance.
 Read the spec file and verify the implementation matches it.
-Call VerdictEmit with step: "review", verdict: "PASS" or "FAIL" with specific issues.
+Write your detailed review findings to this EXACT path: ${reviewPath}
+When your review is complete, call VerdictEmit with:
+- step: "review"
+- verdict: "PASS" or "FAIL" with specific issues
+- artifacts: ["${reviewPath}"]
 Set handoffHint: "security" | "perf" | "re-plan" if the failure category warrants specialist escalation.`;
 
     try {
@@ -233,6 +239,7 @@ Set handoffHint: "security" | "perf" | "re-plan" if the failure category warrant
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: { "review": resolveArtifactPath(ctx, verdict.artifacts?.[0], "review.md") },
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
