@@ -14,7 +14,7 @@
 // `<runsDir>/_activity/.tombstones/<runId>.json` so replay
 // (Phase B item 17) returns "pruned, see tombstone" instead of
 // a silent missing-file.
-import { readdirSync, statSync, existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, renameSync } from "fs";
+import { readdirSync, statSync, existsSync, readFileSync, writeFileSync, rmSync, mkdirSync, renameSync, unlinkSync } from "fs";
 import { join } from "path";
 
 export type PruneInput = {
@@ -51,6 +51,7 @@ type Entry = {
   runId: string;
   dir: string;
   bytes: number;
+  mirrorBytes: number; // <runsDir>/<runId>/agent-activity.jsonl (E12 legacy mirror)
   ageMs: number;
   status?: "succeeded" | "failed" | "halted" | "active";
   endTs?: string;
@@ -120,10 +121,17 @@ export function prune(input: PruneInput): PruneResult {
       const state = input.lookupRunState?.(f);
       const endTs = state?.endTs;
       const ageMs = endTs ? now - new Date(endTs).getTime() : now - st.mtimeMs;
+      // E12: also account for legacy-mirror bytes at <runsDir>/<runId>/agent-activity.jsonl
+      let mirrorBytes = 0;
+      try {
+        const mst = statSync(join(input.runsDir, f, "agent-activity.jsonl"));
+        if (mst.isFile()) mirrorBytes = mst.size;
+      } catch { /* no mirror */ }
       entries.push({
         runId: f,
         dir,
         bytes: dirSize(dir),
+        mirrorBytes,
         ageMs,
         status: state?.status,
         endTs,
@@ -153,7 +161,8 @@ export function prune(input: PruneInput): PruneResult {
   }
   // Quota-driven prune: if disk usage still exceeds quota, drop
   // oldest non-pinned terminal runs even if they're under TTL.
-  const totalBytes = entries.reduce((s, e) => s + e.bytes, 0);
+  // E12: mirror bytes count toward the global quota.
+  const totalBytes = entries.reduce((s, e) => s + e.bytes + e.mirrorBytes, 0);
   if (totalBytes > opts.globalQuotaBytes) {
     const candidates = entries
       .filter((e) => !input.activeRunIds.has(e.runId) && e.status !== "active" && !pinned.has(e.runId))
@@ -164,7 +173,7 @@ export function prune(input: PruneInput): PruneResult {
     for (const cand of candidates) {
       if (projected <= opts.globalQuotaBytes) break;
       toPrune.push(cand);
-      projected -= cand.bytes;
+      projected -= cand.bytes + cand.mirrorBytes;
     }
   }
   // Execute prune.
@@ -174,7 +183,9 @@ export function prune(input: PruneInput): PruneResult {
     try {
       writeTombstone(activityRoot, e.runId, e);
       rmSync(e.dir, { recursive: true, force: true });
-      reclaimed += e.bytes;
+      // E12: also remove legacy mirror file when present.
+      try { unlinkSync(join(input.runsDir, e.runId, "agent-activity.jsonl")); } catch { /* no mirror */ }
+      reclaimed += e.bytes + e.mirrorBytes;
       pruned.push(e.runId);
     } catch { /* best-effort */ }
   }
