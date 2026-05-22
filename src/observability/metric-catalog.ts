@@ -173,6 +173,13 @@ export const METRIC_CATALOG: Record<string, MetricEntry> = {
     description: "Subprocess returned no token/cost usage data — wall-clock-only budget enforced.",
     labels: ["provider"],
   },
+  pi_eng_workflow_success_total: {
+    name: "pi_eng_workflow_success_total",
+    type: "counter",
+    unit: "1",
+    description: "Workflows that reached a terminal `succeeded` state, broken down by workflow + cohort.",
+    labels: ["workflow", "cohort"],
+  },
 };
 
 export const METRIC_NAMES = Object.keys(METRIC_CATALOG);

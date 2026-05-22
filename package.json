@@ -1,6 +1,6 @@
 {
   "name": "@sartoris/pi-engineering",
-  "version": "2.2.0-phaseE",
+  "version": "2.2.0-phaseE.2",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -22,6 +22,8 @@
     "typecheck": "tsc --noEmit",
     "probe-pi-provider": "node scripts/probe-pi-provider.mjs",
     "tail": "node scripts/pi-engineering-tail.mjs",
+    "runbook": "node scripts/generate-runbook.mjs",
+    "runbook:check": "node scripts/generate-runbook.mjs --check",
     "install:extension": "bash scripts/install.sh",
     "uninstall:extension": "bash scripts/uninstall.sh",
     "engineering:install": "pnpm build && bash scripts/install.sh"

@@ -49,6 +49,18 @@ export default defineConfig([
     esbuildPlugins: [replaceKeyringLoader],
   },
   {
+    // Phase E item E1: emit the runbook-generator as a tiny
+    // standalone bundle so `pnpm runbook` can run without
+    // depending on the full extension bundle.
+    entry: { "runbook-generator": "src/observability/runbook-generator.ts" },
+    format: ["esm"],
+    target: "node20",
+    bundle: true,
+    splitting: false,
+    dts: false,
+    outDir: "dist/observability",
+  },
+  {
     entry: { server: "server/index.ts" },
     // CJS avoids ESM/shebang issues when Node spawns the server as a child process.
     // fastify + the better-sqlite3 JS wrapper are bundled. The compiled .node binary
