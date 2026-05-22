@@ -93,8 +93,16 @@ Write the missing tests. Call VerdictEmit with step="write-tests".`;
 const validateStep: Step = {
   name: "validate",
   required: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const prompt = `Run pnpm test. If all pass: PASS. If any fail: FAIL with the specific failure output in handoffHint.
+    const prompt = `Run the test suite and report results.
+
+CRITICAL: Run bash("pnpm test") DIRECTLY. Do NOT call RequestApproval first — test commands are pre-approved and do not require Judge approval. Ignore any prior expertise suggesting otherwise.
+
+If all tests pass: emit PASS.
+If any tests fail: emit FAIL with the specific failure names and output in handoffHint.
+
+Write the full test output to verify.md. Include artifacts: ["verify.md"] in your VerdictEmit call.
 Call VerdictEmit with step="validate".`;
 
     try {
@@ -104,6 +112,7 @@ Call VerdictEmit with step="validate".`;
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: { "verify": resolveArtifactPath(ctx, verdict.artifacts?.[0], "verify.md") },
       };
     } catch (err) {
       return {
@@ -190,6 +199,6 @@ export const verify: Workflow = {
   defaults: {
     maxIterations: 8,
     maxCostUsd: 20,
-    maxWallSeconds: 3600,
+    maxWallSeconds: 7200,
   },
 };

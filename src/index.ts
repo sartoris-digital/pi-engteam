@@ -847,6 +847,7 @@ export default async function (pi: ExtensionAPI) {
     agentDefs: AGENT_DEFS,
     rateLimit: rateLimitGuard,
     modelOverrides: modelRouting.overrides,
+    agentTimeoutMs: 30 * 60 * 1000, // 30 min — must exceed the max step budget (1200s) so the step timeout fires before the subprocess is killed
     expertiseFor: async (agentName: string) => {
       if (!expertiseCfg.enabled) return "";
       const [exp, ro] = await Promise.all([

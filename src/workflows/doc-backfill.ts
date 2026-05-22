@@ -116,6 +116,8 @@ Please:
 3. Write ADRs for architectural decisions that lack documentation
 4. Follow existing documentation style and conventions
 
+Write a doc-summary.md listing all JSDoc comments added. Include artifacts: ["doc-summary.md"] in your VerdictEmit.
+
 When complete, call VerdictEmit with:
 - step: "write"
 - verdict: "PASS" (all documentation written)
@@ -128,9 +130,7 @@ When complete, call VerdictEmit with:
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`artifact-${i}`, a]))
-          : {},
+        artifacts: { "doc": resolveArtifactPath(ctx, verdict.artifacts?.[0], "doc-summary.md") },
       };
     } catch (err) {
       return {
@@ -239,6 +239,6 @@ export const docBackfill: Workflow = {
   defaults: {
     maxIterations: 7,
     maxCostUsd: 15,
-    maxWallSeconds: 3600,
+    maxWallSeconds: 7200,
   },
 };

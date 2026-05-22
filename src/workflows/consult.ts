@@ -480,7 +480,7 @@ export const consult: Workflow = {
   defaults: {
     maxIterations: 10,
     maxCostUsd: 25,
-    maxWallSeconds: 1800,
+    maxWallSeconds: 7200,
   },
 };
 

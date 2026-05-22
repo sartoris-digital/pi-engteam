@@ -26,26 +26,36 @@ const analyzeStep: Step = {
   name: "analyze",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
-    const prompt = `You are analyzing an issue ticket.
+    const prompt = `You are analyzing an issue.
 
 GOAL: ${ctx.run.goal}
 
-The goal string ends with [tracker:<type>] indicating which CLI to use.
-Fetch the ticket, extract requirements, and write issue-brief.md to the current run directory.
+If the goal contains [tracker:<type>], use the indicated CLI to fetch the ticket first.
+Otherwise analyze the issue description directly from the goal text.
+
+Required output — write TWO files to the current run directory:
+1. analysis.md — classification (severity, type, component), root cause analysis, impact assessment
+2. routing-recommendation.md — which workflow should handle this (debug/fix-loop/security-review/etc.), who the likely owner is, recommended next steps
 
 Call VerdictEmit with:
 - step: "analyze"
-- verdict: "PASS" (issue-brief.md written with all required sections)
-- verdict: "FAIL" with issues (CLI not found, ticket not found, tracker unknown after all detection attempts)
-- artifacts: ["issue-brief.md"]`;
+- verdict: "PASS" (both files written)
+- verdict: "FAIL" with issues if analysis could not be completed
+- artifacts: ["analysis.md", "routing-recommendation.md"]`;
 
     try {
       const verdict = await waitForVerdict(ctx, "issue-analyst", prompt, "analyze");
+      const artifacts: Record<string, string> = {
+        "analysis": resolveArtifactPath(ctx, verdict.artifacts?.[0], "analysis.md"),
+      };
+      if (verdict.artifacts?.[1]) {
+        artifacts["routing-recommendation"] = resolveArtifactPath(ctx, verdict.artifacts[1], "routing-recommendation.md");
+      }
       return {
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
-        artifacts: { "issue-brief": resolveArtifactPath(ctx, verdict.artifacts?.[0], "issue-brief.md") },
+        artifacts,
       };
     } catch (err) {
       return { success: false, verdict: "FAIL", error: err instanceof Error ? err.message : String(err) };
@@ -62,7 +72,7 @@ export const issueAnalyze: Workflow = {
   ],
   defaults: {
     maxIterations: 3,
-    maxCostUsd: 2,
-    maxWallSeconds: 600,
+    maxCostUsd: 5,
+    maxWallSeconds: 3600,
   },
 };

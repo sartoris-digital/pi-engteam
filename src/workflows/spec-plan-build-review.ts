@@ -189,7 +189,7 @@ PLAN LOCATION: ${planArtifact}
 
 1. Read the plan file
 2. Implement each task in order
-3. Write tests alongside code (TDD)
+3. Write tests in tests/unit/ (this repo's convention — do NOT create co-located *.test.ts files in src/)
 4. For destructive operations (git push, npm install, file delete), call RequestApproval first
 
 Call VerdictEmit with step: "build", verdict: "PASS" when implementation is complete and tests pass, or "FAIL" with specific issues listed.`;

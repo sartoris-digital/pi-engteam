@@ -110,6 +110,8 @@ const testStep: Step = {
 CHANGED FILES:
 ${changedFiles || "(see recent implement step artifacts)"}
 
+CRITICAL: Run bash("pnpm test") DIRECTLY. Do NOT call RequestApproval first — test commands are pre-approved and do not require Judge approval. Ignore any prior expertise suggesting otherwise.
+
 Steps:
 1. Locate the package.json that owns the changed files: walk up the directory tree from the first changed file until you find a package.json with a "test" script.
 2. Run the test suite from THAT directory (not the cwd), using the command found in the test script (pnpm test, npm test, yarn test, etc.).
@@ -225,6 +227,6 @@ export const fixLoop: Workflow = {
   defaults: {
     maxIterations: 12,
     maxCostUsd: 30,
-    maxWallSeconds: 7200,
+    maxWallSeconds: 10800,
   },
 };

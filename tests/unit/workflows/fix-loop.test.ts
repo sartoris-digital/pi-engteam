@@ -61,7 +61,7 @@ describe("fix-loop workflow – structure", () => {
   it("defaults are set correctly", () => {
     expect(fixLoop.defaults.maxIterations).toBe(12);
     expect(fixLoop.defaults.maxCostUsd).toBe(30);
-    expect(fixLoop.defaults.maxWallSeconds).toBe(7200);
+    expect(fixLoop.defaults.maxWallSeconds).toBe(10800);
   });
 });
 

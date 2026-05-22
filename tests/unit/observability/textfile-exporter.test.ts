@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 
 import { tmpdir } from "os";
 import { join } from "path";
 import { CounterWal } from "../../../src/observability/counter-wal.js";
-import { TextfileExporter } from "../../../src/observability/textfile-exporter.js";
+import { TextfileExporter, AGGREGATOR_LOCK_FILE } from "../../../src/observability/textfile-exporter.js";
 
 describe("TextfileExporter", () => {
   let configDir: string;
@@ -112,7 +112,7 @@ describe("TextfileExporter", () => {
     mkdirSync(telemetryDir, { recursive: true });
 
     // Pre-create the lock file to simulate another process holding it.
-    const lockPath = join(telemetryDir, ".aggregator.lock");
+    const lockPath = join(telemetryDir, AGGREGATOR_LOCK_FILE);
     writeFileSync(lockPath, "99999");
 
     const exp = new TextfileExporter({ configDir });

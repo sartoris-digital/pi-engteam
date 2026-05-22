@@ -18,6 +18,8 @@ import { join } from "path";
 import { METRIC_CATALOG, type MetricEntry } from "./metric-catalog.js";
 import type { CounterWal } from "./counter-wal.js";
 
+export const AGGREGATOR_LOCK_FILE = ".aggregator.lock";
+
 export type GaugeReader = () => Array<{ name: string; labels: Record<string, string>; value: number }>;
 
 export type AlertThreshold = {
@@ -239,7 +241,7 @@ export class TextfileExporter {
    * process that creates the lock file runs; others skip silently.
    */
   aggregate(): void {
-    const lockPath = join(this.fragmentDir, ".aggregator.lock");
+    const lockPath = join(this.fragmentDir, AGGREGATOR_LOCK_FILE);
     let lockFd: number | undefined;
 
     // Try to acquire the lock (non-blocking: O_CREAT|O_EXCL fails with EEXIST if already held).

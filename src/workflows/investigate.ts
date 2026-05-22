@@ -56,7 +56,7 @@ const analyzeStep: Step = {
     const prompt = `INCIDENT: ${ctx.run.goal}
 CONTEXT PACK: ${ctx.run.artifacts["context"] ?? "See context-pack.md"}
 
-Build a timeline and probability-ranked hypothesis tree. Write an incident-report.md. Call VerdictEmit with step="analyze".`;
+Build a timeline and probability-ranked hypothesis tree. Write an investigation.md. Call VerdictEmit with step="analyze".`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "incident-investigator", prompt, "analyze");
@@ -65,7 +65,7 @@ Build a timeline and probability-ranked hypothesis tree. Write an incident-repor
         verdict: verdict.verdict,
         issues: verdict.issues,
         // L2: stable key so judge-gate can reference the actual report path
-        artifacts: { "incident-report": resolveArtifactPath(ctx, verdict.artifacts?.[0], "incident-report.md") },
+        artifacts: { "investigation": resolveArtifactPath(ctx, verdict.artifacts?.[0], "investigation.md") },
       };
     } catch (err) {
       return {
@@ -86,7 +86,7 @@ const judgeGateStep: Step = {
       ? `\nPREVIOUS JUDGE FEEDBACK:\n${previousFeedback.join("\n")}`
       : "";
 
-    const incidentReport = ctx.run.artifacts["incident-report"] ?? "incident-report.md";
+    const incidentReport = ctx.run.artifacts["investigation"] ?? "investigation.md";
     const prompt = `INCIDENT: ${ctx.run.goal}
 HYPOTHESIS TREE: ${incidentReport}
 

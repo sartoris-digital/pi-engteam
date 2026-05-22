@@ -121,6 +121,7 @@ const proposeFixStep: Step = {
 
 Propose 2-3 concrete fix options. For each: describe the change, trade-offs, and rollback plan.
 ${analysisNotes ? `\nANALYSIS NOTES:\n${analysisNotes.join("\n")}` : ""}
+Write your proposed fixes to debug.md. Include artifacts: ["debug.md"] in your VerdictEmit call.
 Call VerdictEmit with step="propose-fix".`;
 
     try {
@@ -130,9 +131,7 @@ Call VerdictEmit with step="propose-fix".`;
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`fix-option-${i}`, a]))
-          : {},
+        artifacts: { "debug": resolveArtifactPath(ctx, verdict.artifacts?.[0], "debug.md") },
       };
     } catch (err) {
       return {

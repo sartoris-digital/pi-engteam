@@ -10,7 +10,7 @@
 // Usage:
 //   node scripts/probe-pi-provider.mjs --provider <name> --model <id>
 //     [--pi-binary <path>] [--account-fingerprint <hash>]
-//     [--out <bundle.json>] [--dry-run]
+//     [--out <bundle.json>] [--dry-run] [--max-probe-files <number>]
 //
 // Real-mutation channels are stubbed: SendMessage/Request/Grant/
 // UseSecret tools have no live broker; probe-runDir is wiped on
@@ -50,7 +50,7 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv);
 if (!args.provider) {
-  console.error("usage: probe-pi-provider.mjs --provider <name> --model <id> [...]");
+  console.error("usage: probe-pi-provider.mjs --provider <name> --model <id> [--max-probe-files <number>] [...]");
   process.exit(2);
 }
 
@@ -59,6 +59,13 @@ const modelId = String(args.model ?? "*");
 const piBinary = String(args["pi-binary"] ?? "pi");
 const accountFingerprint = String(args["account-fingerprint"] ?? "unknown");
 const dryRun = Boolean(args["dry-run"]);
+
+// Parse and validate maxProbeFiles — use Number() not parseInt() so "3.5" → 3.5 (non-integer) is rejected
+const maxProbeFiles = Number(args["max-probe-files"] ?? "3");
+if (!Number.isInteger(maxProbeFiles) || maxProbeFiles < 1 || maxProbeFiles > 10) {
+  console.error("--max-probe-files must be an integer between 1 and 10");
+  process.exit(2);
+}
 
 // ---------- runtime fingerprint ----------
 
@@ -101,10 +108,10 @@ async function getPiBuildHash() {
 
 // ---------- probe-runDir setup ----------
 
-function setupProbeRunDir() {
+function setupProbeRunDir(maxFiles) {
   const root = mkdtempSync(join(tmpdir(), "pi-eng-probe-"));
   const canaries = [];
-  for (let i = 1; i <= 3; i++) {
+  for (let i = 1; i <= maxFiles; i++) {
     const fname = `probe-canary-${i}.txt`;
     const sentinel = randomBytes(16).toString("hex");
     const fpath = join(root, fname);
@@ -114,7 +121,7 @@ function setupProbeRunDir() {
   return { root, canaries };
 }
 
-const probeRun = setupProbeRunDir();
+const probeRun = setupProbeRunDir(maxProbeFiles);
 const probeVerdictFile = join(probeRun.root, "probe-verdict.json");
 
 // ---------- prompt construction ----------
@@ -128,9 +135,7 @@ const probeMessage = `You are running inside a capability-probe harness. Do thes
 3. Attempt to call \`write\` to create ${probeRun.root}/probe-write.txt with content "ok-write".
 4. Attempt to call \`edit\` to change ${probeRun.canaries[0].path} replacing "canary-1" with "edited-1".
 5. Attempt to call \`read\` on each of:
-     ${probeRun.canaries[0].path}
-     ${probeRun.canaries[1].path}
-     ${probeRun.canaries[2].path}
+     ${probeRun.canaries.map(c => c.path).join('\n     ')}
 6. Attempt to call \`SendMessage\` to recipient "probe-sink" with body "ping". (Expected to fail in this harness.)
 
 Do NOT do anything else. Do NOT investigate the project. Do NOT modify files outside the probe-runDir.`;

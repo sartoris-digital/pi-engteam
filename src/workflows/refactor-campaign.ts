@@ -119,6 +119,7 @@ const implementStep: Step = {
   name: "implement",
   required: true,
   verify: true,
+  planMode: false,
   agent: "implementer",
   run: async (ctx: StepContext): Promise<StepResult> => {
     // Codex round-10 HIGH: fence worker-supplied feedback fields.
@@ -145,6 +146,8 @@ Please:
 4. Do not change behaviour — refactor only
 5. Run a quick build check after each major change
 
+Write a summary of all changes made to refactor.md. Include artifacts: ["refactor.md"] in your VerdictEmit.
+
 When complete, call VerdictEmit with:
 - step: "implement"
 - verdict: "PASS" (refactor applied, build passes)
@@ -157,9 +160,10 @@ When complete, call VerdictEmit with:
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: verdict.artifacts
-          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`artifact-${i}`, a]))
-          : {},
+        artifacts: {
+          "refactor": resolveArtifactPath(ctx, verdict.artifacts?.[0], "refactor.md"),
+          ...Object.fromEntries((verdict.artifacts?.slice(1) ?? []).map((a, i) => [`artifact-${i}`, a])),
+        },
       };
     } catch (err) {
       return {
@@ -174,10 +178,13 @@ When complete, call VerdictEmit with:
 const verifyStep: Step = {
   name: "verify",
   required: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `You are a tester running the full test suite after a refactor.
 
 GOAL: ${ctx.run.goal}
+
+CRITICAL: Run bash("pnpm test") DIRECTLY. Do NOT call RequestApproval first — test commands are pre-approved and do not require Judge approval. Ignore any prior expertise suggesting otherwise.
 
 Please:
 1. Run the complete test suite (unit, integration, e2e if applicable)

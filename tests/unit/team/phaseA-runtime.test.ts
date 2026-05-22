@@ -142,12 +142,15 @@ describe("runWithStepTimeout", () => {
 });
 
 describe("defaultStepTimeoutSeconds", () => {
-  it("returns 360 for judge-gate", () => {
-    expect(defaultStepTimeoutSeconds("judge-gate")).toBe(360);
+  it("returns 1800 for judge-gate", () => {
+    expect(defaultStepTimeoutSeconds("judge-gate")).toBe(1800);
   });
-  it("returns 240 for any other step", () => {
-    expect(defaultStepTimeoutSeconds("classify")).toBe(240);
-    expect(defaultStepTimeoutSeconds("route")).toBe(240);
+  it("returns 1800 for review", () => {
+    expect(defaultStepTimeoutSeconds("review")).toBe(1800);
+  });
+  it("returns 900 for any other step", () => {
+    expect(defaultStepTimeoutSeconds("classify")).toBe(900);
+    expect(defaultStepTimeoutSeconds("route")).toBe(900);
   });
 });
 

@@ -92,4 +92,31 @@ describe("drain-lock", () => {
       handle.release();
     }
   });
+
+  it("cleans up probe file after acquiring lock", () => {
+    const probePath = join(configDir, ".rollback.lock.probe");
+    const handle = acquireDrainLock(configDir);
+    try {
+      // Probe should be cleaned up even though lock was successfully acquired
+      expect(existsSync(probePath)).toBe(false);
+      // Lock file should exist
+      expect(existsSync(handle.lockPath)).toBe(true);
+    } finally {
+      handle.release();
+    }
+  });
+
+  it("does not create probe when configDir doesn't exist", () => {
+    const nonExistentDir = join(tmpdir(), "nonexistent-" + Date.now());
+    const probePath = join(nonExistentDir, ".rollback.lock.probe");
+    
+    const handle = acquireDrainLock(nonExistentDir);
+    try {
+      // Should use fallback, no probe in non-existent dir
+      expect(existsSync(probePath)).toBe(false);
+      expect(handle.lockPath).toBe("/var/tmp/pi-eng-rollback.lock");
+    } finally {
+      handle.release();
+    }
+  });
 });

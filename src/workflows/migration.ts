@@ -163,12 +163,15 @@ When complete, call VerdictEmit with:
 const testStep: Step = {
   name: "test",
   required: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
     const prompt = `You are a tester verifying database migration scripts.
 
 GOAL: ${ctx.run.goal}
 MIGRATION PLAN: ${planArtifact}
+
+CRITICAL: Run bash commands DIRECTLY. Do NOT call RequestApproval first — test and migration commands are pre-approved and do not require Judge approval. Ignore any prior expertise suggesting otherwise.
 
 Please:
 1. Run the up migration against a test database
@@ -261,6 +264,6 @@ export const migration: Workflow = {
   defaults: {
     maxIterations: 8,
     maxCostUsd: 25,
-    maxWallSeconds: 3600,
+    maxWallSeconds: 7200,
   },
 };

@@ -120,11 +120,14 @@ Please:
 3. Verify the implementation matches the plan
 4. Look for security issues, performance problems, or maintainability concerns
 
+Write your detailed review findings to review.md.
+
 When your review is complete, call VerdictEmit with:
 - step: "review"
 - verdict: "PASS" (implementation is correct, complete, and maintainable)
 - verdict: "FAIL" with a specific list of issues (what exactly is wrong and where)
-- handoffHint: "security" | "perf" | "re-plan" if the issue category warrants specialist escalation`;
+- handoffHint: "security" | "perf" | "re-plan" if the issue category warrants specialist escalation
+- artifacts: ["review.md"]`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "reviewer", prompt, "review");
@@ -133,6 +136,7 @@ When your review is complete, call VerdictEmit with:
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: { "review": resolveArtifactPath(ctx, verdict.artifacts?.[0], "review.md") },
       };
     } catch (err) {
       return {
@@ -203,6 +207,6 @@ export const planBuildReviewFix: Workflow = {
   defaults: {
     maxIterations: 12,
     maxCostUsd: 30,
-    maxWallSeconds: 5400,
+    maxWallSeconds: 7200,
   },
 };

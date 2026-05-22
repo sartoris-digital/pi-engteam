@@ -295,12 +295,14 @@ export class StepTimeoutError extends Error {
 }
 
 /**
- * Default per-step timeout in seconds. Judge-gate steps get a longer
- * default; everything else gets 240s.
+ * Default per-step timeout in seconds. Judge-gate and review steps get
+ * 1800s for GHCP compatibility (GHCP inference is 3-5x slower); everything
+ * else gets 900s.
  */
 export function defaultStepTimeoutSeconds(stepName: string): number {
-  if (stepName === "judge-gate") return 360;
-  return 240;
+  if (stepName === "judge-gate") return 1800;
+  if (stepName === "review") return 1800;
+  return 900;
 }
 
 /**

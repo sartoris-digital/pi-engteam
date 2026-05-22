@@ -61,7 +61,7 @@ describe("verify workflow – structure", () => {
   it("defaults are set correctly", () => {
     expect(verify.defaults.maxIterations).toBe(8);
     expect(verify.defaults.maxCostUsd).toBe(20);
-    expect(verify.defaults.maxWallSeconds).toBe(3600);
+    expect(verify.defaults.maxWallSeconds).toBe(7200);
   });
 });
 

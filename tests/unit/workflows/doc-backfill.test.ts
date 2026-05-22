@@ -55,7 +55,7 @@ describe("docBackfill workflow definition", () => {
   it("has correct defaults", () => {
     expect(docBackfill.defaults.maxIterations).toBe(7);
     expect(docBackfill.defaults.maxCostUsd).toBe(15);
-    expect(docBackfill.defaults.maxWallSeconds).toBe(3600);
+    expect(docBackfill.defaults.maxWallSeconds).toBe(7200);
   });
 });
 

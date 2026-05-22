@@ -48,7 +48,7 @@ describe("planBuildReviewFix workflow definition", () => {
   it("has correct defaults", () => {
     expect(planBuildReviewFix.defaults.maxIterations).toBe(12);
     expect(planBuildReviewFix.defaults.maxCostUsd).toBe(30);
-    expect(planBuildReviewFix.defaults.maxWallSeconds).toBe(5400);
+    expect(planBuildReviewFix.defaults.maxWallSeconds).toBe(7200);
   });
 });
 

@@ -54,7 +54,7 @@ describe("migration workflow definition", () => {
   it("has correct defaults", () => {
     expect(migration.defaults.maxIterations).toBe(8);
     expect(migration.defaults.maxCostUsd).toBe(25);
-    expect(migration.defaults.maxWallSeconds).toBe(3600);
+    expect(migration.defaults.maxWallSeconds).toBe(7200);
   });
 });
 

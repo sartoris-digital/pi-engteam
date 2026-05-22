@@ -26,13 +26,25 @@ type LockPayload = { pid: number; ts: string };
 
 /** Resolve the lock path, preferring configDir but falling back when unwritable. */
 function resolveLockPath(configDir: string): string {
-  // Use a separate probe file to test writability — never touch the real lock file.
   const probe = join(configDir, ".rollback.lock.probe");
+  let fd: number | undefined;
   try {
-    const fd = openSync(probe, O_CREAT | O_WRONLY, 0o600);
-    closeSync(fd);
-    try { unlinkSync(probe); } catch { /* ignore */ }
-    return join(configDir, LOCK_FILENAME);
+    fd = openSync(probe, O_CREAT | O_WRONLY, 0o600);
+    try {
+      closeSync(fd);
+      return join(configDir, LOCK_FILENAME);
+    } finally {
+      // Guaranteed cleanup attempt regardless of closeSync success/failure
+      try {
+        unlinkSync(probe);
+      } catch (err: unknown) {
+        const e = err as NodeJS.ErrnoException;
+        // ENOENT is expected if another process cleaned up or directory was deleted
+        if (e.code !== 'ENOENT') {
+          console.warn(`drain-lock: failed to cleanup probe file ${probe}: ${e.code || e.message}`);
+        }
+      }
+    }
   } catch {
     return FALLBACK_LOCK;
   }
@@ -66,13 +78,8 @@ function acquireAt(lockPath: string, retrying: boolean): DrainLockHandle {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EEXIST") {
       // Lock is held. Check for staleness if not already retrying.
-      if (!retrying) {
-        const existing = readLockPayload(lockPath);
-        if (existing && isDeadPid(existing.pid)) {
-          // Stale lock — safe to unlink and retry once.
-          try { unlinkSync(lockPath); } catch { /* lost race; fall through */ }
-          return acquireAt(lockPath, /* retrying */ true);
-        }
+      if (!retrying && recoverStaleLock(lockPath)) {
+        return acquireAt(lockPath, /* retrying */ true);
       }
       const pid = readLockPayload(lockPath)?.pid;
       const msg = pid
@@ -113,6 +120,20 @@ function readLockPayload(lockPath: string): LockPayload | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Attempt to reclaim a stale lock (dead owner PID).
+ * Returns true if the lock was stale and removed, false otherwise.
+ */
+function recoverStaleLock(lockPath: string): boolean {
+  const existing = readLockPayload(lockPath);
+  if (existing && isDeadPid(existing.pid)) {
+    // Stale lock — safe to unlink and retry once.
+    try { unlinkSync(lockPath); } catch { /* lost race; fall through */ }
+    return true;
+  }
+  return false;
 }
 
 /**
