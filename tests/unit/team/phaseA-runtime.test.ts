@@ -168,3 +168,66 @@ describe("checkPiVersion", () => {
   });
 });
 
+// Phase E item E9 — per-spawn capability re-check.
+import { computeRuntimeFingerprintHash, recheckSpawn } from "../../../src/team/phaseA-runtime.js";
+
+describe("recheckSpawn — per-spawn capability fingerprint", () => {
+  const baseFp = {
+    provider: "anthropic",
+    modelId: "claude-opus-4-6",
+    accountFingerprint: "acct",
+    piVersion: "0.74.1",
+    piBuildHash: "abc123",
+    protocolVersion: "1",
+    runtimeFlags: ["--flag-a", "--flag-b"],
+  };
+
+  it("computeRuntimeFingerprintHash is stable for identical input", () => {
+    const a = computeRuntimeFingerprintHash(baseFp, "/usr/local/bin/pi");
+    const b = computeRuntimeFingerprintHash(baseFp, "/usr/local/bin/pi");
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("changes when the binary path changes (PATH swap)", () => {
+    const a = computeRuntimeFingerprintHash(baseFp, "/usr/local/bin/pi");
+    const b = computeRuntimeFingerprintHash(baseFp, "/opt/local/bin/pi");
+    expect(a).not.toBe(b);
+  });
+
+  it("changes when piVersion changes", () => {
+    const a = computeRuntimeFingerprintHash(baseFp, "/usr/local/bin/pi");
+    const b = computeRuntimeFingerprintHash({ ...baseFp, piVersion: "0.75.0" }, "/usr/local/bin/pi");
+    expect(a).not.toBe(b);
+  });
+
+  it("is insensitive to runtimeFlags order (sorted internally)", () => {
+    const a = computeRuntimeFingerprintHash(
+      { ...baseFp, runtimeFlags: ["--a", "--b", "--c"] },
+      "/usr/local/bin/pi",
+    );
+    const b = computeRuntimeFingerprintHash(
+      { ...baseFp, runtimeFlags: ["--c", "--a", "--b"] },
+      "/usr/local/bin/pi",
+    );
+    expect(a).toBe(b);
+  });
+
+  it("recheckSpawn returns match=true when fingerprints align", () => {
+    const expected = computeRuntimeFingerprintHash(baseFp, "/usr/local/bin/pi");
+    const result = recheckSpawn(expected, baseFp, "/usr/local/bin/pi");
+    expect(result.match).toBe(true);
+  });
+
+  it("recheckSpawn returns match=false on drift", () => {
+    const expected = computeRuntimeFingerprintHash(baseFp, "/usr/local/bin/pi");
+    const result = recheckSpawn(expected, { ...baseFp, piVersion: "0.75.0" }, "/usr/local/bin/pi");
+    expect(result.match).toBe(false);
+    if (!result.match) {
+      expect(result.reason).toMatch(/runtime fingerprint changed/);
+      expect(result.expectedFingerprint).toBe(expected);
+      expect(result.fingerprint).not.toBe(expected);
+    }
+  });
+});
+

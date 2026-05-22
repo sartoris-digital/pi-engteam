@@ -212,6 +212,72 @@ function compareSemver(v: string): { major: number; minor: number; patch: number
 }
 
 /**
+ * Phase E item E9 — per-spawn capability re-check. Computes a
+ * lightweight runtime fingerprint hash and compares it against
+ * the matched capability bundle's recorded fingerprint. Detects
+ * `pi` binary swap, PATH change, build-hash drift, etc.
+ *
+ * Returns:
+ *   - { match: true } when everything still matches.
+ *   - { match: false, reason } on mismatch. Caller's mode (from
+ *     getPhaseAConfig().capabilityMode) determines whether to
+ *     proceed (warn/observe) or refuse (enforce).
+ */
+export type SpawnRecheckResult =
+  | { match: true; fingerprint: string }
+  | { match: false; reason: string; fingerprint: string; expectedFingerprint: string };
+
+import { createHash as _createHash } from "crypto";
+
+/**
+ * Compute a stable runtime fingerprint hash. Includes the
+ * resolved `pi` binary path, version, build hash, account, model,
+ * protocol version, and sorted runtime flags. Suitable for
+ * cheap comparison every spawn (≈10ms — most of which is the
+ * pi-version exec on a cold call; subsequent calls hit the
+ * cache in resolvePiBinaryFingerprint).
+ */
+export function computeRuntimeFingerprintHash(fp: RuntimeFingerprint, binaryPath?: string): string {
+  const parts = [
+    binaryPath ?? "",
+    fp.provider,
+    fp.modelId,
+    fp.accountFingerprint,
+    fp.piVersion,
+    fp.piBuildHash,
+    fp.protocolVersion,
+    [...fp.runtimeFlags].sort().join(","),
+  ];
+  return _createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 32);
+}
+
+/**
+ * Per-spawn check. Caller supplies the expected fingerprint hash
+ * recorded at runStart; this re-computes the current hash and
+ * decides whether to allow the spawn.
+ *
+ * In enforce mode the caller should re-probe (cached for 5min)
+ * on mismatch before refusing — that's done at a higher layer.
+ * This helper just signals the comparison result.
+ */
+export function recheckSpawn(
+  expectedFingerprint: string,
+  current: RuntimeFingerprint,
+  binaryPath?: string,
+): SpawnRecheckResult {
+  const fingerprint = computeRuntimeFingerprintHash(current, binaryPath);
+  if (fingerprint === expectedFingerprint) {
+    return { match: true, fingerprint };
+  }
+  return {
+    match: false,
+    fingerprint,
+    expectedFingerprint,
+    reason: `runtime fingerprint changed since run start (was ${expectedFingerprint.slice(0, 8)}…, now ${fingerprint.slice(0, 8)}…)`,
+  };
+}
+
+/**
  * Phase A item 5: typed step-timeout error. ADWEngine catches and
  * converts to a FAIL verdict with a clear message.
  */

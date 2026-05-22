@@ -81,6 +81,10 @@ export type QueueOptions = {
   heartbeatIntervalMs?: number;
   stuckThresholdMs?: number;
   stuckToolMs?: number;
+  // Phase C item 19 — per-step volume caps. Defaults align with
+  // PLAN (8 MB / 50k events).
+  stepVolumeByteCap?: number;
+  stepVolumeCountCap?: number;
   // Test hook so unit tests can drive the in-process callback
   // without spawning consumers.
   onEvent?: (ev: AgentActivityEvent) => void;
@@ -116,8 +120,9 @@ export class RunActivityQueue {
   private readonly falsePositiveWindowMs: number = 120_000; // 120s per PLAN item E17
   // Phase C item 19 — per-step volume caps. 8 MB / 50k events per
   // step before non-essential events collapse to a summary.
-  private readonly STEP_VOLUME_BYTE_CAP = 8 * 1024 * 1024;
-  private readonly STEP_VOLUME_COUNT_CAP = 50_000;
+  // Overridable via QueueOptions for testability.
+  private readonly STEP_VOLUME_BYTE_CAP: number;
+  private readonly STEP_VOLUME_COUNT_CAP: number;
   private stepVolumeKey = "";
   private stepVolumeBytes = 0;
   private stepVolumeCount = 0;
@@ -131,6 +136,8 @@ export class RunActivityQueue {
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 5000,
       stuckThresholdMs: opts.stuckThresholdMs ?? 90_000,
       stuckToolMs: opts.stuckToolMs ?? 300_000,
+      stepVolumeByteCap: opts.stepVolumeByteCap ?? 8 * 1024 * 1024,
+      stepVolumeCountCap: opts.stepVolumeCountCap ?? 50_000,
       runsDir: opts.runsDir,
       runId: opts.runId,
       onEvent: opts.onEvent,
@@ -141,6 +148,8 @@ export class RunActivityQueue {
       mkdirSync(dirname(this.paths.legacyMirror), { recursive: true });
     }
     this.seq = this.loadSeq();
+    this.STEP_VOLUME_BYTE_CAP = opts.stepVolumeByteCap ?? 8 * 1024 * 1024;
+    this.STEP_VOLUME_COUNT_CAP = opts.stepVolumeCountCap ?? 50_000;
   }
 
   /** Start the heartbeat timer. Caller is responsible for stopping
