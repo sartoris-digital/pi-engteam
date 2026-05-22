@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   isDangerousRm,
   isEnvFileAccess,
@@ -72,6 +72,31 @@ describe("isProtectedPath", () => {
     });
     it("allows a normal artifact file under runDir", () => {
       expect(isProtectedPath(`${runsDir}/abc/triage-summary.md`, { runsDir }).blocked).toBe(false);
+    });
+
+    // Phase A item 4: narrow exception for the agent's own verdict slot.
+    describe("PI_ENGINEERING_VERDICT_FILE exception", () => {
+      const savedEnv = process.env.PI_ENGINEERING_VERDICT_FILE;
+      afterEach(() => {
+        if (savedEnv === undefined) delete process.env.PI_ENGINEERING_VERDICT_FILE;
+        else process.env.PI_ENGINEERING_VERDICT_FILE = savedEnv;
+      });
+      it("allows the exact path the env var points at, even inside _verdicts/", () => {
+        const slot = `${runsDir}/abc/_verdicts/bug-triage-classify-tok.json`;
+        process.env.PI_ENGINEERING_VERDICT_FILE = slot;
+        expect(isProtectedPath(slot, { runsDir }).blocked).toBe(false);
+      });
+      it("still blocks a peer agent's verdict slot when env var is set", () => {
+        const slot = `${runsDir}/abc/_verdicts/bug-triage-classify-tok.json`;
+        const peer = `${runsDir}/abc/_verdicts/judge-judge-gate-other.json`;
+        process.env.PI_ENGINEERING_VERDICT_FILE = slot;
+        expect(isProtectedPath(peer, { runsDir }).blocked).toBe(true);
+      });
+      it("blocks the verdict slot when env var is unset (no exception)", () => {
+        delete process.env.PI_ENGINEERING_VERDICT_FILE;
+        const slot = `${runsDir}/abc/_verdicts/x-y-z.json`;
+        expect(isProtectedPath(slot, { runsDir }).blocked).toBe(true);
+      });
     });
   });
 });

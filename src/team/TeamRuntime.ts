@@ -532,8 +532,36 @@ export class TeamRuntime {
       // Include the per-deliver eventToken in temp filenames so deliverAll()
       // fan-outs that share the same message.id don't collide on disk
       // (Codex round-2 R2-M4).
-      const verdictFile = join(tmpDir, `${id}-${eventToken}.verdict.json`);
       const systemPromptFile = join(tmpDir, `${id}-${eventToken}.system-prompt.txt`);
+
+      // Phase A item 4: when `PI_ENGINEERING_VERDICT_SLOT_HOSTOWNED` is
+      // on, route the verdict file out of `_agent_tmp` (Layer-A blocked
+      // for agents) and into the per-run `_verdicts/` directory under
+      // the agent's runDir-upsert allowlist. The Layer-A exception in
+      // paths.ts keys on the env var so the model's `write` tool
+      // recovery path can land. When off, the legacy `_agent_tmp`
+      // location is used (current default).
+      const { getPhaseAConfig } = await import("./phaseA-config.js");
+      const phaseAConfig = getPhaseAConfig();
+      const hostStepForSlot = opts?.hostStep ?? "step";
+      let verdictFile: string;
+      let hostSlot: import("./verdict-slot.js").VerdictSlot | undefined;
+      if (phaseAConfig.verdictSlotHostOwned && opts?.runId) {
+        const { createSlot } = await import("./verdict-slot.js");
+        const slotRunDir = join(this.config.runsDir, opts.runId);
+        try {
+          hostSlot = createSlot(slotRunDir, to, hostStepForSlot, eventToken);
+          verdictFile = hostSlot.canonicalPath;
+        } catch (err) {
+          console.error(
+            `[pi-team] host-owned verdict slot creation failed for ${to} (${opts.runId}); falling back to legacy _agent_tmp path:`,
+            err instanceof Error ? err.message : String(err),
+          );
+          verdictFile = join(tmpDir, `${id}-${eventToken}.verdict.json`);
+        }
+      } else {
+        verdictFile = join(tmpDir, `${id}-${eventToken}.verdict.json`);
+      }
 
       // Phase 5 §8.7 + 5.5 §9.2: build the agent system prompt. The
       // ordering, escaping, and fencing are encapsulated in

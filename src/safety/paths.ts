@@ -189,6 +189,19 @@ export function isProtectedPath(filePath: string, opts?: { runsDir?: string }): 
       ];
       for (const pat of ORCH_OWNED) {
         if (pat.test(cand)) {
+          // Phase A item 4: narrow exception for the agent's OWN
+          // verdict slot under `_verdicts/`. The orchestrator pre-
+          // creates the slot and exports its absolute path via
+          // PI_ENGINEERING_VERDICT_FILE; the agent's `write`/`edit`
+          // tool recovery path lands there. Layer A keys the
+          // exception on the env-var-exact path so a different slot
+          // (a peer agent's) remains blocked.
+          if (pat.source.includes("_verdicts")) {
+            const allowedVerdict = process.env.PI_ENGINEERING_VERDICT_FILE;
+            if (allowedVerdict && cand === resolve(expandPath(allowedVerdict))) {
+              continue;
+            }
+          }
           return {
             blocked: true,
             reason: `Orchestrator-owned path under runDir (${pat.source}) — agents read but never write.`,
