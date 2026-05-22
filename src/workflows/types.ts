@@ -62,6 +62,22 @@ export type Step = {
    * is per-step, not per-attempt).
    */
   timeoutSeconds?: number;
+  /**
+   * Phase A item 8: host-executed acceptance predicate. After an
+   * agent emits PASS, the engine consults this predicate to verify
+   * the verdict is supported by on-disk evidence. Returns ok=false
+   * → engine downgrades to NEEDS_MORE (escalates to FAIL after
+   * retry exhaustion). Defaults to a `passThrough` if omitted, so
+   * workflows that don't need predicate enforcement opt-out by
+   * default.
+   */
+  acceptPass?: import("./acceptance-predicates.js").AcceptPredicate;
+  /**
+   * Phase A item 8: marks this step as a safety gate. Synthesized
+   * verdicts are refused regardless of content fields. Recommended
+   * for judge-gate / verify / security-auditor steps.
+   */
+  safetyGating?: boolean;
   run: (ctx: StepContext) => Promise<StepResult>;
 };
 

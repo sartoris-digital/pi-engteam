@@ -575,7 +575,67 @@ export class ADWEngine {
         this.config.team.markStepComplete(state.currentStep);
       }
 
+      // Phase A item 8: host-executed acceptance predicate. Only
+      // runs when the feature flag is on, the step declares an
+      // `acceptPass`, and the result is PASS. Predicate failure
+      // downgrades to NEEDS_MORE with the reasons list; the
+      // workflow's transitions then decide whether to retry or
+      // halt.
+      try {
+        const { getPhaseAConfig } = await import("../team/phaseA-config.js");
+        const cfg = getPhaseAConfig();
+        if (cfg.acceptPredicates && stepDef.acceptPass && result.verdict === "PASS") {
+          const runDir = joinPath(this.config.runsDir, state.runId);
+          const verdictForPredicate = {
+            step: state.currentStep,
+            verdict: result.verdict,
+            artifacts: Object.values(result.artifacts ?? {}),
+            issues: result.issues,
+            handoffHint: result.handoffHint,
+          } as VerdictPayload;
+          const ac = await stepDef.acceptPass({
+            verdict: verdictForPredicate,
+            runDir,
+            stepName: state.currentStep,
+            synthesized: (result as any).synthesized === true,
+            safetyGating: stepDef.safetyGating === true,
+          });
+          if (!ac.ok) {
+            result = {
+              ...result,
+              success: false,
+              verdict: "NEEDS_MORE",
+              issues: [...(result.issues ?? []), ...ac.reasons.map((r) => `acceptPass: ${r}`)],
+            };
+          }
+        }
+      } catch (err) {
+        // Predicate failure must never crash the engine. Log and
+        // continue with the original verdict.
+        console.error(`[pi-eng] acceptPass predicate threw for step ${state.currentStep}:`, err instanceof Error ? err.message : String(err));
+      }
+
       const elapsed = Math.max(0, (performance.now() - stepStart) / 1000);
+      // Phase A item 10: when the provider returned no usage data,
+      // tickBudget already accrues wallSeconds (which trips the
+      // wall-clock cap independently). Emit a telemetry event so
+      // operators can spot providers that never return usage —
+      // budget visibility falls to wall-clock for those runs.
+      const costMissing = (result as any).costUsd === undefined;
+      const tokensMissing = (result as any).tokens === undefined;
+      if (costMissing && tokensMissing) {
+        try {
+          const { emitFallback } = await import("../team/fallback-telemetry.js");
+          emitFallback(this.config.runsDir, {
+            ts: new Date().toISOString(),
+            runId: state.runId,
+            agent: stepDef.agent ?? "unknown",
+            step: state.currentStep,
+            tier: "usage-unavailable",
+            durationMs: Math.round(elapsed * 1000),
+          });
+        } catch { /* telemetry must never block */ }
+      }
       state = tickBudget(state, elapsed, {
         costUsd: (result as any).costUsd,
         tokens: (result as any).tokens,

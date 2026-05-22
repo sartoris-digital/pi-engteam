@@ -1,6 +1,6 @@
 {
   "name": "@sartoris/pi-engineering",
-  "version": "2.1.0-phaseA",
+  "version": "2.1.0-phaseA.2",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
