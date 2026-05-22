@@ -148,9 +148,9 @@ describe("defaultStepTimeoutSeconds", () => {
   it("returns 1800 for review", () => {
     expect(defaultStepTimeoutSeconds("review")).toBe(1800);
   });
-  it("returns 900 for any other step", () => {
-    expect(defaultStepTimeoutSeconds("classify")).toBe(900);
-    expect(defaultStepTimeoutSeconds("route")).toBe(900);
+  it("returns 1800 for any other step", () => {
+    expect(defaultStepTimeoutSeconds("classify")).toBe(1800);
+    expect(defaultStepTimeoutSeconds("route")).toBe(1800);
   });
 });
 
