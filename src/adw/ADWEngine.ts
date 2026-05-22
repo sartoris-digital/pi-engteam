@@ -437,6 +437,7 @@ export class ADWEngine {
         const queue = new RunActivityQueue({ runsDir: this.config.runsDir, runId });
         try {
           queue.acquireLock();
+          queue.startHeartbeat();
           this.config.team.setActivityQueue(queue);
           this.activityQueues.set(runId, queue);
         } catch (err) {

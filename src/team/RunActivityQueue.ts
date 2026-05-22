@@ -72,6 +72,14 @@ export type QueueOptions = {
   ringCapacity?: number; // max in-memory events before drop/coalesce
   maxBodyBytes?: number; // per-event body cap (post-redaction)
   legacyMirrorEnabled?: boolean;
+  // Phase B item 16: stuck-detector tuning. Heartbeat fires every
+  // `heartbeatIntervalMs` while there's an active agent; stuck-
+  // warning escalates when model has been silent past
+  // `stuckThresholdMs` AND a tool call has been outstanding past
+  // `stuckToolMs`. Defaults align with PLAN (5s / 90s / 300s).
+  heartbeatIntervalMs?: number;
+  stuckThresholdMs?: number;
+  stuckToolMs?: number;
   // Test hook so unit tests can drive the in-process callback
   // without spawning consumers.
   onEvent?: (ev: AgentActivityEvent) => void;
@@ -86,12 +94,22 @@ export class RunActivityQueue {
   private coalesceWindowStart: number = Date.now();
   private autoDisabled: boolean = false;
   private lockFd: number | undefined;
+  // Phase B item 16 stuck-detector state.
+  private lastEnqueueTs: number = Date.now();
+  private lastAgent: string = "";
+  private lastStep: string = "";
+  private pendingToolStart: number | undefined; // when an unmatched tool_call_invoke is open
+  private heartbeatTimer: NodeJS.Timeout | undefined;
+  private stuckWarned: boolean = false;
 
   constructor(opts: QueueOptions) {
     this.opts = {
       ringCapacity: opts.ringCapacity ?? 4096,
       maxBodyBytes: opts.maxBodyBytes ?? 32 * 1024,
       legacyMirrorEnabled: opts.legacyMirrorEnabled ?? true,
+      heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 5000,
+      stuckThresholdMs: opts.stuckThresholdMs ?? 90_000,
+      stuckToolMs: opts.stuckToolMs ?? 300_000,
       runsDir: opts.runsDir,
       runId: opts.runId,
       onEvent: opts.onEvent,
@@ -102,6 +120,15 @@ export class RunActivityQueue {
       mkdirSync(dirname(this.paths.legacyMirror), { recursive: true });
     }
     this.seq = this.loadSeq();
+  }
+
+  /** Start the heartbeat timer. Caller is responsible for stopping
+   *  via release(); the timer is unref'd so it never holds the
+   *  process open on its own. */
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => this.tickHeartbeat(), this.opts.heartbeatIntervalMs);
+    this.heartbeatTimer.unref?.();
   }
 
   /** Acquire the per-run exclusive lock so a second controller can't double-write. */
@@ -122,6 +149,10 @@ export class RunActivityQueue {
 
   /** Release the lock + persist final seq. Safe to call on shutdown. */
   release(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
     if (this.lockFd !== undefined) {
       try {
         closeSync(this.lockFd);
@@ -185,7 +216,73 @@ export class RunActivityQueue {
     if (this.ring.length > this.opts.ringCapacity * 2) this.ring.shift();
     this.persist(ev);
     this.opts.onEvent?.(ev);
+
+    // Stuck-detector bookkeeping (item 16).
+    this.lastEnqueueTs = Date.now();
+    this.lastAgent = ev.agentName;
+    this.lastStep = ev.step;
+    this.stuckWarned = false;
+    if (ev.kind === "tool_call_invoke") {
+      this.pendingToolStart = Date.now();
+    } else if (ev.kind === "tool_call_result" || ev.kind === "verdict" || ev.kind === "error") {
+      this.pendingToolStart = undefined;
+    }
     return { accepted: true };
+  }
+
+  /**
+   * Periodic tick — emits `heartbeat` events every interval and
+   * escalates to `stuck-warning` when model has been silent AND a
+   * tool call has been outstanding too long (item 16).
+   * Visible for tests via `tickHeartbeat()`.
+   */
+  tickHeartbeat(now: number = Date.now()): void {
+    if (this.autoDisabled) return;
+    const elapsedSinceLast = now - this.lastEnqueueTs;
+    const toolPending = this.pendingToolStart !== undefined ? now - this.pendingToolStart : 0;
+    // Decide which lifecycle state we're in (round 5 MED #2):
+    //   model-silent: no events in stuckThresholdMs, no open tool
+    //   tool-running: open tool call < stuckToolMs
+    //   tool-stuck:   open tool call > stuckToolMs
+    let state: "model-silent" | "tool-running" | "tool-stuck" | "idle" = "idle";
+    if (this.pendingToolStart !== undefined) {
+      state = toolPending > this.opts.stuckToolMs ? "tool-stuck" : "tool-running";
+    } else if (elapsedSinceLast > this.opts.stuckThresholdMs) {
+      state = "model-silent";
+    }
+    // Heartbeat event every interval so the UI can show "still
+    // alive, waiting for model… Ns".
+    const heartbeat: AgentActivityEvent = {
+      runId: this.opts.runId,
+      agentName: this.lastAgent || "system",
+      step: this.lastStep || "system",
+      seq: this.nextSeq(),
+      sourceTs: new Date(now).toISOString(),
+      kind: "heartbeat",
+      body: JSON.stringify({ state, elapsedSinceLastMs: elapsedSinceLast, toolPendingMs: toolPending }),
+      sourceClass: "synthetic",
+    };
+    this.persist(heartbeat);
+    this.opts.onEvent?.(heartbeat);
+    // Escalate to stuck-warning when model has been silent past
+    // threshold AND we don't already have a single open tool call.
+    // (A long-running tool call is its own state; we still surface
+    // it but don't double-warn.)
+    if (state === "model-silent" && !this.stuckWarned) {
+      this.stuckWarned = true;
+      const warning: AgentActivityEvent = {
+        runId: this.opts.runId,
+        agentName: this.lastAgent || "system",
+        step: this.lastStep || "system",
+        seq: this.nextSeq(),
+        sourceTs: new Date(now).toISOString(),
+        kind: "stuck-warning",
+        body: `model-silent for ${Math.round(elapsedSinceLast / 1000)}s — last activity from agent '${this.lastAgent}' on step '${this.lastStep}'`,
+        sourceClass: "synthetic",
+      };
+      this.persist(warning);
+      this.opts.onEvent?.(warning);
+    }
   }
 
   /** True when latched auto-disable has fired. */

@@ -103,3 +103,73 @@ describe("RunActivityQueue", () => {
     expect(seen[0].kind).toBe("verdict");
   });
 });
+
+// Phase B item 16 — stuck detector.
+describe("RunActivityQueue — stuck detector (item 16)", () => {
+  let runsDir: string;
+  const runId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+  beforeEach(() => {
+    runsDir = mkdtempSync(join(tmpdir(), "raq-stuck-"));
+  });
+
+  it("emits a heartbeat event on tickHeartbeat", () => {
+    const seen: AgentActivityEvent[] = [];
+    const q = new RunActivityQueue({
+      runsDir, runId, ringCapacity: 16,
+      heartbeatIntervalMs: 1000,
+      onEvent: (ev) => seen.push(ev),
+    });
+    q.enqueue({ runId, agentName: "bug-triage", step: "classify", kind: "assistant_text", body: "hi", sourceClass: "stdout" });
+    q.tickHeartbeat(Date.now() + 1000);
+    const heartbeats = seen.filter((e) => e.kind === "heartbeat");
+    expect(heartbeats.length).toBeGreaterThan(0);
+    const payload = JSON.parse(heartbeats[0].body);
+    expect(payload.state).toBeDefined();
+  });
+
+  it("escalates to stuck-warning when model is silent past threshold", () => {
+    const seen: AgentActivityEvent[] = [];
+    const q = new RunActivityQueue({
+      runsDir, runId, ringCapacity: 16,
+      heartbeatIntervalMs: 1000,
+      stuckThresholdMs: 5000,
+      onEvent: (ev) => seen.push(ev),
+    });
+    q.enqueue({ runId, agentName: "bug-triage", step: "classify", kind: "assistant_text", body: "hi", sourceClass: "stdout" });
+    // Simulate clock advancing past threshold without any new
+    // activity.
+    q.tickHeartbeat(Date.now() + 10_000);
+    const warnings = seen.filter((e) => e.kind === "stuck-warning");
+    expect(warnings.length).toBe(1);
+    expect(warnings[0].body).toMatch(/model-silent/);
+  });
+
+  it("classifies state as tool-running when an unmatched tool_call_invoke is open", () => {
+    const seen: AgentActivityEvent[] = [];
+    const q = new RunActivityQueue({
+      runsDir, runId, ringCapacity: 16,
+      onEvent: (ev) => seen.push(ev),
+    });
+    q.enqueue({ runId, agentName: "bug-triage", step: "classify", kind: "tool_call_invoke", body: "$ bash", sourceClass: "stdout" });
+    q.tickHeartbeat(Date.now() + 1000);
+    const heartbeats = seen.filter((e) => e.kind === "heartbeat");
+    expect(heartbeats.length).toBeGreaterThan(0);
+    const payload = JSON.parse(heartbeats[heartbeats.length - 1].body);
+    expect(payload.state).toBe("tool-running");
+  });
+
+  it("clears pending tool state on tool_call_result", () => {
+    const seen: AgentActivityEvent[] = [];
+    const q = new RunActivityQueue({
+      runsDir, runId, ringCapacity: 16,
+      onEvent: (ev) => seen.push(ev),
+    });
+    q.enqueue({ runId, agentName: "a", step: "s", kind: "tool_call_invoke", body: "$ cmd", sourceClass: "stdout" });
+    q.enqueue({ runId, agentName: "a", step: "s", kind: "tool_call_result", body: "ok", sourceClass: "stdout" });
+    q.tickHeartbeat(Date.now() + 1000);
+    const last = seen.filter((e) => e.kind === "heartbeat").pop();
+    expect(last).toBeDefined();
+    expect(JSON.parse(last!.body).state).toBe("idle");
+  });
+});
