@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, existsSync } from "fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CounterWal } from "../../../src/observability/counter-wal.js";
@@ -67,5 +67,86 @@ describe("TextfileExporter", () => {
     });
     const out = exp.render();
     expect(out).toContain('surface="has\\"quote\\\\path"');
+  });
+
+  // E5: write failure routes to emergency spool
+  it("E5: write failure routes to emergency spool", () => {
+    const spoolPath = join(mkdtempSync(join(tmpdir(), "spool-")), "emergency.jsonl");
+    const origEnv = process.env["PI_ENGINEERING_EMERGENCY_SPOOL"];
+    process.env["PI_ENGINEERING_EMERGENCY_SPOOL"] = spoolPath;
+
+    try {
+      // Make the telemetry dir read-only so writeFileSync fails.
+      const telemetryDir = join(configDir, "telemetry");
+      mkdirSync(telemetryDir, { recursive: true });
+      // Make dir read-only (chmod 0444) so writes fail.
+      require("fs").chmodSync(telemetryDir, 0o444);
+
+      const exp = new TextfileExporter({ configDir });
+      // writeOnce should not throw even when the write fails.
+      expect(() => exp.writeOnce()).not.toThrow();
+
+      // Restore permissions before assertion reads.
+      require("fs").chmodSync(telemetryDir, 0o755);
+
+      // Emergency spool should have received an entry.
+      expect(existsSync(spoolPath)).toBe(true);
+      const lines = readFileSync(spoolPath, "utf8").trim().split("\n").filter(Boolean);
+      expect(lines.length).toBeGreaterThan(0);
+      const entry = JSON.parse(lines[0]);
+      expect(entry.kind).toBe("alert");
+      expect(entry.reason).toBe("export-write-failed");
+    } finally {
+      try { require("fs").chmodSync(join(configDir, "telemetry"), 0o755); } catch { /* ignore */ }
+      if (origEnv === undefined) {
+        delete process.env["PI_ENGINEERING_EMERGENCY_SPOOL"];
+      } else {
+        process.env["PI_ENGINEERING_EMERGENCY_SPOOL"] = origEnv;
+      }
+    }
+  });
+
+  // E8: pre-existing lock file causes aggregate() to skip without error
+  it("E8: aggregator lock prevents double-write when lock already held", () => {
+    const telemetryDir = join(configDir, "telemetry");
+    mkdirSync(telemetryDir, { recursive: true });
+
+    // Pre-create the lock file to simulate another process holding it.
+    const lockPath = join(telemetryDir, ".aggregator.lock");
+    writeFileSync(lockPath, "99999");
+
+    const exp = new TextfileExporter({ configDir });
+    // Should return without error and without writing metrics.prom.
+    expect(() => exp.aggregate()).not.toThrow();
+    expect(existsSync(join(telemetryDir, "metrics.prom"))).toBe(false);
+    // Lock file should still exist (we didn't remove it).
+    expect(existsSync(lockPath)).toBe(true);
+  });
+
+  // E5: threshold breach appends to alerts.jsonl
+  it("E5: threshold breach appends to alerts.jsonl", () => {
+    const exp = new TextfileExporter({
+      configDir,
+      gaugeReaders: [
+        () => [
+          { name: "pi_eng_activity_disk_usage_bytes", labels: { surface: "canonical" }, value: 2000 },
+        ],
+      ],
+      alertThresholds: [
+        { name: "pi_eng_activity_disk_usage_bytes", threshold: 1000, direction: "above" },
+      ],
+    });
+
+    exp.writeOnce();
+
+    const alertsPath = join(configDir, "telemetry", "alerts.jsonl");
+    expect(existsSync(alertsPath)).toBe(true);
+    const lines = readFileSync(alertsPath, "utf8").trim().split("\n").filter(Boolean);
+    expect(lines.length).toBeGreaterThan(0);
+    const alert = JSON.parse(lines[0]);
+    expect(alert.name).toBe("pi_eng_activity_disk_usage_bytes");
+    expect(alert.value).toBe(2000);
+    expect(alert.threshold).toBe(1000);
+    expect(alert.direction).toBe("above");
   });
 });
