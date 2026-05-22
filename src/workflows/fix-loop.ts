@@ -142,7 +142,7 @@ Call VerdictEmit with step="test".`;
 const reviewStep: Step = {
   name: "review",
   required: true,
-  planMode: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `GOAL: ${ctx.run.goal}
 
@@ -170,7 +170,7 @@ Call VerdictEmit with step="review".`;
 const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
-  planMode: true,
+  planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
 
