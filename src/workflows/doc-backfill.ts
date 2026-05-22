@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -183,6 +184,8 @@ const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
     const prompt = `You are the judge approving a documentation backfill.
 
 GOAL: ${ctx.run.goal}
@@ -195,8 +198,10 @@ Review:
 3. Style is consistent with the existing codebase
 4. ADRs capture the right decisions
 
+Write your verdict summary to exactly this path: ${verdictPath}
 When complete, call VerdictEmit with:
 - step: "judge-gate"
+- artifacts: ["${verdictPath}"]
 - verdict: "PASS" (documentation approved)
 - verdict: "FAIL" with issues listed (requires revision)`;
 
@@ -207,6 +212,9 @@ When complete, call VerdictEmit with:
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {

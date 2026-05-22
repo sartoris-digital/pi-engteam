@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -129,6 +130,7 @@ const reviewStep: Step = {
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const prompt = `Review the newly written tests for quality: do they actually test the right behavior, cover edge cases, use correct assertions?
+Do NOT write any files. Do NOT include artifacts in your VerdictEmit call — emit only step, verdict, and issues.
 Call VerdictEmit with step="review".`;
 
     try {
@@ -154,11 +156,14 @@ const judgeGateStep: Step = {
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
 
     const prompt = `GOAL: ${ctx.run.goal}
 Review all test artifacts. Confirm the test suite is adequate.
 ${priorFeedback ? `\nPREVIOUS FEEDBACK:\n${priorFeedback.join("\n")}` : ""}
-Call VerdictEmit with step="judge-gate".`;
+Write your verdict summary to exactly this path: ${verdictPath}
+Call VerdictEmit with step="judge-gate", artifacts=["${verdictPath}"].`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");
@@ -167,6 +172,9 @@ Call VerdictEmit with step="judge-gate".`;
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {

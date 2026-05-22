@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -147,6 +148,7 @@ const reviewStep: Step = {
     const prompt = `GOAL: ${ctx.run.goal}
 
 Review the implementation for correctness, edge cases, and code quality. Verify the fix addresses the root cause without introducing regressions.
+Do NOT write any files. Do NOT include artifacts in your VerdictEmit call — emit only step, verdict, and issues.
 Call VerdictEmit with step="review".`;
 
     try {
@@ -173,6 +175,8 @@ const judgeGateStep: Step = {
   planMode: false,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const priorFeedback = ctx.run.steps.findLast(s => s.name === "judge-gate")?.issues;
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
 
     const fixPlan = ctx.run.artifacts["fix-plan"] ?? "(missing)";
     const implArtifacts = Object.entries(ctx.run.artifacts)
@@ -187,7 +191,8 @@ IMPLEMENTATION ARTIFACTS: ${implArtifacts}
 Read the fix plan and any implementation artifacts at the absolute paths above (use the \`read\` tool).
 Review the implementation, test results, and code review findings. Confirm the fix is complete and correct.
 ${priorFeedback ? `\nPREVIOUS FEEDBACK:\n${priorFeedback.join("\n")}` : ""}
-Call VerdictEmit with step="judge-gate", verdict="PASS" if the fix is acceptable, or verdict="FAIL" with specific issues.`;
+Write your verdict summary to exactly this path: ${verdictPath}
+Call VerdictEmit with step="judge-gate", artifacts=["${verdictPath}"], verdict="PASS" if the fix is acceptable, or verdict="FAIL" with specific issues.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");
@@ -196,6 +201,9 @@ Call VerdictEmit with step="judge-gate", verdict="PASS" if the fix is acceptable
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {

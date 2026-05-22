@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -85,6 +86,8 @@ const judgeGateStep: Step = {
     const feedbackSection = previousFeedback
       ? `\nPREVIOUS JUDGE FEEDBACK:\n${previousFeedback.join("\n")}`
       : "";
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
 
     const incidentReport = ctx.run.artifacts["investigation"] ?? "investigation.md";
     const prompt = `INCIDENT: ${ctx.run.goal}
@@ -93,7 +96,8 @@ HYPOTHESIS TREE: ${incidentReport}
 Read the incident report file.
 Review the investigation findings. If the hypothesis tree is well-evidenced and actionable, PASS. If it needs deeper investigation, FAIL with specific gaps to address.${feedbackSection}
 
-Call VerdictEmit with step="judge-gate".`;
+Write your verdict summary to exactly this path: ${verdictPath}
+Call VerdictEmit with step="judge-gate", artifacts=["${verdictPath}"].`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");
@@ -102,6 +106,9 @@ Call VerdictEmit with step="judge-gate".`;
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {

@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -88,6 +89,8 @@ const judgeGateStep: Step = {
     const feedbackSection = previousFeedback
       ? `\nPREVIOUS FEEDBACK:\n${previousFeedback.join("\n")}`
       : "";
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
 
     const triageSummary = ctx.run.artifacts["triage-summary"] ?? "(missing)";
     const routingRec = ctx.run.artifacts["artifact-0"] ?? "(missing)";
@@ -99,7 +102,8 @@ ROUTING RECOMMENDATION: ${routingRec}
 Read the triage summary and routing recommendation above (use the \`read\` tool on the absolute paths).
 Confirm or override severity and routing in your verdict.${feedbackSection}
 
-Call VerdictEmit with step="judge-gate", verdict="PASS" if you agree, or verdict="FAIL" with issues if you disagree.`;
+Write your verdict summary to exactly this path: ${verdictPath}
+Call VerdictEmit with step="judge-gate", artifacts=["${verdictPath}"], verdict="PASS" if you agree, or verdict="FAIL" with issues if you disagree.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");
@@ -108,6 +112,9 @@ Call VerdictEmit with step="judge-gate", verdict="PASS" if you agree, or verdict
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {

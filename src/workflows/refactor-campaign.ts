@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -231,6 +232,7 @@ Please:
 4. Check documentation and comments are updated
 5. Confirm the refactor matches the stated goal
 
+Do NOT write any files. Do NOT include artifacts in your VerdictEmit call — emit only step, verdict, and issues.
 When complete, call VerdictEmit with:
 - step: "review"
 - verdict: "PASS" (refactor is complete and correct)
@@ -258,6 +260,8 @@ const judgeGateStep: Step = {
   name: "judge-gate",
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
     const prompt = `You are the judge approving a refactored codebase.
 
 GOAL: ${ctx.run.goal}
@@ -271,8 +275,10 @@ Review:
 4. Reviewer found no missed sites or semantic drift
 5. The codebase is in a better state than before
 
+Write your verdict summary to exactly this path: ${verdictPath}
 When complete, call VerdictEmit with:
 - step: "judge-gate"
+- artifacts: ["${verdictPath}"]
 - verdict: "PASS" (refactor approved)
 - verdict: "FAIL" with issues listed (requires re-design)`;
 
@@ -283,6 +289,9 @@ When complete, call VerdictEmit with:
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {

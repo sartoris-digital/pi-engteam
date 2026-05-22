@@ -1,3 +1,4 @@
+import { join } from "path";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -208,6 +209,8 @@ const judgeGateStep: Step = {
   required: true,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const verdictPath = join(runDir, "verdict.md");
     const prompt = `You are the judge reviewing a database migration for production approval.
 
 GOAL: ${ctx.run.goal}
@@ -221,8 +224,10 @@ Review:
 3. Test results confirm up and down migrations work
 4. Risk level is acceptable for production
 
+Write your verdict summary to exactly this path: ${verdictPath}
 When complete, call VerdictEmit with:
 - step: "judge-gate"
+- artifacts: ["${verdictPath}"]
 - verdict: "PASS" (migration approved for production)
 - verdict: "FAIL" with issues listed (requires re-planning)`;
 
@@ -233,6 +238,9 @@ When complete, call VerdictEmit with:
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
+        artifacts: verdict.artifacts
+          ? Object.fromEntries(verdict.artifacts.map((a, i) => [`judge-artifact-${i}`, a]))
+          : {},
       };
     } catch (err) {
       return {
