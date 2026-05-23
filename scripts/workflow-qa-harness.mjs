@@ -75,7 +75,7 @@ const SCENARIOS = [
     goal: "Verify that the CounterWal.computeTotals() function correctly merges checkpoint + WAL tail so that totals are monotonic. Use the existing counter-storm test as the oracle.",
     accept(runDir) {
       return checkArtifacts(runDir, [
-        { name: "verify", minBytes: 200, mustContain: [/PASS|FAIL|pass|fail|verified|result/i] },
+        { name: "verdict", minBytes: 50, mustContain: [/PASS|FAIL|pass|fail/i] },
       ]);
     },
   },

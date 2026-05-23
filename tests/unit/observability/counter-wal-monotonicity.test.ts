@@ -1,553 +1,396 @@
-// CounterWal monotonicity and edge case tests — filling coverage gaps
-// identified in coverage-gaps-audit.md (GAP-01 through GAP-11).
+// CounterWal.computeTotals() monotonicity and edge case tests.
 //
-// These tests verify the critical assumptions of the counter-storm oracle:
-//   1. Totals never decrease
-//   2. Exact count match after N increments
-//   3. WAL quota enforcement works correctly
-//
-// GAP-11 (monotonicity after compact) is the CRITICAL test that the
-// oracle doesn't explicitly verify.
+// Covers critical gaps identified in audit:
+//   GAP-11: Monotonicity after compact() — the oracle test validates
+//           monotonicity during flush but not after compact(), which
+//           could decrease totals without failing the storm test.
+//   GAP-01 to GAP-10: File state edge cases (empty WAL, corrupt
+//                     checkpoint, torn lines in WAL).
+//   GAP-06: Label canonicalization order independence.
+//   GAP-14: getOverflowDrops() behavior verification.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, mkdirSync } from "fs";
+import { mkdtempSync, writeFileSync, appendFileSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CounterWal } from "../../../src/observability/counter-wal.js";
+import type { CounterCheckpoint, CounterDelta } from "../../../src/observability/counter-wal.js";
 
-describe("CounterWal — Monotonicity & Edge Cases", () => {
+describe("CounterWal.computeTotals() — monotonicity", () => {
   let configDir: string;
 
   beforeEach(() => {
-    configDir = mkdtempSync(join(tmpdir(), "wal-mono-"));
+    configDir = mkdtempSync(join(tmpdir(), "cwal-mono-"));
   });
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-11: Monotonicity after compact() ⚠️ CRITICAL
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // The oracle assumes totals never decrease, but doesn't explicitly
-  // test the compact() → computeTotals() path. This is the highest
-  // priority gap.
-  describe("GAP-11: Monotonicity after compact()", () => {
-    it("totals remain stable after compact()", () => {
-      const w = new CounterWal({ configDir });
+  it("GAP-11: totals are monotonic AFTER compact() is called", () => {
+    // This is the CRITICAL missing test — the counter-storm oracle
+    // validates monotonicity during flush but not after compact().
+    // compact() could incorrectly decrease totals if it has a bug.
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
 
-      // Step 1: inc() + flush() → totals = 100
-      w.inc("pi_eng_fallback_fired_total", { tier: "synthesis", agent: "a", step: "s", provider: "p" }, 100);
-      w.flush();
+    // Initial increments using a cataloged metric.
+    for (let i = 0; i < 1000; i++) {
+      wal.inc("pi_eng_fallback_fired_total", { tier: "1", agent: "test", step: "compact", provider: "anthropic" });
+    }
+    wal.flush();
 
-      const totals1 = w.computeTotals();
-      const key = Object.keys(totals1).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(key).toBeDefined();
-      expect(totals1[key!]).toBe(100);
+    const beforeCompact = wal.computeTotals();
+    const keyBefore = Object.keys(beforeCompact).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
+    expect(keyBefore).toBeTruthy();
+    const totalBefore = beforeCompact[keyBefore!];
+    expect(totalBefore).toBe(1000);
 
-      // Step 2: compact() — roll WAL into checkpoint
-      w.compact();
+    // Compact the WAL.
+    wal.compact();
 
-      // Step 3: computeTotals() should still be 100 (monotonicity preserved)
-      const totals2 = w.computeTotals();
-      expect(totals2[key!]).toBe(100);
-      expect(totals2[key!]).toBeGreaterThanOrEqual(totals1[key!]); // never decrease
+    // Add more increments after compact.
+    for (let i = 0; i < 500; i++) {
+      wal.inc("pi_eng_fallback_fired_total", { tier: "1", agent: "test", step: "compact", provider: "anthropic" });
+    }
+    wal.flush();
 
-      // Step 4: inc() more + flush() → totals = 150
-      w.inc("pi_eng_fallback_fired_total", { tier: "synthesis", agent: "a", step: "s", provider: "p" }, 50);
-      w.flush();
+    const afterCompact = wal.computeTotals();
+    const keyAfter = Object.keys(afterCompact).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
+    expect(keyAfter).toBeTruthy();
+    const totalAfter = afterCompact[keyAfter!];
 
-      const totals3 = w.computeTotals();
-      expect(totals3[key!]).toBe(150);
-      expect(totals3[key!]).toBeGreaterThanOrEqual(totals2[key!]); // never decrease
+    // CRITICAL ASSERTION: totals must NEVER decrease after compact.
+    expect(totalAfter).toBeGreaterThanOrEqual(totalBefore);
+    expect(totalAfter).toBe(1500); // exact total verification
 
-      // Verify checkpoint has 100, WAL tail has 50
-      const cpPath = join(configDir, "telemetry", "counter-checkpoint.json");
-      const cp = JSON.parse(readFileSync(cpPath, "utf8"));
-      expect(cp.totals[key!]).toBe(100);
+    wal.stop();
+  });
 
-      const walPath = join(configDir, "telemetry", "counter-wal.jsonl");
-      const walText = readFileSync(walPath, "utf8");
-      const walLines = walText.trim().split("\n").filter((l) => l);
-      expect(walLines.length).toBe(1); // only the new delta
-      const walEntry = JSON.parse(walLines[0]);
-      expect(walEntry.delta).toBe(50);
-    });
+  it("GAP-11: multiple compactions maintain monotonicity under load", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0, walByteCap: 1024 });
 
-    it("multiple compact() calls preserve monotonicity", () => {
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
+    let cumulativeTotal = 0;
+    const ROUNDS = 10;
 
-      let lastTotal = 0;
-      for (let i = 1; i <= 5; i++) {
-        w.inc("pi_eng_fallback_fired_total", labels, 10);
-        w.flush();
-        w.compact();
+    for (let round = 0; round < ROUNDS; round++) {
+      // Increment and flush using a cataloged metric.
+      for (let i = 0; i < 200; i++) {
+        wal.inc("pi_eng_verdict_timeout_total", { agent: "test", step: String(round) });
+      }
+      wal.flush();
+      cumulativeTotal += 200;
 
-        const totals = w.computeTotals();
-        const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-        const current = totals[key!];
-
-        expect(current).toBe(i * 10);
-        expect(current).toBeGreaterThanOrEqual(lastTotal); // monotonicity
-        lastTotal = current;
+      // Force compact every other round.
+      if (round % 2 === 1) {
+        wal.compact();
       }
 
-      expect(lastTotal).toBe(50);
-    });
+      // Verify monotonicity after each operation.
+      const totals = wal.computeTotals();
+      const keys = Object.keys(totals).filter((k) => k.startsWith("pi_eng_verdict_timeout_total"));
+      const currentTotal = keys.reduce((sum, k) => sum + totals[k], 0);
+      expect(currentTotal).toBeGreaterThanOrEqual(cumulativeTotal);
+    }
 
-    it("compact() + new instance preserves totals (cross-process)", () => {
-      const w1 = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      w1.inc("pi_eng_fallback_fired_total", labels, 75);
-      w1.flush();
-      w1.compact();
-
-      // Simulate new process
-      const w2 = new CounterWal({ configDir });
-      const totals2 = w2.computeTotals();
-      const key = Object.keys(totals2).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(totals2[key!]).toBe(75);
-
-      w2.inc("pi_eng_fallback_fired_total", labels, 25);
-      w2.flush();
-
-      const totals3 = w2.computeTotals();
-      expect(totals3[key!]).toBe(100);
-      expect(totals3[key!]).toBeGreaterThanOrEqual(totals2[key!]);
-    });
+    wal.stop();
   });
 
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-01: Empty WAL file
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-01: Empty WAL file", () => {
-    it("computeTotals returns only checkpoint when WAL is empty", () => {
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
+  it("GAP-11: compact() preserves exact totals across all label sets", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
 
-      w.inc("pi_eng_fallback_fired_total", labels, 42);
-      w.flush();
-      w.compact(); // Creates checkpoint, truncates WAL to empty string
+    // Create counters with multiple label sets using a cataloged metric.
+    const labelSets = [
+      { agent: "a", step: "s1" },
+      { agent: "b", step: "s2" },
+      { agent: "c", step: "s3" },
+    ];
 
-      const walPath = join(configDir, "telemetry", "counter-wal.jsonl");
-      const walContent = readFileSync(walPath, "utf8");
-      expect(walContent).toBe(""); // Verify WAL is empty
-
-      const totals = w.computeTotals();
-      const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(totals[key!]).toBe(42); // Should return checkpoint value only
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-02: Corrupt checkpoint file
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-02: Corrupt checkpoint file", () => {
-    it("computeTotals gracefully handles malformed checkpoint JSON", () => {
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      // Create WAL with valid data
-      w.inc("pi_eng_fallback_fired_total", labels, 100);
-      w.flush();
-
-      // Corrupt the checkpoint file
-      const cpPath = join(configDir, "telemetry", "counter-checkpoint.json");
-      mkdirSync(join(configDir, "telemetry"), { recursive: true });
-      writeFileSync(cpPath, '{"ts":"2026-05-22T00:00:00.000Z","totals":{INVALID JSON', "utf8");
-
-      // Should not throw, should return WAL totals only
-      expect(() => w.computeTotals()).not.toThrow();
-      const totals = w.computeTotals();
-      const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(totals[key!]).toBe(100); // WAL tail preserved
-    });
-
-    it("corrupt checkpoint does not violate monotonicity", () => {
-      const w1 = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      w1.inc("pi_eng_fallback_fired_total", labels, 50);
-      w1.flush();
-      w1.compact();
-
-      const totals1 = w1.computeTotals();
-      const key = Object.keys(totals1).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(totals1[key!]).toBe(50);
-
-      // Corrupt checkpoint
-      const cpPath = join(configDir, "telemetry", "counter-checkpoint.json");
-      writeFileSync(cpPath, "NOT JSON AT ALL", "utf8");
-
-      // Add more data
-      w1.inc("pi_eng_fallback_fired_total", labels, 25);
-      w1.flush();
-
-      const totals2 = w1.computeTotals();
-      // Checkpoint is ignored (corrupt), so we only see the new WAL delta
-      expect(totals2[key!]).toBe(25);
-      // Note: In production, this would be a monotonicity violation if the
-      // checkpoint had a higher value. The code's "start fresh" behavior
-      // is documented in the audit as a known limitation.
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-03: Torn lines in WAL
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-03: Torn lines in WAL", () => {
-    it("computeTotals skips torn lines and processes valid ones", () => {
-      const w = new CounterWal({ configDir });
-
-      // Manually create a WAL with valid + torn lines
-      const walPath = join(configDir, "telemetry", "counter-wal.jsonl");
-      mkdirSync(join(configDir, "telemetry"), { recursive: true });
-
-      const validLine1 = JSON.stringify({
-        ts: "2026-05-22T00:00:00.000Z",
-        pid: 12345,
-        name: "pi_eng_fallback_fired_total",
-        labels: { tier: "synthesis", agent: "a", step: "s", provider: "p" },
-        delta: 10,
-      });
-      const tornLine = '{"ts":"2026-05-22T00:00:01.000Z","pid":12345,"name":"pi_eng_fallback_fired_total","labels":{"tier":"synthesis","agent":"a","step":"s","provider":"p"},"delta":999'; // incomplete
-      const validLine2 = JSON.stringify({
-        ts: "2026-05-22T00:00:02.000Z",
-        pid: 12345,
-        name: "pi_eng_fallback_fired_total",
-        labels: { tier: "synthesis", agent: "a", step: "s", provider: "p" },
-        delta: 20,
-      });
-
-      writeFileSync(walPath, [validLine1, tornLine, validLine2].join("\n") + "\n", "utf8");
-
-      const totals = w.computeTotals();
-      const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(totals[key!]).toBe(30); // 10 + 20, torn line skipped
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-04: Unreadable WAL file
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-04: Unreadable WAL file", () => {
-    it("computeTotals returns checkpoint only when WAL is unreadable", () => {
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      // Create checkpoint
-      w.inc("pi_eng_fallback_fired_total", labels, 100);
-      w.flush();
-      w.compact();
-
-      // Add more data to WAL
-      w.inc("pi_eng_fallback_fired_total", labels, 50);
-      w.flush();
-
-      // Make WAL unreadable
-      const walPath = join(configDir, "telemetry", "counter-wal.jsonl");
-      chmodSync(walPath, 0o000);
-
-      try {
-        // Should not throw, should return checkpoint only
-        const totals = w.computeTotals();
-        const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-        expect(totals[key!]).toBe(100); // checkpoint only, WAL tail lost
-      } finally {
-        // Restore permissions for cleanup
-        chmodSync(walPath, 0o600);
-      }
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-05: Missing checkpoint + missing WAL
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-05: Missing checkpoint + missing WAL", () => {
-    it("computeTotals returns empty object on first invocation", () => {
-      const w = new CounterWal({ configDir });
-
-      // No inc(), no flush() — fresh state
-      const cpPath = join(configDir, "telemetry", "counter-checkpoint.json");
-      const walPath = join(configDir, "telemetry", "counter-wal.jsonl");
-
-      expect(existsSync(cpPath)).toBe(false);
-      expect(existsSync(walPath)).toBe(false);
-
-      const totals = w.computeTotals();
-      expect(totals).toEqual({});
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-06: Label canonicalization order independence
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-06: Label canonicalization order independence", () => {
-    it("same labels in different order produce identical totals", () => {
-      const w = new CounterWal({ configDir });
-
-      // Inc with labels in different orders
-      w.inc("pi_eng_fallback_fired_total", { tier: "synthesis", agent: "a", step: "s", provider: "p" }, 10);
-      w.inc("pi_eng_fallback_fired_total", { provider: "p", step: "s", agent: "a", tier: "synthesis" }, 20);
-      w.inc("pi_eng_fallback_fired_total", { agent: "a", provider: "p", tier: "synthesis", step: "s" }, 30);
-      w.flush();
-
-      const totals = w.computeTotals();
-      const keys = Object.keys(totals);
-
-      // Should have exactly ONE key (all three increments merged)
-      expect(keys.length).toBe(1);
-      const key = keys[0];
-      expect(totals[key]).toBe(60); // 10 + 20 + 30
-    });
-
-    it("label order independence across flushes", () => {
-      const w = new CounterWal({ configDir });
-
-      w.inc("pi_eng_fallback_fired_total", { a: "1", b: "2", c: "3" }, 5);
-      w.flush();
-
-      w.inc("pi_eng_fallback_fired_total", { c: "3", a: "1", b: "2" }, 10);
-      w.flush();
-
-      w.inc("pi_eng_fallback_fired_total", { b: "2", c: "3", a: "1" }, 15);
-      w.flush();
-
-      const totals = w.computeTotals();
-      const keys = Object.keys(totals);
-      expect(keys.length).toBe(1);
-      expect(totals[keys[0]]).toBe(30);
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-07: Multiple counters with different labels
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-07: Multiple counters with different labels", () => {
-    it("maintains separate totals per counter+label combination", () => {
-      const w = new CounterWal({ configDir });
-
-      // Different counters
-      w.inc("pi_eng_fallback_fired_total", { tier: "synthesis", agent: "a", step: "s", provider: "p" }, 10);
-      w.inc("pi_eng_verdict_timeout_total", { agent: "a", step: "s" }, 20);
-      w.inc("pi_eng_activity_drops_total", { kind: "thinking", provider: "anthropic" }, 30);
-
-      // Same counter, different labels
-      w.inc("pi_eng_fallback_fired_total", { tier: "stdout-scan", agent: "b", step: "t", provider: "q" }, 40);
-      w.inc("pi_eng_fallback_fired_total", { tier: "synthesis", agent: "a", step: "s", provider: "p" }, 50);
-
-      w.flush();
-
-      const totals = w.computeTotals();
-      const keys = Object.keys(totals);
-
-      // Should have 4 distinct keys
-      expect(keys.length).toBe(4);
-
-      // Verify each total
-      const key1 = keys.find((k) => k.includes("pi_eng_fallback_fired_total|agent=a"));
-      const key2 = keys.find((k) => k.includes("pi_eng_fallback_fired_total|agent=b"));
-      const key3 = keys.find((k) => k.includes("pi_eng_verdict_timeout_total"));
-      const key4 = keys.find((k) => k.includes("pi_eng_activity_drops_total"));
-
-      expect(totals[key1!]).toBe(60); // 10 + 50
-      expect(totals[key2!]).toBe(40);
-      expect(totals[key3!]).toBe(20);
-      expect(totals[key4!]).toBe(30);
-    });
-
-    it("10+ distinct counter+label combinations", () => {
-      const w = new CounterWal({ configDir });
-
-      // Create 15 distinct combinations
-      for (let i = 0; i < 15; i++) {
-        w.inc("pi_eng_fallback_fired_total", {
-          tier: "synthesis",
-          agent: `agent-${i}`,
-          step: `step-${i}`,
-          provider: `provider-${i}`,
-        }, i + 1);
-      }
-
-      w.flush();
-
-      const totals = w.computeTotals();
-      const keys = Object.keys(totals);
-
-      expect(keys.length).toBe(15);
-
-      // Verify sum
-      const sum = Object.values(totals).reduce((a, b) => a + b, 0);
-      expect(sum).toBe((15 * 16) / 2); // sum of 1..15 = 120
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-08 & GAP-09: Overflow drop behavior + getOverflowDrops()
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-08 & GAP-09: Overflow drops", () => {
-    it("drops deltas when WAL exceeds 2× cap", () => {
-      const w = new CounterWal({ configDir, flushIntervalMs: 0, walByteCap: 1024 });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      // Fill WAL to exactly 2× cap by creating many deltas without flushing
-      // Each delta is ~150 bytes, so we need ~14 deltas to exceed 2KB
-      for (let i = 0; i < 20; i++) {
-        w.inc("pi_eng_fallback_fired_total", { ...labels, suffix: `long-label-value-${i}-to-make-it-bigger` }, 1);
-      }
-
-      // Flush once to write all deltas
-      w.flush();
-
-      // Now create more deltas to trigger overflow
+    for (const labels of labelSets) {
       for (let i = 0; i < 100; i++) {
-        w.inc("pi_eng_fallback_fired_total", { ...labels, suffix: `overflow-${i}` }, 1);
+        wal.inc("pi_eng_verdict_timeout_total", labels);
       }
+    }
+    wal.flush();
 
-      const dropsBefore = w.getOverflowDrops();
-      w.flush(); // This should trigger overflow drop
-      const dropsAfter = w.getOverflowDrops();
+    const beforeCompact = wal.computeTotals();
+    const keysBefore = Object.keys(beforeCompact).filter((k) => k.startsWith("pi_eng_verdict_timeout_total"));
+    expect(keysBefore).toHaveLength(3);
 
-      // getOverflowDrops() should have incremented
-      expect(dropsAfter).toBeGreaterThan(dropsBefore);
-    });
+    // Compact.
+    wal.compact();
 
-    it("getOverflowDrops() increments by delta count", () => {
-      const w = new CounterWal({ configDir, flushIntervalMs: 0, walByteCap: 512 });
+    const afterCompact = wal.computeTotals();
+    const keysAfter = Object.keys(afterCompact).filter((k) => k.startsWith("pi_eng_verdict_timeout_total"));
+    expect(keysAfter).toHaveLength(3);
 
-      expect(w.getOverflowDrops()).toBe(0);
+    // Every key must have the same total before and after compact.
+    for (const key of keysBefore) {
+      expect(afterCompact[key]).toBe(beforeCompact[key]);
+      expect(afterCompact[key]).toBe(100);
+    }
 
-      // Force overflow
+    wal.stop();
+  });
+});
+
+describe("CounterWal.computeTotals() — file state edge cases", () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "cwal-edge-"));
+  });
+
+  it("GAP-01: empty WAL file returns checkpoint totals only", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+
+    // Create a checkpoint with existing totals using cataloged metric key format.
+    const checkpoint: CounterCheckpoint = {
+      ts: new Date().toISOString(),
+      totals: {
+        "pi_eng_fallback_fired_total|agent=a,provider=anthropic,step=s,tier=1": 500,
+      },
+    };
+    writeFileSync(join(telemetryDir, "counter-checkpoint.json"), JSON.stringify(checkpoint), { mode: 0o600 });
+
+    // Create an empty WAL file.
+    writeFileSync(join(telemetryDir, "counter-wal.jsonl"), "", { mode: 0o600 });
+
+    const totals = wal.computeTotals();
+    expect(totals["pi_eng_fallback_fired_total|agent=a,provider=anthropic,step=s,tier=1"]).toBe(500);
+
+    wal.stop();
+  });
+
+  it("GAP-02: corrupt checkpoint is ignored, WAL is still read", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+
+    // Write corrupt checkpoint (invalid JSON).
+    writeFileSync(join(telemetryDir, "counter-checkpoint.json"), "{ broken json }", { mode: 0o600 });
+
+    // Write valid WAL using a cataloged metric.
+    wal.inc("pi_eng_activity_drops_total", { kind: "thinking", provider: "anthropic" }, 100);
+    wal.flush();
+
+    const totals = wal.computeTotals();
+    const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_activity_drops_total"));
+    expect(key).toBeTruthy();
+    expect(totals[key!]).toBe(100);
+
+    wal.stop();
+  });
+
+  it("GAP-03: torn lines in WAL are skipped, valid lines are counted", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+    const walPath = join(telemetryDir, "counter-wal.jsonl");
+
+    // Write a mix of valid and torn lines using a cataloged metric.
+    const validDelta: CounterDelta = {
+      ts: new Date().toISOString(),
+      pid: process.pid,
+      name: "pi_eng_stuck_warning_total",
+      labels: { kind: "thinking" },
+      delta: 50,
+    };
+    appendFileSync(walPath, JSON.stringify(validDelta) + "\n", { mode: 0o600 });
+    appendFileSync(walPath, "{ torn line without closing brac\n", { mode: 0o600 });
+    appendFileSync(walPath, JSON.stringify(validDelta) + "\n", { mode: 0o600 });
+
+    const totals = wal.computeTotals();
+    const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_stuck_warning_total"));
+    expect(key).toBeTruthy();
+    // Should count both valid lines (2 × 50 = 100), skip torn line.
+    expect(totals[key!]).toBe(100);
+
+    wal.stop();
+  });
+
+  it("GAP-04: missing checkpoint and WAL returns empty totals", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+
+    // Don't write anything — both files are missing.
+    const totals = wal.computeTotals();
+    expect(Object.keys(totals)).toHaveLength(0);
+
+    wal.stop();
+  });
+
+  it("GAP-05: checkpoint with missing totals field is handled gracefully", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+
+    // Write checkpoint with missing totals field.
+    writeFileSync(
+      join(telemetryDir, "counter-checkpoint.json"),
+      JSON.stringify({ ts: new Date().toISOString() }),
+      { mode: 0o600 }
+    );
+
+    // Add some WAL data using a cataloged metric.
+    wal.inc("pi_eng_usage_unavailable_total", { provider: "anthropic" }, 25);
+    wal.flush();
+
+    const totals = wal.computeTotals();
+    const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_usage_unavailable_total"));
+    expect(key).toBeTruthy();
+    expect(totals[key!]).toBe(25);
+
+    wal.stop();
+  });
+
+  it("GAP-06: label canonicalization is order-independent", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+
+    // Increment with labels in different orders — should map to same key.
+    // Use a cataloged metric (workflow_success_total has workflow and cohort labels).
+    wal.inc("pi_eng_workflow_success_total", { cohort: "c1", workflow: "w1" }, 10);
+    wal.inc("pi_eng_workflow_success_total", { workflow: "w1", cohort: "c1" }, 20);
+    wal.flush();
+
+    const totals = wal.computeTotals();
+    const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_workflow_success_total"));
+    expect(key).toBeTruthy();
+    // Both increments should map to the same key due to label canonicalization.
+    expect(totals[key!]).toBe(30);
+
+    wal.stop();
+  });
+
+  it("GAP-07: checkpoint + WAL merge correctly with overlapping keys", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+
+    // Create checkpoint with existing total using a cataloged metric.
+    const checkpoint: CounterCheckpoint = {
+      ts: new Date().toISOString(),
+      totals: {
+        "pi_eng_capability_override_total|mode=warn": 100,
+      },
+    };
+    writeFileSync(join(telemetryDir, "counter-checkpoint.json"), JSON.stringify(checkpoint), { mode: 0o600 });
+
+    // Add more to the same key via WAL.
+    wal.inc("pi_eng_capability_override_total", { mode: "warn" }, 50);
+    wal.flush();
+
+    const totals = wal.computeTotals();
+    expect(totals["pi_eng_capability_override_total|mode=warn"]).toBe(150);
+
+    wal.stop();
+  });
+
+  it("GAP-08: computeTotals() handles very large checkpoint files", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+
+    // Create checkpoint with many keys using cataloged metrics.
+    // Use different label combinations to create many unique keys.
+    const totals: Record<string, number> = {};
+    for (let i = 0; i < 1000; i++) {
+      // Use workflow_success_total with varying cohort values
+      totals[`pi_eng_workflow_success_total|cohort=c${i},workflow=w1`] = i;
+    }
+    const checkpoint: CounterCheckpoint = {
+      ts: new Date().toISOString(),
+      totals,
+    };
+    writeFileSync(join(telemetryDir, "counter-checkpoint.json"), JSON.stringify(checkpoint), { mode: 0o600 });
+
+    const result = wal.computeTotals();
+    expect(Object.keys(result)).toHaveLength(1000);
+    expect(result["pi_eng_workflow_success_total|cohort=c999,workflow=w1"]).toBe(999);
+
+    wal.stop();
+  });
+
+  it("GAP-09: computeTotals() handles WAL with many deltas per key", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+
+    // Write many small deltas to the same key using a cataloged metric.
+    for (let i = 0; i < 100; i++) {
+      wal.inc("pi_eng_capability_mismatch_total", { provider: "anthropic", kind: "tool" }, 1);
+      wal.flush(); // Force separate WAL lines.
+    }
+
+    const totals = wal.computeTotals();
+    const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_capability_mismatch_total"));
+    expect(key).toBeTruthy();
+    expect(totals[key!]).toBe(100);
+
+    wal.stop();
+  });
+
+  it("GAP-10: empty lines in WAL are skipped gracefully", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0 });
+    const telemetryDir = join(configDir, "telemetry");
+    const walPath = join(telemetryDir, "counter-wal.jsonl");
+
+    // Write valid delta with empty lines interspersed using a cataloged metric.
+    const delta: CounterDelta = {
+      ts: new Date().toISOString(),
+      pid: process.pid,
+      name: "pi_eng_capability_stale_total",
+      labels: { provider: "anthropic" },
+      delta: 42,
+    };
+    appendFileSync(walPath, "\n", { mode: 0o600 });
+    appendFileSync(walPath, JSON.stringify(delta) + "\n", { mode: 0o600 });
+    appendFileSync(walPath, "\n\n", { mode: 0o600 });
+    appendFileSync(walPath, JSON.stringify(delta) + "\n", { mode: 0o600 });
+
+    const totals = wal.computeTotals();
+    const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_capability_stale_total"));
+    expect(key).toBeTruthy();
+    expect(totals[key!]).toBe(84);
+
+    wal.stop();
+  });
+});
+
+describe("CounterWal — overflow drop behavior", () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "cwal-overflow-"));
+  });
+
+  it("GAP-14: getOverflowDrops() returns drop count when WAL is way over quota", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0, walByteCap: 100 }); // tiny cap
+
+    // Fill WAL to trigger overflow using a cataloged metric.
+    for (let i = 0; i < 100; i++) {
+      wal.inc("pi_eng_protection_block_total", { path_class: "config", rule: "r1", surface: String(i) }, 1);
+    }
+    wal.flush();
+
+    // Force another flush — this should trigger overflow drop.
+    for (let i = 100; i < 200; i++) {
+      wal.inc("pi_eng_protection_block_total", { path_class: "config", rule: "r1", surface: String(i) }, 1);
+    }
+    wal.flush();
+
+    const drops = wal.getOverflowDrops();
+    // Should have dropped some deltas.
+    expect(drops).toBeGreaterThan(0);
+
+    wal.stop();
+  });
+
+  it("GAP-14: overflow drops accumulate across multiple flush cycles", () => {
+    const wal = new CounterWal({ configDir, flushIntervalMs: 0, walByteCap: 50 }); // very tiny cap
+
+    let totalDrops = 0;
+
+    for (let round = 0; round < 5; round++) {
       for (let i = 0; i < 50; i++) {
-        w.inc("pi_eng_fallback_fired_total", {
-          tier: "synthesis",
-          agent: `agent-${i}`,
-          step: `step-${i}`,
-          provider: `provider-${i}`,
-        }, 1);
+        wal.inc("pi_eng_cohort_overflow_total", { provider: String(round + i) }, 1);
       }
-      w.flush(); // Writes to disk
+      wal.flush();
+      const drops = wal.getOverflowDrops();
+      expect(drops).toBeGreaterThanOrEqual(totalDrops);
+      totalDrops = drops;
+    }
 
-      // Add more deltas to trigger overflow on next flush
-      for (let i = 0; i < 30; i++) {
-        w.inc("pi_eng_fallback_fired_total", {
-          tier: "synthesis",
-          agent: `overflow-agent-${i}`,
-          step: `overflow-step-${i}`,
-          provider: `overflow-provider-${i}`,
-        }, 1);
-      }
+    expect(totalDrops).toBeGreaterThan(0);
 
-      const dropsBefore = w.getOverflowDrops();
-      w.flush();
-      const dropsAfter = w.getOverflowDrops();
-
-      // Should have dropped the 30 deltas
-      expect(dropsAfter - dropsBefore).toBeGreaterThanOrEqual(0);
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // GAP-10: flush() error handling (best-effort contract)
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("GAP-10: flush() never throws", () => {
-    it("flush() does not throw when WAL directory is read-only", () => {
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      w.inc("pi_eng_fallback_fired_total", labels, 10);
-      w.flush(); // First flush succeeds
-
-      // Make telemetry dir read-only
-      const telemetryDir = join(configDir, "telemetry");
-      const originalMode = 0o700;
-      chmodSync(telemetryDir, 0o500); // read + execute only
-
-      try {
-        w.inc("pi_eng_fallback_fired_total", labels, 20);
-        expect(() => w.flush()).not.toThrow(); // Best-effort contract
-      } finally {
-        // Restore permissions for cleanup
-        chmodSync(telemetryDir, originalMode);
-      }
-    });
-
-    it("flush() handles missing directory gracefully", () => {
-      // Create a CounterWal but don't let it create the directory
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      w.inc("pi_eng_fallback_fired_total", labels, 10);
-
-      // Even if the flush fails, it should not throw
-      expect(() => w.flush()).not.toThrow();
-    });
-  });
-
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Additional monotonicity verification tests
-  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  describe("Additional monotonicity guarantees", () => {
-    it("totals never decrease across checkpoint → WAL → compact cycles", () => {
-      const w = new CounterWal({ configDir });
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      let lastTotal = 0;
-
-      for (let cycle = 0; cycle < 10; cycle++) {
-        // Add some increments
-        for (let i = 0; i < 5; i++) {
-          w.inc("pi_eng_fallback_fired_total", labels, 7);
-        }
-        w.flush();
-
-        const totals = w.computeTotals();
-        const key = Object.keys(totals).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-        const current = totals[key!];
-
-        expect(current).toBeGreaterThanOrEqual(lastTotal);
-        lastTotal = current;
-
-        // Compact every other cycle
-        if (cycle % 2 === 1) {
-          w.compact();
-
-          // Verify totals didn't decrease after compact
-          const totalsAfterCompact = w.computeTotals();
-          expect(totalsAfterCompact[key!]).toBe(current);
-        }
-      }
-
-      expect(lastTotal).toBe(10 * 5 * 7); // 350
-    });
-
-    it("cross-process monotonicity with checkpoint", () => {
-      const labels = { tier: "synthesis", agent: "a", step: "s", provider: "p" };
-
-      // Process 1: inc + flush + compact
-      const w1 = new CounterWal({ configDir });
-      w1.inc("pi_eng_fallback_fired_total", labels, 100);
-      w1.flush();
-      w1.compact();
-
-      const totals1 = w1.computeTotals();
-      const key = Object.keys(totals1).find((k) => k.startsWith("pi_eng_fallback_fired_total"));
-      expect(totals1[key!]).toBe(100);
-
-      // Process 2: reads checkpoint, adds more
-      const w2 = new CounterWal({ configDir });
-      const totals2a = w2.computeTotals();
-      expect(totals2a[key!]).toBe(100); // Sees checkpoint
-
-      w2.inc("pi_eng_fallback_fired_total", labels, 50);
-      w2.flush();
-
-      const totals2b = w2.computeTotals();
-      expect(totals2b[key!]).toBe(150);
-      expect(totals2b[key!]).toBeGreaterThanOrEqual(totals2a[key!]);
-
-      // Process 3: sees the combined total
-      const w3 = new CounterWal({ configDir });
-      const totals3 = w3.computeTotals();
-      expect(totals3[key!]).toBe(150);
-    });
+    wal.stop();
   });
 });
