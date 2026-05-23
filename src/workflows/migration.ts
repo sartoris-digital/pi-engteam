@@ -237,11 +237,13 @@ Review:
 4. Risk level is acceptable for production
 
 Write your verdict summary to exactly this path: ${verdictPath}
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit immediately after writing the file. Do NOT end without it:
 - step: "judge-gate"
 - artifacts: ["${verdictPath}"]
 - verdict: "PASS" (migration approved for production)
-- verdict: "FAIL" with issues listed (requires re-planning)`;
+- verdict: "FAIL" with issues listed (requires re-planning)
+
+Writing your verdict in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");

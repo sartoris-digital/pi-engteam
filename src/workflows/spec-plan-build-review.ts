@@ -199,15 +199,20 @@ const buildStep: Step = {
   timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["plan"] ?? "No plan artifact found";
+    const { fenceArray } = await import("../safety/prompt-fence.js");
+    const reviewIssuesRaw = ctx.run.steps.findLast(s => s.name === "review")?.issues;
+    const reviewIssues = reviewIssuesRaw && reviewIssuesRaw.length > 0
+      ? fenceArray(reviewIssuesRaw, "REVIEW_ISSUES")
+      : "";
     const prompt = `You are the implementer. Execute the plan:
 
 PLAN LOCATION: ${planArtifact}
-
+${reviewIssues ? `\nREVIEWER ISSUES TO FIX:\n${reviewIssues}\n` : ""}
 1. Read the plan file
 2. Implement each task in order
 3. Write tests in tests/unit/ (this repo's convention — do NOT create co-located *.test.ts files in src/)
 4. For destructive operations (git push, npm install, file delete), call RequestApproval first
-
+${reviewIssues ? "5. Address ALL reviewer issues listed above — especially any co-located test files that must be deleted\n" : ""}
 REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "build", verdict: "PASS" (implementation complete, tests passing)
 - step: "build", verdict: "FAIL" with specific issues listed (if blocked or tests failing)
@@ -292,7 +297,8 @@ export const specPlanBuildReview: Workflow = {
     { from: "build",    when: (r) => r.verdict === "PASS", to: "review" },
     // H2: build failures should re-plan instead of discarding discover/spec/plan work
     { from: "build",    when: (r) => r.verdict !== "PASS", to: "plan" },
-    { from: "review",   when: (_r) => true,                to: "halt" },
+    { from: "review",   when: (r) => r.verdict === "PASS", to: "halt" },
+    { from: "review",   when: (r) => r.verdict !== "PASS", to: "build" },
   ],
   defaults: {
     maxIterations: 12,

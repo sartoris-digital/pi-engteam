@@ -202,11 +202,13 @@ Please:
 3. Report any failing tests with full error details
 4. Check that the build compiles without errors or warnings
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "verify"
 - verdict: "PASS" (all tests pass, zero regressions)
 - verdict: "FAIL" with issues listed (regressions found)
-- handoffHint: summary of failing tests for the implementer`;
+- handoffHint: summary of failing tests for the implementer
+
+Writing your results in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "tester", prompt, "verify");
@@ -243,10 +245,12 @@ Please:
 5. Confirm the refactor matches the stated goal
 
 Do NOT write any files. Do NOT include artifacts in your VerdictEmit call — emit only step, verdict, and issues.
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "review"
 - verdict: "PASS" (refactor is complete and correct)
-- verdict: "FAIL" with a specific list of issues (missed sites, semantic drift, etc.)`;
+- verdict: "FAIL" with a specific list of issues (missed sites, semantic drift, etc.)
+
+Writing your review in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "reviewer", prompt, "review");
@@ -287,11 +291,13 @@ Review:
 5. The codebase is in a better state than before
 
 Write your verdict summary to exactly this path: ${verdictPath}
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit immediately after writing the file. Do NOT end without it:
 - step: "judge-gate"
 - artifacts: ["${verdictPath}"]
 - verdict: "PASS" (refactor approved)
-- verdict: "FAIL" with issues listed (requires re-design)`;
+- verdict: "FAIL" with issues listed (requires re-design)
+
+Writing your verdict in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");
