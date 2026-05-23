@@ -46,10 +46,10 @@ export class RateLimiter {
    */
   constructor(options: RateLimiterOptions) {
     if (options.maxPerWindow <= 0) {
-      throw new Error("maxPerWindow must be greater than 0");
+      throw new Error("maxPerWindow must be > 0");
     }
     if (options.windowMs <= 0) {
-      throw new Error("windowMs must be greater than 0");
+      throw new Error("windowMs must be > 0");
     }
 
     this.maxPerWindow = options.maxPerWindow;

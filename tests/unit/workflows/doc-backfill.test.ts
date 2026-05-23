@@ -74,11 +74,11 @@ describe("docBackfill transitions", () => {
     expect(t?.to).toBe("halt");
   });
 
-  it("audit FAIL → halt", () => {
+  it("audit FAIL → plan (GHCP timeout resilience)", () => {
     const t = docBackfill.transitions.find(
       t => t.from === "audit" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("plan");
   });
 
   it("plan PASS → write", () => {
@@ -88,11 +88,11 @@ describe("docBackfill transitions", () => {
     expect(t?.to).toBe("write");
   });
 
-  it("plan FAIL → halt", () => {
+  it("plan FAIL → write (GHCP timeout resilience)", () => {
     const t = docBackfill.transitions.find(
       t => t.from === "plan" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("write");
   });
 
   it("write PASS → review", () => {
@@ -165,7 +165,7 @@ describe("docBackfill step execution", () => {
     expect(t?.to).toBe("halt");
   });
 
-  it("audit FAIL → step returns success=false", async () => {
+  it("audit FAIL → step returns success=false, routes to plan", async () => {
     const ctx = makeCtxWithVerdicts({
       audit: { step: "audit", verdict: "FAIL", issues: ["could not scan repository"] },
     });
@@ -178,7 +178,7 @@ describe("docBackfill step execution", () => {
     const t = docBackfill.transitions.find(
       t => t.from === "audit" && t.when(result),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("plan");
   });
 
   it("write injects reviewer issues on loops", async () => {

@@ -5,19 +5,19 @@ describe("RateLimiter", () => {
   describe("constructor validation", () => {
     it("should throw on maxPerWindow <= 0", () => {
       expect(() => new RateLimiter({ maxPerWindow: 0, windowMs: 1000 })).toThrow(
-        "maxPerWindow must be greater than 0"
+        "maxPerWindow must be > 0"
       );
       expect(() => new RateLimiter({ maxPerWindow: -1, windowMs: 1000 })).toThrow(
-        "maxPerWindow must be greater than 0"
+        "maxPerWindow must be > 0"
       );
     });
 
     it("should throw on windowMs <= 0", () => {
       expect(() => new RateLimiter({ maxPerWindow: 10, windowMs: 0 })).toThrow(
-        "windowMs must be greater than 0"
+        "windowMs must be > 0"
       );
       expect(() => new RateLimiter({ maxPerWindow: 10, windowMs: -1 })).toThrow(
-        "windowMs must be greater than 0"
+        "windowMs must be > 0"
       );
     });
 

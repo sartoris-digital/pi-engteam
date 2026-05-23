@@ -60,11 +60,11 @@ describe("planBuildReviewFix transitions", () => {
     expect(t?.to).toBe("build");
   });
 
-  it("plan FAIL → halt", () => {
+  it("plan FAIL → build (GHCP timeout resilience)", () => {
     const t = planBuildReviewFix.transitions.find(
       t => t.from === "plan" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("build");
   });
 
   it("review PASS → halt", () => {

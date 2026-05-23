@@ -31,7 +31,7 @@ describe("specPlanBuildReview workflow", () => {
     }
 
     expect(findTransition("discover", passResult)).toBe("design");
-    expect(findTransition("discover", failResult)).toBe("halt");
+    expect(findTransition("discover", failResult)).toBe("design");
     expect(findTransition("design",   passResult)).toBe("plan");
     expect(findTransition("plan",     passResult)).toBe("build");
     expect(findTransition("build",    passResult)).toBe("review");

@@ -66,11 +66,11 @@ describe("migration transitions", () => {
     expect(t?.to).toBe("security-review");
   });
 
-  it("plan FAIL → halt", () => {
+  it("plan FAIL → security-review (GHCP timeout resilience)", () => {
     const t = migration.transitions.find(
       t => t.from === "plan" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("security-review");
   });
 
   it("security-review PASS → implement", () => {

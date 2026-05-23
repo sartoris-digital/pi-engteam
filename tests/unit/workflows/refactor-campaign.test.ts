@@ -68,11 +68,11 @@ describe("refactorCampaign transitions", () => {
     expect(t?.to).toBe("design");
   });
 
-  it("map FAIL → halt", () => {
+  it("map FAIL → design (GHCP timeout resilience)", () => {
     const t = refactorCampaign.transitions.find(
       t => t.from === "map" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("design");
   });
 
   it("design PASS → implement", () => {
@@ -82,11 +82,11 @@ describe("refactorCampaign transitions", () => {
     expect(t?.to).toBe("implement");
   });
 
-  it("design FAIL → halt", () => {
+  it("design FAIL → implement (GHCP timeout resilience)", () => {
     const t = refactorCampaign.transitions.find(
       t => t.from === "design" && t.when({ success: false, verdict: "FAIL" }),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("implement");
   });
 
   it("implement PASS → verify", () => {
@@ -169,7 +169,7 @@ describe("refactorCampaign step execution", () => {
     const t = refactorCampaign.transitions.find(
       t => t.from === "map" && t.when(result),
     );
-    expect(t?.to).toBe("halt");
+    expect(t?.to).toBe("design");
   });
 
   it("implement injects verify regressions and reviewer issues on loops", async () => {

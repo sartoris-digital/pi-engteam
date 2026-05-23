@@ -121,9 +121,9 @@ describe("verify workflow – transitions", () => {
     expect(transition.when({ success: true, verdict: "PASS" })).toBe(false);
   });
 
-  it("audit FAIL → halt", () => {
+  it("audit FAIL → validate (GHCP timeout resilience)", () => {
     const failTransition = verify.transitions.find(
-      t => t.from === "audit" && t.to === "halt" && t.when({ success: false, verdict: "FAIL" }),
+      t => t.from === "audit" && t.to === "validate" && t.when({ success: false, verdict: "FAIL" }),
     )!;
     expect(failTransition).toBeDefined();
     expect(failTransition.when({ success: false, verdict: "FAIL" })).toBe(true);
@@ -135,9 +135,10 @@ describe("verify workflow – transitions", () => {
     expect(t.when({ success: false, verdict: "FAIL" })).toBe(false);
   });
 
-  it("write-tests FAIL → write-tests (retry)", () => {
-    // M3 fix: write-tests failures now retry instead of halting immediately
-    const t = verify.transitions.find(tr => tr.from === "write-tests" && tr.to === "write-tests")!;
+  it("write-tests FAIL → validate (GHCP timeout resilience)", () => {
+    const t = verify.transitions.find(
+      tr => tr.from === "write-tests" && tr.to === "validate" && tr.when({ success: false, verdict: "FAIL" }),
+    )!;
     expect(t).toBeDefined();
     expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
   });
