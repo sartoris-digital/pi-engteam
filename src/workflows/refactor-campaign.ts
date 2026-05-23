@@ -96,11 +96,12 @@ Please:
 4. Note changes that must be manual
 5. Produce a refactor strategy document
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "design"
-- verdict: "PASS" (strategy is clear and ordered)
+- verdict: "PASS" with artifacts: ["refactor-plan.md"] (strategy is clear and ordered)
 - verdict: "FAIL" with issues listed (if the strategy cannot be determined)
-- artifacts: ["refactor-plan.md"]`;
+
+Writing your strategy in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "architect", prompt, "design");
@@ -152,12 +153,14 @@ Please:
 4. Do not change behaviour — refactor only
 5. Run a quick build check after each major change
 
-Write a summary of all changes made to refactor.md. Include artifacts: ["refactor.md"] in your VerdictEmit.
+Write a summary of all changes made to refactor.md.
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "implement"
-- verdict: "PASS" (refactor applied, build passes)
-- verdict: "FAIL" with issues listed (if blocked)`;
+- verdict: "PASS" with artifacts: ["refactor.md"] (refactor applied, build passes)
+- verdict: "FAIL" with issues listed (if blocked)
+
+Writing your summary in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "implementer", prompt, "implement");

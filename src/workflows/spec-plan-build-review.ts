@@ -63,7 +63,10 @@ ${questionsAbsPath}
 
 Do not use a relative path — use the absolute path above so the file lands in the run directory the workflow expects.
 
-Call VerdictEmit with step: "discover", verdict: "PASS", artifacts: ["${questionsAbsPath}"]`;
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- step: "discover", verdict: "PASS", artifacts: ["${questionsAbsPath}"]
+
+Writing your questions in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForVerdict(ctx, "discoverer", prompt, "discover");
@@ -123,7 +126,11 @@ The file must have these exact sections:
 - [Unresolved decisions to be made during implementation]
 
 Be specific. No filler.
-Call VerdictEmit with step: "design", verdict: "PASS", artifacts: ["${specAbsPath}"]`;
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- step: "design", verdict: "PASS", artifacts: ["${specAbsPath}"]
+
+Writing the spec in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForVerdict(ctx, "architect", prompt, "design");
@@ -167,7 +174,10 @@ The plan must contain:
 Format tasks as:
 - [ ] [standard] Description — file: path/to/file.ts
 
-Call VerdictEmit with step: "plan", verdict: "PASS", artifacts: ["${planAbsPath}"]`;
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- step: "plan", verdict: "PASS", artifacts: ["${planAbsPath}"]
+
+Writing the plan in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForVerdict(ctx, "planner", prompt, "plan");
@@ -198,7 +208,11 @@ PLAN LOCATION: ${planArtifact}
 3. Write tests in tests/unit/ (this repo's convention — do NOT create co-located *.test.ts files in src/)
 4. For destructive operations (git push, npm install, file delete), call RequestApproval first
 
-Call VerdictEmit with step: "build", verdict: "PASS" when implementation is complete and tests pass, or "FAIL" with specific issues listed.`;
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- step: "build", verdict: "PASS" (implementation complete, tests passing)
+- step: "build", verdict: "FAIL" with specific issues listed (if blocked or tests failing)
+
+Writing your summary in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForVerdict(ctx, "implementer", prompt, "build");
@@ -232,11 +246,13 @@ SPEC: ${specArtifact}
 Check all changed/created files for logical errors, missing tests, security issues, and spec compliance.
 Read the spec file and verify the implementation matches it.
 Write your detailed review findings to this EXACT path: ${reviewPath}
-When your review is complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "review"
 - verdict: "PASS" or "FAIL" with specific issues
 - artifacts: ["${reviewPath}"]
-Set handoffHint: "security" | "perf" | "re-plan" if the failure category warrants specialist escalation.`;
+- handoffHint: "security" | "perf" | "re-plan" if the failure category warrants specialist escalation
+
+Writing your review in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForVerdict(ctx, "reviewer", prompt, "review");

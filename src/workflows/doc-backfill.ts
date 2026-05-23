@@ -76,11 +76,12 @@ The audit step has identified documentation gaps. Please:
 3. Estimate effort for each item
 4. Produce a prioritized backfill plan with clear ownership
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "plan"
-- verdict: "PASS" (backfill plan is ready)
+- verdict: "PASS" with artifacts: ["doc-backfill-plan.md"] (plan ready)
 - verdict: "FAIL" with issues listed (if the plan cannot be formed)
-- artifacts: ["doc-backfill-plan.md"]`;
+
+Writing your plan in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "planner", prompt, "plan");
@@ -125,12 +126,14 @@ Please:
 3. Write ADRs for architectural decisions that lack documentation
 4. Follow existing documentation style and conventions
 
-Write a doc-summary.md listing all JSDoc comments added. Include artifacts: ["doc-summary.md"] in your VerdictEmit.
+Write a doc-summary.md listing all JSDoc comments added.
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "write"
-- verdict: "PASS" (all documentation written)
-- verdict: "FAIL" with issues listed (if blocked)`;
+- verdict: "PASS" with artifacts: ["doc-summary.md"] (all documentation written)
+- verdict: "FAIL" with issues listed (if blocked)
+
+Writing your summary in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "implementer", prompt, "write");

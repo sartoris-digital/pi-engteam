@@ -39,11 +39,12 @@ Please:
 3. Note any risks or unknowns
 4. Write the plan as a numbered list with clear implementation steps
 
-When your plan is complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "plan"
-- verdict: "PASS" (if the goal is feasible and the plan is clear)
-- verdict: "FAIL" with issues listed (if the goal is not feasible or you need more information)
-- artifacts: ["plan.md"] pointing to the plan file you create`;
+- verdict: "PASS" with artifacts: ["plan.md"] (plan written and feasible)
+- verdict: "FAIL" with issues listed (goal not feasible or more information needed)
+
+Writing your plan in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "planner", prompt, "plan");
@@ -82,10 +83,12 @@ Please:
 3. Write tests alongside implementation (TDD)
 4. For any destructive operation (git push, npm install, file delete), call RequestApproval first
 
-When implementation is complete and tests pass, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "build"
 - verdict: "PASS" (implementation complete, tests passing)
-- verdict: "FAIL" with specific issues listed (if blocked or tests failing)`;
+- verdict: "FAIL" with specific issues listed (if blocked or tests failing)
+
+Writing your summary in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "implementer", prompt, "build");
@@ -129,12 +132,14 @@ Please:
 
 Write your detailed review findings to this EXACT absolute path: ${reviewPath}
 
-When your review is complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "review"
 - verdict: "PASS" (implementation is correct, complete, and maintainable)
 - verdict: "FAIL" with a specific list of issues (what exactly is wrong and where)
 - handoffHint: "security" | "perf" | "re-plan" if the issue category warrants specialist escalation
-- artifacts: ["${reviewPath}"]`;
+- artifacts: ["${reviewPath}"]
+
+Writing your review in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "reviewer", prompt, "review");
@@ -181,7 +186,14 @@ const fixStep: Step = {
 REVIEW ISSUES:
 ${reviewIssues}
 
-Fix all issues listed above. Run tests after each fix. Call VerdictEmit with step="fix" when done.`;
+Fix all issues listed above. Run tests after each fix.
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- step: "fix"
+- verdict: "PASS" (all issues fixed, tests passing)
+- verdict: "FAIL" with specific issues listed (if blocked)
+
+Writing your summary in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "implementer", prompt, "fix");

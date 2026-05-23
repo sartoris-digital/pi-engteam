@@ -54,11 +54,12 @@ Please:
 4. Identify risks (data loss, locking, constraint violations)
 5. Produce a migration plan document
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "plan"
-- verdict: "PASS" (if the migration is safe and the plan is clear)
+- verdict: "PASS" with artifacts: ["migration-plan.md"] (migration is safe and plan is clear)
 - verdict: "FAIL" with issues listed (if the goal is not feasible or needs clarification)
-- artifacts: ["migration-plan.md"]`;
+
+Writing your plan in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "architect", prompt, "plan");
@@ -96,10 +97,12 @@ Audit for:
 4. Missing rollback coverage
 5. SQL injection vectors in transformation scripts
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "security-review"
 - verdict: "PASS" (migration is safe to implement)
-- verdict: "FAIL" with specific issues listed (security problems found)`;
+- verdict: "FAIL" with specific issues listed (security problems found)
+
+Writing your audit in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "security-auditor", prompt, "security-review");
@@ -139,11 +142,12 @@ Please:
 4. Add comments explaining each change
 5. Ensure idempotency where possible
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "implement"
-- verdict: "PASS" (scripts are written and ready for testing)
+- verdict: "PASS" with artifacts: ["migrations/up.sql", "migrations/down.sql"] (scripts written)
 - verdict: "FAIL" with issues listed (if blocked)
-- artifacts: ["migrations/up.sql", "migrations/down.sql"]`;
+
+Writing your summary in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "implementer", prompt, "implement");
@@ -186,10 +190,12 @@ Please:
 4. Verify the schema is restored to its pre-migration state
 5. Check for data integrity after both directions
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
 - step: "test"
 - verdict: "PASS" (migration runs cleanly, rollback works)
-- verdict: "FAIL" with specific failures listed (migration errors, rollback failures, data corruption)`;
+- verdict: "FAIL" with specific failures listed (migration errors, rollback failures, data corruption)
+
+Writing your test results in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "tester", prompt, "test");
