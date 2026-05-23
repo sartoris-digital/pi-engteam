@@ -1,3 +1,5 @@
+import { join } from "path";
+import { writeFileSync, existsSync } from "fs";
 import type { VerdictPayload } from "../types.js";
 import type { Workflow, Step, StepContext, StepResult } from "./types.js";
 import { resolveArtifactPath } from "./helpers.js";
@@ -111,6 +113,8 @@ const reviewStep: Step = {
   required: true,
   timeoutSeconds: 1800,
   run: async (ctx: StepContext): Promise<StepResult> => {
+    const runDir = join(ctx.engine.getRunsDir(), ctx.run.runId);
+    const reviewPath = join(runDir, "review.md");
     const prompt = `You are the reviewer. Please review the implementation for the following goal:
 
 GOAL: ${ctx.run.goal}
@@ -123,23 +127,31 @@ Please:
 3. Verify the implementation matches the plan
 4. Look for security issues, performance problems, or maintainability concerns
 
-Write your detailed review findings to review.md.
+Write your detailed review findings to this EXACT absolute path: ${reviewPath}
 
 When your review is complete, call VerdictEmit with:
 - step: "review"
 - verdict: "PASS" (implementation is correct, complete, and maintainable)
 - verdict: "FAIL" with a specific list of issues (what exactly is wrong and where)
 - handoffHint: "security" | "perf" | "re-plan" if the issue category warrants specialist escalation
-- artifacts: ["review.md"]`;
+- artifacts: ["${reviewPath}"]`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "reviewer", prompt, "review");
+      if (!existsSync(reviewPath)) {
+        try {
+          const lines = [`# Code Review: ${verdict.verdict}`];
+          if (verdict.issues?.length) lines.push(`\n## Issues\n${verdict.issues.map(i => `- ${i}`).join("\n")}`);
+          if (verdict.handoffHint) lines.push(`\n## Escalation: ${verdict.handoffHint}`);
+          writeFileSync(reviewPath, lines.join("\n") + "\n");
+        } catch { /* best-effort */ }
+      }
       return {
         success: verdict.verdict === "PASS",
         verdict: verdict.verdict,
         issues: verdict.issues,
         handoffHint: verdict.handoffHint,
-        artifacts: { "review": resolveArtifactPath(ctx, verdict.artifacts?.[0], "review.md") },
+        artifacts: { "review": reviewPath },
       };
     } catch (err) {
       return {
