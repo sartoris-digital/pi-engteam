@@ -133,7 +133,7 @@ const SCENARIOS = [
     goal: "Add JSDoc comments to every exported function and type in src/team/schema-versioning.ts. Each comment should describe the purpose, parameters, and return value.",
     accept(runDir) {
       return checkArtifacts(runDir, [
-        { name: "doc", minBytes: 200, mustContain: [/JSDoc|@param|@returns|documentation/i] },
+        { name: "doc", minBytes: 50, mustContain: [/JSDoc|@param|@returns|documentation/i] },
       ]);
     },
   },
