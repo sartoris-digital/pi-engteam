@@ -32,8 +32,12 @@ const auditStep: Step = {
     const prompt = `GOAL: ${ctx.run.goal}
 
 Audit the codebase for test coverage gaps. Identify untested functions, missing edge cases, and uncovered error paths.
-- If gaps found: list them, call VerdictEmit with step="audit", verdict="PASS" (gaps to fill)
-- If NO gaps found: call VerdictEmit with step="audit", verdict="PASS", handoffHint="no-gaps", summary="Coverage is adequate — no gaps found"`;
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step:
+- If gaps found: list them briefly, then call VerdictEmit with step="audit", verdict="PASS"
+- If NO gaps found: call VerdictEmit with step="audit", verdict="PASS", handoffHint="no-gaps"
+
+Do NOT end your response without calling VerdictEmit. Writing your analysis in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "tester", prompt, "audit");

@@ -40,11 +40,12 @@ Please:
 4. Estimate the scope and risk of each category
 5. Produce a map document listing all affected files with reasons
 
-When complete, call VerdictEmit with:
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- verdict: "PASS" with artifacts: ["refactor-map.md"] (map complete)
+- verdict: "FAIL" with issues listed (scope cannot be determined)
 - step: "map"
-- verdict: "PASS" (map is complete and scope is understood)
-- verdict: "FAIL" with issues listed (if the scope cannot be determined)
-- artifacts: ["refactor-map.md"]`;
+
+Writing your analysis in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "codebase-cartographer", prompt, "map");

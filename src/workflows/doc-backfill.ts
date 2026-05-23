@@ -33,8 +33,12 @@ const auditStep: Step = {
 
 Scan for undocumented public functions/classes (missing JSDoc), modules without READMEs, and ADR gaps.
 Write a summary of all gaps found to doc-audit-gaps.md.
-- If gaps found: list them, call VerdictEmit step="audit" verdict="PASS"
-- If NO gaps found: call VerdictEmit step="audit" verdict="PASS" handoffHint="no-docs-needed"`;
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step:
+- If gaps found: write doc-audit-gaps.md, then call VerdictEmit step="audit" verdict="PASS"
+- If NO gaps found: call VerdictEmit step="audit" verdict="PASS" handoffHint="no-docs-needed"
+
+Do NOT end your response without calling VerdictEmit. Writing your analysis in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "knowledge-retriever", prompt, "audit");
