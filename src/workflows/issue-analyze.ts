@@ -42,7 +42,10 @@ Write BOTH files NOW before doing any exploration:
 2. routing-recommendation.md (50-150 words): recommended workflow (debug/fix-loop/etc.), likely owner, next steps
 
 Write files to: ${analysisPath} and ${routingPath}
-Then call VerdictEmit with step="analyze", verdict="PASS", artifacts=["${analysisPath}", "${routingPath}"].`;
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+Call VerdictEmit with step="analyze", verdict="PASS", artifacts=["${analysisPath}", "${routingPath}"].
+Writing your analysis in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForVerdict(ctx, "issue-analyst", prompt, "analyze");

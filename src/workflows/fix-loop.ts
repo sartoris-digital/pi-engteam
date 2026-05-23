@@ -33,8 +33,11 @@ const analyzeStep: Step = {
     const prompt = `GOAL: ${ctx.run.goal}
 
 Analyze the codebase to identify the root cause of the issue. Produce a concrete fix plan and write it to fix-plan.md.
-Call VerdictEmit with verdict="PASS" and step="analyze" when analysis is complete and fix-plan.md is written — regardless of how many issues were found.
-Only call VerdictEmit with verdict="FAIL" if you were unable to complete the analysis (e.g. cannot read the codebase).`;
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+- If analysis is complete and fix-plan.md is written: call VerdictEmit step="analyze" verdict="PASS" artifacts=["fix-plan.md"]
+- If you were unable to complete the analysis: call VerdictEmit step="analyze" verdict="FAIL" with issues listed
+Writing your analysis in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "root-cause-debugger", prompt, "analyze");
@@ -77,7 +80,11 @@ ${testHint ? `\nFAILING TESTS:\n${fenceData(testHint, "TEST_HANDOFF")}` : ""}
 ${reviewIssues ? `\nREVIEWER ISSUES:\n${fenceArray(reviewIssues, "REVIEWER_ISSUES")}` : ""}
 ${judgeIssues ? `\nJUDGE ISSUES:\n${fenceArray(judgeIssues, "JUDGE_ISSUES")}` : ""}
 
-Implement the fix. Call VerdictEmit with step="implement".`;
+Implement the fix.
+
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+Call VerdictEmit with step="implement", verdict="PASS" or verdict="FAIL" with issues.
+Writing your implementation in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "implementer", prompt, "implement");
@@ -124,7 +131,9 @@ Steps:
 4. If tests fail due to an infrastructure/environment problem (missing deps, not a Node.js project, wrong runtime), call VerdictEmit with verdict="PASS" and document the infra problem in handoffHint — do not loop on environment errors outside your control.
 5. If tests fail because of a code bug in the changed files, call VerdictEmit with verdict="FAIL" with the specific failure in handoffHint.
 
-Call VerdictEmit with step="test".`;
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+Call VerdictEmit with step="test", verdict="PASS" or verdict="FAIL" with failures in handoffHint.
+Writing your test results in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "tester", prompt, "test");
@@ -154,7 +163,9 @@ const reviewStep: Step = {
 
 Review the implementation for correctness, edge cases, and code quality. Verify the fix addresses the root cause without introducing regressions.
 Do NOT write any files. Do NOT include artifacts in your VerdictEmit call — emit only step, verdict, and issues.
-Call VerdictEmit with step="review".`;
+REQUIRED FINAL ACTION — you MUST call VerdictEmit to complete this step. Do NOT end without it:
+Call VerdictEmit with step="review", verdict="PASS" or verdict="FAIL" with issues.
+Writing your review in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "reviewer", prompt, "review");
@@ -198,7 +209,9 @@ Read the fix plan and any implementation artifacts at the absolute paths above (
 Review the implementation, test results, and code review findings. Confirm the fix is complete and correct.
 ${priorFeedback ? `\nPREVIOUS FEEDBACK:\n${priorFeedback.join("\n")}` : ""}
 Write your verdict summary to exactly this path: ${verdictPath}
-Call VerdictEmit with step="judge-gate", artifacts=["${verdictPath}"], verdict="PASS" if the fix is acceptable, or verdict="FAIL" with specific issues.`;
+REQUIRED FINAL ACTION — you MUST call VerdictEmit immediately after writing the file. Do NOT end without it:
+Call VerdictEmit with step="judge-gate", artifacts=["${verdictPath}"], verdict="PASS" if the fix is acceptable, or verdict="FAIL" with specific issues.
+Writing your verdict in text is NOT enough — you must call the VerdictEmit tool.`;
 
     try {
       const verdict = await waitForAgentVerdict(ctx, "judge", prompt, "judge-gate");
