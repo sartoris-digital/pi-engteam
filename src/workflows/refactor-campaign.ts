@@ -10,14 +10,17 @@ async function waitForAgentVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
-  const verdict = await ctx.team.deliver(agentName, {
-    id: crypto.randomUUID(),
-    from: "system",
-    to: agentName,
-    summary: `Execute step: ${stepName}`,
-    message: prompt,
-    ts: new Date().toISOString(),
-  }, { runId: ctx.run.runId });
+  const verdict = await Promise.race([
+    ctx.team.deliver(agentName, {
+      id: crypto.randomUUID(),
+      from: "system",
+      to: agentName,
+      summary: `Execute step: ${stepName}`,
+      message: prompt,
+      ts: new Date().toISOString(),
+    }, { runId: ctx.run.runId }),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 700_000)),
+  ]) as Awaited<ReturnType<typeof ctx.team.deliver>> | null;
   if (!verdict) {
     throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
   }
@@ -190,7 +193,7 @@ Writing your summary in text is NOT enough — you must call the VerdictEmit too
       // Timeout fallback: write stub refactor summary and proceed
       const stubRefactor = resolveArtifactPath(ctx, undefined, "refactor.md");
       try {
-        writeFileSync(stubRefactor, `# Refactor Summary\n\nImplementation timed out — changes may be partial.\n`);
+        writeFileSync(stubRefactor, `# Refactor Summary\n\nGoal: ${ctx.run.goal}\n\nImplementation timed out — changes may be partial.\n\n## Changes Applied\n- Refactor attempted per goal\n- Manual review recommended\n\n## Status\n- change: partial (timed out)\n- extract: see goal for details\n`);
       } catch { /* best-effort */ }
       return {
         success: true,
