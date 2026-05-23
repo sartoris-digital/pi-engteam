@@ -33,12 +33,22 @@ function resolveLockPath(configDir: string): string {
   try {
     fd = openSync(probe, O_CREAT | O_WRONLY, 0o600);
     shouldCleanupProbe = true;
-    
     closeSync(fd);
+    fd = undefined;  // Mark as closed only after successful close
     return join(configDir, LOCK_FILENAME);
   } catch {
     return FALLBACK_LOCK;
   } finally {
+    // Cleanup fd if still open (closeSync failed)
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best effort - don't fail on cleanup errors
+      }
+    }
+    
+    // Cleanup probe file if created (after fd is closed)
     // This ALWAYS runs, regardless of return or exception in try/catch
     if (shouldCleanupProbe) {
       try {

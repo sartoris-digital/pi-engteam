@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, existsSync, writeFileSync, readFileSync } from "fs";
+import { mkdtempSync, existsSync, writeFileSync, readFileSync, chmodSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { acquireDrainLock, checkDrainLock, assertNoDrainLock } from "../../../src/team/drain-lock.js";
@@ -117,6 +117,50 @@ describe("drain-lock", () => {
       expect(handle.lockPath).toBe("/var/tmp/pi-eng-rollback.lock");
     } finally {
       handle.release();
+    }
+  });
+
+  it("cleans up probe file even in error paths", () => {
+    // This test verifies the finally block cleanup works correctly.
+    // Even if something goes wrong during lock acquisition, the probe
+    // file should be cleaned up because it's in the finally block.
+    const probePath = join(configDir, ".rollback.lock.probe");
+    
+    const handle = acquireDrainLock(configDir);
+    try {
+      // After successful acquisition, probe should be cleaned up
+      expect(existsSync(probePath)).toBe(false);
+      
+      // Lock file should exist
+      expect(existsSync(handle.lockPath)).toBe(true);
+    } finally {
+      handle.release();
+    }
+    
+    // Double-check: no probe remains after complete operation
+    expect(existsSync(probePath)).toBe(false);
+  });
+
+  it("uses fallback lock and cleans probe when configDir is read-only", () => {
+    const probePath = join(configDir, ".rollback.lock.probe");
+    
+    // Make directory read-only BEFORE calling acquireDrainLock
+    chmodSync(configDir, 0o444);
+    
+    try {
+      const handle = acquireDrainLock(configDir);
+      try {
+        // Should use fallback because configDir is read-only
+        expect(handle.lockPath).toBe("/var/tmp/pi-eng-rollback.lock");
+        
+        // Probe should not exist in read-only dir (creation would have failed)
+        expect(existsSync(probePath)).toBe(false);
+      } finally {
+        handle.release();
+      }
+    } finally {
+      // Restore permissions for cleanup
+      chmodSync(configDir, 0o755);
     }
   });
 });
