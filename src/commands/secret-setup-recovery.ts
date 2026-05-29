@@ -1,20 +1,20 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { buildMasterKeyManager } from "./secret-shared.js";
-import { promptPassphrase, isTtyAvailable } from "../secrets/Passphrase.js";
+import { buildMasterKeyManager, hasMaskedPrompt, promptMaskedPassphrase } from "./secret-shared.js";
 
 export function registerSecretSetupRecoveryCommand(pi: ExtensionAPI): void {
   pi.registerCommand("secret-setup-recovery", {
     description: "Enroll a recovery passphrase so the vault can be recovered if the OS keychain is lost.",
     handler: async (_args: string, ctx) => {
-      if (!isTtyAvailable()) {
-        ctx.ui.notify("Recovery enrollment needs an interactive terminal. Run /secret-setup-recovery in a Pi controller session.", "error");
+      if (!hasMaskedPrompt(ctx)) {
+        ctx.ui.notify("Recovery enrollment needs an interactive Pi session (masked prompt unavailable here).", "error");
         return;
       }
       const manager = buildMasterKeyManager();
       try {
-        await manager.ensureInitialized(); // unlock the vault (keychain or existing recovery/passphrase)
+        await manager.ensureInitialized(); // unlock via keychain (no prompt when keychain-connected)
       } catch (err) {
         ctx.ui.notify(`Vault unavailable: ${err instanceof Error ? err.message : String(err)}`, "error");
+        manager.zeroize();
         return;
       }
       ctx.ui.notify(
@@ -22,12 +22,13 @@ export function registerSecretSetupRecoveryCommand(pi: ExtensionAPI): void {
         "info",
       );
       try {
-        const passphrase = await promptPassphrase({ prompt: "New recovery passphrase: ", confirm: true });
-        if (!passphrase) {
-          ctx.ui.notify("Recovery passphrase must not be empty.", "error");
-          return;
-        }
-        await manager.enrollRecovery(passphrase);
+        const first = await promptMaskedPassphrase(ctx, "New recovery passphrase:");
+        if (first.cancelled) { ctx.ui.notify("Recovery enrollment cancelled.", "info"); return; }
+        if (!first.value) { ctx.ui.notify("Recovery passphrase must not be empty.", "error"); return; }
+        const confirm = await promptMaskedPassphrase(ctx, "Confirm recovery passphrase:");
+        if (confirm.cancelled) { ctx.ui.notify("Recovery enrollment cancelled.", "info"); return; }
+        if (confirm.value !== first.value) { ctx.ui.notify("Passphrases do not match.", "error"); return; }
+        await manager.enrollRecovery(first.value);
         ctx.ui.notify("Recovery passphrase enrolled. You can now run /secret-reconnect to recover on a new machine or after a keychain reset.", "info");
       } catch (err) {
         ctx.ui.notify(`Enrollment failed: ${err instanceof Error ? err.message : String(err)}`, "error");

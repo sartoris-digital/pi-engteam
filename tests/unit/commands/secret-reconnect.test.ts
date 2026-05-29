@@ -11,11 +11,6 @@ vi.mock("fs", async (importActual) => {
   };
 });
 
-vi.mock("../../../src/secrets/Passphrase.js", () => ({
-  isTtyAvailable: () => true,
-  promptPassphrase: vi.fn(),
-}));
-
 vi.mock("../../../src/secrets/Keyring.js", async (importActual) => {
   const actual = await importActual<typeof import("../../../src/secrets/Keyring.js")>();
   return {
@@ -30,11 +25,13 @@ vi.mock("../../../src/secrets/Keyring.js", async (importActual) => {
 vi.mock("../../../src/commands/secret-shared.js", () => ({
   buildMasterKeyManager: vi.fn(),
   VAULT_DB_PATH: "/tmp/fake-secrets.db",
+  hasMaskedPrompt: (ctx: any) => typeof ctx?.ui?.custom === "function",
+  promptMaskedPassphrase: vi.fn(),
 }));
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { diagnoseKeyring, createKeyringBackend, KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER } from "../../../src/secrets/Keyring.js";
-import { buildMasterKeyManager } from "../../../src/commands/secret-shared.js";
+import { buildMasterKeyManager, promptMaskedPassphrase } from "../../../src/commands/secret-shared.js";
 import { registerSecretReconnectCommand } from "../../../src/commands/secret-reconnect.js";
 
 // ---------------------------------------------------------------------------
@@ -52,10 +49,17 @@ function buildMockPi(): { registerCommand: ReturnType<typeof vi.fn>; lastHandler
   };
 }
 
-function buildMockCtx() {
+function buildMockCtx(opts?: { noCustom?: boolean }) {
   const notify = vi.fn();
+  const ui: any = { notify };
+  if (!opts?.noCustom) {
+    // Present only so hasMaskedPrompt(ctx) returns true. The handler never invokes
+    // ctx.ui.custom directly — promptMaskedPassphrase is module-mocked, so the
+    // entered passphrase is controlled via vi.mocked(promptMaskedPassphrase).
+    ui.custom = vi.fn();
+  }
   return {
-    ui: { notify },
+    ui,
     // Returns the LAST notify message (the handler can call notify multiple times;
     // typically the final one is the meaningful outcome).
     get lastMessage(): string {
@@ -79,10 +83,10 @@ function fakeBackend(getKind: "value" | "not-found") {
 }
 
 // A fake MasterKeyManager returned by the mocked buildMasterKeyManager.
-function fakeManager(opts: { key?: Buffer; throwOnInit?: boolean }) {
+function fakeManager(opts: { key?: Buffer; throwOnRecover?: boolean }) {
   return {
-    ensureInitialized: vi.fn(async () => {
-      if (opts.throwOnInit) throw new Error("Passphrase did not match.");
+    recoverWithPassphrase: vi.fn(async () => {
+      if (opts.throwOnRecover) throw new Error("Passphrase did not match.");
       return opts.key ?? Buffer.alloc(32, 7);
     }),
     zeroize: vi.fn(),
@@ -154,12 +158,14 @@ describe("registerSecretReconnectCommand", () => {
     vi.mocked(diagnoseKeyring).mockReturnValue({ status: "ok" });
     vi.mocked(createKeyringBackend).mockReturnValue(backend as any);
     vi.mocked(buildMasterKeyManager).mockReturnValue(manager as any);
+    vi.mocked(promptMaskedPassphrase).mockResolvedValue({ value: "pw", cancelled: false });
 
     const handler = getHandler();
     const ctx = buildMockCtx();
     await handler("", ctx);
 
-    expect(manager.ensureInitialized).toHaveBeenCalledOnce();
+    expect(manager.recoverWithPassphrase).toHaveBeenCalledOnce();
+    expect(manager.recoverWithPassphrase).toHaveBeenCalledWith("pw");
     expect(backend.set).toHaveBeenCalledOnce();
     expect(backend.set.mock.calls[0][0]).toBe(KEYRING_SERVICE);
     expect(backend.set.mock.calls[0][1]).toBe(KEYRING_ACCOUNT_MASTER);
@@ -168,14 +174,15 @@ describe("registerSecretReconnectCommand", () => {
     expect(manager.zeroize).toHaveBeenCalled();
   });
 
-  // 5 ─ mode2 + ensureInitialized throws → "Reconnect failed", no backend.set, zeroize called
-  it("mode2 + ensureInitialized throws → 'Reconnect failed', no backend.set, zeroize called", async () => {
+  // 5 ─ mode2 + recoverWithPassphrase throws → "Reconnect failed", no backend.set, zeroize called
+  it("mode2 + recoverWithPassphrase throws → 'Reconnect failed', no backend.set, zeroize called", async () => {
     const backend = fakeBackend("not-found");
-    const manager = fakeManager({ throwOnInit: true });
+    const manager = fakeManager({ throwOnRecover: true });
 
     vi.mocked(diagnoseKeyring).mockReturnValue({ status: "ok" });
     vi.mocked(createKeyringBackend).mockReturnValue(backend as any);
     vi.mocked(buildMasterKeyManager).mockReturnValue(manager as any);
+    vi.mocked(promptMaskedPassphrase).mockResolvedValue({ value: "pw", cancelled: false });
 
     const handler = getHandler();
     const ctx = buildMockCtx();
@@ -194,6 +201,7 @@ describe("registerSecretReconnectCommand", () => {
     // null backend: keychainHasKey=false → mode2; and backend is null in the re-store step
     vi.mocked(createKeyringBackend).mockReturnValue(null);
     vi.mocked(buildMasterKeyManager).mockReturnValue(manager as any);
+    vi.mocked(promptMaskedPassphrase).mockResolvedValue({ value: "pw", cancelled: false });
 
     const handler = getHandler();
     const ctx = buildMockCtx();
@@ -217,6 +225,7 @@ describe("registerSecretReconnectCommand", () => {
     vi.mocked(diagnoseKeyring).mockReturnValue({ status: "ok" });
     vi.mocked(createKeyringBackend).mockReturnValue(backend as any);
     vi.mocked(buildMasterKeyManager).mockReturnValue(manager as any);
+    vi.mocked(promptMaskedPassphrase).mockResolvedValue({ value: "pw", cancelled: false });
 
     const handler = getHandler();
     const ctx = buildMockCtx();
@@ -224,5 +233,55 @@ describe("registerSecretReconnectCommand", () => {
 
     expect(ctx.lastMessage).toMatch(/writing to the keychain failed|recovered for this session/i);
     expect(manager.zeroize).toHaveBeenCalled();
+  });
+
+  // 8 ─ mode2 + user cancels the prompt → "cancelled" message, manager NOT built
+  it("mode2 + user cancels prompt → 'cancelled' message, manager not built, no backend.set", async () => {
+    const backend = fakeBackend("not-found");
+
+    vi.mocked(diagnoseKeyring).mockReturnValue({ status: "ok" });
+    vi.mocked(createKeyringBackend).mockReturnValue(backend as any);
+    vi.mocked(promptMaskedPassphrase).mockResolvedValue({ value: "", cancelled: true });
+
+    const handler = getHandler();
+    const ctx = buildMockCtx();
+    await handler("", ctx);
+
+    expect(ctx.lastMessage).toMatch(/cancelled/i);
+    expect(vi.mocked(buildMasterKeyManager)).not.toHaveBeenCalled();
+    expect(backend.set).not.toHaveBeenCalled();
+  });
+
+  // 9 ─ mode2 + empty passphrase → "must not be empty", no recover
+  it("mode2 + empty passphrase → 'must not be empty' error, manager not built, no backend.set", async () => {
+    const backend = fakeBackend("not-found");
+
+    vi.mocked(diagnoseKeyring).mockReturnValue({ status: "ok" });
+    vi.mocked(createKeyringBackend).mockReturnValue(backend as any);
+    vi.mocked(promptMaskedPassphrase).mockResolvedValue({ value: "", cancelled: false });
+
+    const handler = getHandler();
+    const ctx = buildMockCtx();
+    await handler("", ctx);
+
+    expect(ctx.lastMessage).toMatch(/must not be empty/i);
+    expect(vi.mocked(buildMasterKeyManager)).not.toHaveBeenCalled();
+    expect(backend.set).not.toHaveBeenCalled();
+  });
+
+  // 10 ─ mode2 + no masked prompt (ctx.ui.custom absent) → error
+  it("mode2 + no masked prompt (no ctx.ui.custom) → error about interactive Pi session", async () => {
+    const backend = fakeBackend("not-found");
+
+    vi.mocked(diagnoseKeyring).mockReturnValue({ status: "ok" });
+    vi.mocked(createKeyringBackend).mockReturnValue(backend as any);
+
+    const handler = getHandler();
+    const ctx = buildMockCtx({ noCustom: true });
+    await handler("", ctx);
+
+    expect(ctx.lastMessage).toMatch(/interactive pi session/i);
+    expect(vi.mocked(buildMasterKeyManager)).not.toHaveBeenCalled();
+    expect(backend.set).not.toHaveBeenCalled();
   });
 });

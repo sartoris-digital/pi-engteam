@@ -64,6 +64,60 @@ describe("MasterKeyManager.enrollRecovery", () => {
   });
 });
 
+describe("MasterKeyManager.recoverWithPassphrase", () => {
+  // Build a vault with one secret + an enrolled recovery passphrase.
+  async function seedVaultWithRecovery(passphrase: string) {
+    const dir = tmpDir();
+    const vaultDbPath = join(dir, "secrets.db");
+    const saltPath = join(dir, "secrets.salt");
+    const backend = fakeKeyring();
+    const mgr = new MasterKeyManager({ keyringBackend: backend, saltPath, vaultDbPath });
+    const key = await mgr.ensureInitialized();
+    const v = new Vault({ dbPath: vaultDbPath, masterKey: key });
+    v.init();
+    v.set("api", "the-value");
+    v.close();
+    await mgr.enrollRecovery(passphrase);
+    return { dir, vaultDbPath, saltPath };
+  }
+
+  it("recovers the key with the correct passphrase (no prompting)", async () => {
+    const { vaultDbPath, saltPath } = await seedVaultWithRecovery("pw");
+    // Fresh manager with empty keychain and NO promptFn — recoverWithPassphrase must not need it.
+    const mgr = new MasterKeyManager({ keyringBackend: fakeKeyring(), saltPath, vaultDbPath });
+    const key = await mgr.recoverWithPassphrase("pw");
+    expect(mgr.unlockSource).toBe("passphrase-recovery");
+    // The recovered key can decrypt the seeded secret.
+    const v = new Vault({ dbPath: vaultDbPath, masterKey: key });
+    v.init();
+    expect(v.get("api")).toBe("the-value");
+    v.close();
+  });
+
+  it("wrong passphrase → throws /did not match/i", async () => {
+    const { vaultDbPath, saltPath } = await seedVaultWithRecovery("correct");
+    const mgr = new MasterKeyManager({ keyringBackend: fakeKeyring(), saltPath, vaultDbPath });
+    await expect(mgr.recoverWithPassphrase("wrong")).rejects.toThrow(/did not match/i);
+  });
+
+  it("no blob enrolled → throws /nothing to recover|no recovery backup/i", async () => {
+    // Fresh vault with a secret but no enrollRecovery call.
+    const dir = tmpDir();
+    const vaultDbPath = join(dir, "secrets.db");
+    const saltPath = join(dir, "secrets.salt");
+    const backend = fakeKeyring();
+    const seedMgr = new MasterKeyManager({ keyringBackend: backend, saltPath, vaultDbPath });
+    const key = await seedMgr.ensureInitialized();
+    const v = new Vault({ dbPath: vaultDbPath, masterKey: key });
+    v.init();
+    v.set("x", "y");
+    v.close();
+    // No enrollRecovery — no blob.
+    const mgr = new MasterKeyManager({ keyringBackend: fakeKeyring(), saltPath, vaultDbPath });
+    await expect(mgr.recoverWithPassphrase("any")).rejects.toThrow(/nothing to recover|no recovery backup/i);
+  });
+});
+
 describe("MasterKeyManager.ensureInitialized — Approach A recovery precedence", () => {
   // Build a vault with one secret + an enrolled recovery passphrase, then return
   // paths so a SECOND manager can simulate "keychain entry gone".

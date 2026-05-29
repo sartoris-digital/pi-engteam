@@ -61,28 +61,11 @@ export class MasterKeyManager {
       // key into the keychain is deferred to /secret-reconnect (no silent write).
       const blob = readRecoveryBlobFromVault(vaultDbPath);
       if (blob) {
-        if (blob.kdf !== RECOVERY_KDF) {
-          throw new Error(`Vault recovery blob uses an unknown KDF (${blob.kdf}); it was created by a newer pi-engineering version. Upgrade to recover.`);
-        }
         if (!promptFn) {
           throw new Error("Vault exists but no key in keyring; passphrase recovery requires promptFn to be supplied to MasterKeyManager.");
         }
         const passphrase = await promptFn();
-        let candidate: Buffer;
-        try {
-          candidate = unwrapMasterKey(blob.wrap, blob.iv, blob.tag, passphrase, blob.salt);
-        } catch {
-          throw new Error(PASSPHRASE_MISMATCH_MSG);
-        }
-        // Empty vault: validateKeyAgainstVault() is vacuously true, so the GCM
-        // auth tag in unwrapMasterKey above is the real passphrase gate.
-        if (!validateKeyAgainstVault(vaultDbPath, candidate)) {
-          zeroBuffer(candidate);
-          throw new Error(PASSPHRASE_MISMATCH_MSG);
-        }
-        this.cachedKey = candidate;
-        this.unlockSource = "passphrase-recovery";
-        return this.cachedKey;
+        return await this.recoverWithPassphrase(passphrase);
       }
 
       if (!existsSync(saltPath)) {
@@ -140,6 +123,36 @@ export class MasterKeyManager {
 
   async getMasterKey(): Promise<Buffer> {
     if (!this.cachedKey) throw new Error("Call ensureInitialized() before getMasterKey().");
+    return this.cachedKey;
+  }
+
+  // Recover the master key from the vault's recovery blob using a caller-supplied
+  // passphrase (NO prompting — commands collect the passphrase via the Pi TUI).
+  // Caches the key and sets unlockSource on success. Does NOT write to the keychain
+  // (re-store is the caller's explicit step, e.g. /secret-reconnect).
+  async recoverWithPassphrase(passphrase: string): Promise<Buffer> {
+    const { vaultDbPath } = this.config;
+    const blob = existsSync(vaultDbPath) ? readRecoveryBlobFromVault(vaultDbPath) : null;
+    if (!blob) {
+      throw new Error("No recovery backup is enrolled on this vault; nothing to recover.");
+    }
+    if (blob.kdf !== RECOVERY_KDF) {
+      throw new Error(`Vault recovery blob uses an unknown KDF (${blob.kdf}); it was created by a newer pi-engineering version. Upgrade to recover.`);
+    }
+    let candidate: Buffer;
+    try {
+      candidate = unwrapMasterKey(blob.wrap, blob.iv, blob.tag, passphrase, blob.salt);
+    } catch {
+      throw new Error(PASSPHRASE_MISMATCH_MSG);
+    }
+    // Empty vault: validateKeyAgainstVault() is vacuously true, so the GCM auth
+    // tag in unwrapMasterKey above is the real passphrase gate.
+    if (!validateKeyAgainstVault(vaultDbPath, candidate)) {
+      zeroBuffer(candidate);
+      throw new Error(PASSPHRASE_MISMATCH_MSG);
+    }
+    this.cachedKey = candidate;
+    this.unlockSource = "passphrase-recovery";
     return this.cachedKey;
   }
 

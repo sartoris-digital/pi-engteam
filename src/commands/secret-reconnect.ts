@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { existsSync } from "fs";
-import { buildMasterKeyManager, VAULT_DB_PATH } from "./secret-shared.js";
+import { buildMasterKeyManager, hasMaskedPrompt, promptMaskedPassphrase, VAULT_DB_PATH } from "./secret-shared.js";
 import {
   createKeyringBackend,
   diagnoseKeyring,
@@ -8,7 +8,6 @@ import {
   KEYRING_SERVICE,
   KEYRING_ACCOUNT_MASTER,
 } from "../secrets/Keyring.js";
-import { isTtyAvailable } from "../secrets/Passphrase.js";
 
 export function registerSecretReconnectCommand(pi: ExtensionAPI): void {
   pi.registerCommand("secret-reconnect", {
@@ -42,21 +41,23 @@ export function registerSecretReconnectCommand(pi: ExtensionAPI): void {
         ctx.ui.notify("No vault file found — nothing to reconnect.", "info");
         return;
       }
-      if (!isTtyAvailable()) {
-        ctx.ui.notify("Reconnect needs an interactive terminal for the recovery passphrase.", "error");
+      if (!hasMaskedPrompt(ctx)) {
+        ctx.ui.notify("Reconnect needs an interactive Pi session for the recovery passphrase.", "error");
         return;
       }
+      const entered = await promptMaskedPassphrase(ctx, "Recovery passphrase:");
+      if (entered.cancelled) { ctx.ui.notify("Reconnect cancelled.", "info"); return; }
+      if (!entered.value) { ctx.ui.notify("Recovery passphrase must not be empty.", "error"); return; }
 
       const manager = buildMasterKeyManager();
       let masterKey: Buffer;
       try {
-        masterKey = await manager.ensureInitialized(); // prompts for recovery passphrase, unwraps the blob
+        masterKey = await manager.recoverWithPassphrase(entered.value);
       } catch (err) {
         ctx.ui.notify(`Reconnect failed: ${err instanceof Error ? err.message : String(err)}`, "error");
         manager.zeroize();
         return;
       }
-
       if (!backend) {
         ctx.ui.notify("Vault unlocked for this session, but the keyring addon isn't available, so the key can't be persisted. Rebuild it (see /engineering-doctor), then re-run /secret-reconnect.", "warning");
         manager.zeroize();
