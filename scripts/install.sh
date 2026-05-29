@@ -53,6 +53,17 @@ KEYRING_NODE=$(find "$NODE_MODULES/@napi-rs" "$NODE_MODULES/.pnpm" -name 'keyrin
 if [ -n "$KEYRING_NODE" ]; then
   cp "$KEYRING_NODE" "$EXTENSION_DIR/$(basename "$KEYRING_NODE")"
   echo "Installed native:    $EXTENSION_DIR/$(basename "$KEYRING_NODE")"
+  # Smoke-test the keyring addon under THIS Node (mirrors the better_sqlite3
+  # check). Warning, not hard-fail: the core workflows run without the keyring —
+  # only /secret-* degrades. A mismatch here is the Mode-1 ABI failure that
+  # /secret-reconnect and /engineering-doctor diagnose.
+  INSTALLED_KEYRING="$EXTENSION_DIR/$(basename "$KEYRING_NODE")"
+  if NAPI_RS_NATIVE_LIBRARY_PATH="$INSTALLED_KEYRING" node -e "const {Entry}=require('@napi-rs/keyring'); try{new Entry('pi-engineering','__install_probe__').getPassword()}catch(e){if(!/not.*found|no such|does not exist/i.test(e.message))throw e}" >/dev/null 2>&1; then
+    echo "Verified native:     keyring addon loads under $(node --version) (ABI $(node -p process.versions.modules))"
+  else
+    echo "WARNING: keyring addon failed to load under $(node --version) — /secret-* will degrade." >&2
+    echo "         Rebuild against the Node that runs pi: nvm use 22 && pnpm rebuild && pnpm run engineering:install" >&2
+  fi
 else
   echo "WARNING: @napi-rs/keyring native .node not found — /secret-* will silently degrade" >&2
 fi
