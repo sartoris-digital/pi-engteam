@@ -5,6 +5,9 @@ import { type KeyringBackend, KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER } from "./
 import { type promptPassphrase } from "./Passphrase.js";
 import { Vault, RECOVERY_KDF, type RecoveryBlob } from "./Vault.js";
 
+const PASSPHRASE_MISMATCH_MSG =
+  "Passphrase did not match. Vault is intact but inaccessible until the correct passphrase is supplied.";
+
 export type MasterKeyConfig = {
   keyringBackend: KeyringBackend | null;
   saltPath: string;
@@ -52,6 +55,36 @@ export class MasterKeyManager {
 
     // fail closed when key uncertainty meets an existing vault — silent re-keying is data loss
     if (vaultExists) {
+      // Approach A: a passphrase-wrapped backup stored inside the vault DB takes
+      // precedence over the legacy sidecar salt. It travels with secrets.db, so
+      // it is the recovery path on a new machine/user. Re-storing the recovered
+      // key into the keychain is deferred to /secret-reconnect (no silent write).
+      const blob = readRecoveryBlobFromVault(vaultDbPath);
+      if (blob) {
+        if (blob.kdf !== RECOVERY_KDF) {
+          throw new Error(`Vault recovery blob uses an unknown KDF (${blob.kdf}); it was created by a newer pi-engineering version. Upgrade to recover.`);
+        }
+        if (!promptFn) {
+          throw new Error("Vault exists but no key in keyring; passphrase recovery requires promptFn to be supplied to MasterKeyManager.");
+        }
+        const passphrase = await promptFn();
+        let candidate: Buffer;
+        try {
+          candidate = unwrapMasterKey(blob.wrap, blob.iv, blob.tag, passphrase, blob.salt);
+        } catch {
+          throw new Error(PASSPHRASE_MISMATCH_MSG);
+        }
+        // Empty vault: validateKeyAgainstVault() is vacuously true, so the GCM
+        // auth tag in unwrapMasterKey above is the real passphrase gate.
+        if (!validateKeyAgainstVault(vaultDbPath, candidate)) {
+          zeroBuffer(candidate);
+          throw new Error(PASSPHRASE_MISMATCH_MSG);
+        }
+        this.cachedKey = candidate;
+        this.unlockSource = "passphrase-recovery";
+        return this.cachedKey;
+      }
+
       if (!existsSync(saltPath)) {
         throw new Error(
           `Vault exists at ${vaultDbPath} but no master key in keyring and no passphrase salt at ${saltPath}. ` +
@@ -148,6 +181,19 @@ function validateKeyAgainstVault(vaultDbPath: string, candidate: Buffer): boolea
     return vault.verifyDecryptable();
   } catch {
     return false;
+  } finally {
+    vault.close();
+  }
+}
+
+// Reads the recovery blob from an existing vault DB without needing the master
+// key — vault_meta is plaintext, so a throwaway key suffices to open the DB and
+// read metadata. Returns null when no blob is enrolled; throws on a corrupt blob.
+function readRecoveryBlobFromVault(vaultDbPath: string): RecoveryBlob | null {
+  const vault = new Vault({ dbPath: vaultDbPath, masterKey: Buffer.alloc(32) });
+  try {
+    vault.init();
+    return vault.readRecoveryBlob();
   } finally {
     vault.close();
   }
