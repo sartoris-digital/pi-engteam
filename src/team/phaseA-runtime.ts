@@ -173,7 +173,7 @@ export function checkPiVersion(piBinary = "pi"): PiVersionCheck {
     cachedVersionCheck = {
       piVersion,
       level: "unknown",
-      message: `pi-engineering: could not detect 'pi --version'. Phase A/B behaviors that depend on Pi subprocess routing may not work as expected.`,
+      message: `could not detect 'pi --version'. Phase A/B behaviors that depend on Pi subprocess routing may not work as expected.`,
     };
     return cachedVersionCheck;
   }
@@ -181,6 +181,9 @@ export function checkPiVersion(piBinary = "pi"): PiVersionCheck {
   if (cmp.major === 0 && cmp.minor < 65) {
     cachedVersionCheck = {
       piVersion,
+      // NOTE: this message keeps the `pi-engineering:` self-prefix because the
+      // "error" level is THROWN (ADWEngine re-throws it) without the
+      // `[pi-engineering]` console wrapper that labels the warn/unknown levels.
       level: "error",
       message: `pi-engineering: detected pi ${piVersion} which is below the 0.65 peer-dep floor. Upgrade pi-cli to >= 0.73 before continuing.`,
     };
@@ -188,13 +191,13 @@ export function checkPiVersion(piBinary = "pi"): PiVersionCheck {
     cachedVersionCheck = {
       piVersion,
       level: "warn",
-      message: `pi-engineering: detected pi ${piVersion}. The CoPilot-compat fixes shipped in pi-engineering 2.0.11-2.0.15 + 2.1.x rely on pi-cli >= 0.73 for stable subprocess routing. Consider upgrading.`,
+      message: `detected pi ${piVersion}. The CoPilot-compat fixes shipped in pi-engineering 2.0.11-2.0.15 + 2.1.x rely on pi-cli >= 0.73 for stable subprocess routing. Consider upgrading.`,
     };
   } else {
     cachedVersionCheck = {
       piVersion,
       level: "ok",
-      message: `pi-engineering: pi ${piVersion} OK.`,
+      message: `pi ${piVersion} OK.`,
     };
   }
   return cachedVersionCheck;

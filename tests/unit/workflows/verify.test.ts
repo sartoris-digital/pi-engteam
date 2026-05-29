@@ -148,9 +148,12 @@ describe("verify workflow – transitions", () => {
     expect(t.when({ success: true, verdict: "PASS" })).toBe(true);
   });
 
-  it("validate FAIL → write-tests", () => {
-    const t = verify.transitions.find(tr => tr.from === "validate" && tr.to === "write-tests")!;
-    expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
+  it("validate FAIL → review (GHCP: always move forward, no write-tests↔validate loop)", () => {
+    const t = verify.transitions.find(
+      tr => tr.from === "validate" && tr.to === "review" && tr.when({ success: false, verdict: "FAIL" }),
+    )!;
+    expect(t).toBeDefined();
+    expect(t.to).toBe("review");
   });
 
   it("review PASS → judge-gate", () => {
@@ -158,9 +161,12 @@ describe("verify workflow – transitions", () => {
     expect(t.when({ success: true, verdict: "PASS" })).toBe(true);
   });
 
-  it("review FAIL → write-tests", () => {
-    const t = verify.transitions.find(tr => tr.from === "review" && tr.to === "write-tests")!;
-    expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
+  it("review FAIL → judge-gate (GHCP: produce verdict.md instead of looping)", () => {
+    const t = verify.transitions.find(
+      tr => tr.from === "review" && tr.to === "judge-gate" && tr.when({ success: false, verdict: "FAIL" }),
+    )!;
+    expect(t).toBeDefined();
+    expect(t.to).toBe("judge-gate");
   });
 
   it("judge-gate PASS → halt", () => {
@@ -168,9 +174,12 @@ describe("verify workflow – transitions", () => {
     expect(t.when({ success: true, verdict: "PASS" })).toBe(true);
   });
 
-  it("judge-gate FAIL → write-tests", () => {
-    const t = verify.transitions.find(tr => tr.from === "judge-gate" && tr.to === "write-tests")!;
-    expect(t.when({ success: false, verdict: "FAIL" })).toBe(true);
+  it("judge-gate FAIL → halt (GHCP: outcome captured in verdict.md, no re-loop)", () => {
+    const t = verify.transitions.find(
+      tr => tr.from === "judge-gate" && tr.to === "halt" && tr.when({ success: false, verdict: "FAIL" }),
+    )!;
+    expect(t).toBeDefined();
+    expect(t.to).toBe("halt");
   });
 });
 

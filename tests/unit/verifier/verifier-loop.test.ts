@@ -5,7 +5,6 @@ import { join } from "path";
 import { rm } from "fs/promises";
 import {
   runVerifyLoop,
-  VerifyExhaustedError,
   _testing,
 } from "../../../src/verifier/VerifierLoop.js";
 import type { VerdictPayload } from "../../../src/types.js";
@@ -79,7 +78,9 @@ describe("VerifierLoop", () => {
         await writeReport(runDir, "build", 1, "STATUS: FAIL\nCONFIDENCE: FEEDBACK\n");
         return { step: "verify:build", verdict: "FAIL", issues: ["claim X failed"] };
       },
-      async () => undefined, // worker re-iter response (no verdict needed)
+      // Worker re-iter must emit a fresh verdict: a silent worker now short-circuits
+      // to auto-PASS (timeout resilience), so return a verdict to keep iterating.
+      async () => ({ step: "build", verdict: "PASS", artifacts: ["fixed.ts"] }),
       async () => {
         await writeReport(runDir, "build", 2, "STATUS: PASS\nCONFIDENCE: PERFECT\n");
         return { step: "verify:build", verdict: "PASS" };
@@ -129,35 +130,38 @@ describe("VerifierLoop", () => {
     // ADWEngine's onPartialGap callback is the sole writer.
   });
 
-  it("throws VerifyExhaustedError when all loops produce FAIL", async () => {
+  it("returns FAIL (no longer throws) when all loops produce FAIL — GHCP resilience", async () => {
     const { team } = makeMockTeam([
       async () => {
         await writeReport(runDir, "build", 1, "STATUS: FAIL\nCONFIDENCE: FAILED\n");
         return { step: "verify:build", verdict: "FAIL", issues: ["x"] };
       },
-      async () => undefined,
+      async () => ({ step: "build", verdict: "PASS", artifacts: ["a.ts"] }),
       async () => {
         await writeReport(runDir, "build", 2, "STATUS: FAIL\nCONFIDENCE: FAILED\n");
         return { step: "verify:build", verdict: "FAIL", issues: ["x", "y"] };
       },
-      async () => undefined,
+      async () => ({ step: "build", verdict: "PASS", artifacts: ["a.ts"] }),
       async () => {
         await writeReport(runDir, "build", 3, "STATUS: FAIL\nCONFIDENCE: FAILED\n");
         return { step: "verify:build", verdict: "FAIL", issues: ["final"] };
       },
     ]);
-    await expect(
-      runVerifyLoop({
-        team,
-        verifierAgentName: "verifier",
-        workerAgentName: "implementer",
-        workerStep: "build",
-        workerVerdict: baseVerdict,
-        runId: "r4",
-        runDir,
-        maxVerifyLoops: 3,
-      }),
-    ).rejects.toBeInstanceOf(VerifyExhaustedError);
+    const res = await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: "build",
+      workerVerdict: baseVerdict,
+      runId: "r4",
+      runDir,
+      maxVerifyLoops: 3,
+    });
+    // Exhaustion returns FAIL/FAILED (logged via exhausted.md) so the run can
+    // continue to its workflow transitions instead of hard-throwing.
+    expect(res.verdict).toBe("FAIL");
+    expect(res.confidence).toBe("FAILED");
+    expect(res.issues).toEqual(["final"]);
   });
 
   it("does not send corrective message after the final FAIL iteration", async () => {
@@ -166,42 +170,42 @@ describe("VerifierLoop", () => {
         await writeReport(runDir, "build", 1, "STATUS: FAIL\nCONFIDENCE: FAILED\n");
         return { step: "verify:build", verdict: "FAIL", issues: ["x"] };
       },
-      async () => undefined,
+      async () => ({ step: "build", verdict: "PASS", artifacts: ["a.ts"] }),
       async () => {
         await writeReport(runDir, "build", 2, "STATUS: FAIL\nCONFIDENCE: FAILED\n");
         return { step: "verify:build", verdict: "FAIL", issues: ["y"] };
       },
     ]);
-    await expect(
-      runVerifyLoop({
-        team,
-        verifierAgentName: "verifier",
-        workerAgentName: "implementer",
-        workerStep: "build",
-        workerVerdict: baseVerdict,
-        runId: "r5",
-        runDir,
-        maxVerifyLoops: 2,
-      }),
-    ).rejects.toBeInstanceOf(VerifyExhaustedError);
-    // verifier(1) + worker(1) + verifier(2) = 3 calls; no worker call after last FAIL
+    const res = await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: "build",
+      workerVerdict: baseVerdict,
+      runId: "r5",
+      runDir,
+      maxVerifyLoops: 2,
+    });
+    expect(res.verdict).toBe("FAIL");
+    // verifier(1) + worker(1) + verifier(2) = 3 calls; no worker reroute after the last FAIL
     expect(calls.map((c) => c.agent)).toEqual(["verifier", "implementer", "verifier"]);
   });
 
-  it("throws when verifier returns no verdict at all", async () => {
+  it("auto-passes (timeout resilience) when the verifier returns no verdict", async () => {
     const { team } = makeMockTeam([async () => undefined]);
-    await expect(
-      runVerifyLoop({
-        team,
-        verifierAgentName: "verifier",
-        workerAgentName: "implementer",
-        workerStep: "build",
-        workerVerdict: baseVerdict,
-        runId: "r6",
-        runDir,
-        maxVerifyLoops: 3,
-      }),
-    ).rejects.toThrow(/did not emit a verdict/);
+    const res = await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: "build",
+      workerVerdict: baseVerdict,
+      runId: "r6",
+      runDir,
+      maxVerifyLoops: 3,
+    });
+    // A silent/timed-out verifier no longer throws — it auto-passes so the run continues.
+    expect(res.verdict).toBe("PASS");
+    expect(res.issues?.[0]).toMatch(/timed out/);
   });
 
   it("dispatches a verifier prompt that includes worker step and run id", async () => {
@@ -383,18 +387,17 @@ describe("VerifierLoop", () => {
         return { step: "verify:build", verdict: "FAIL", issues: ["x"] };
       },
     ]);
-    await expect(
-      runVerifyLoop({
-        team,
-        verifierAgentName: "verifier",
-        workerAgentName: "implementer",
-        workerStep: "build",
-        workerVerdict: baseVerdict,
-        runId: "r11",
-        runDir,
-        maxVerifyLoops: 1,
-      }),
-    ).rejects.toBeInstanceOf(VerifyExhaustedError);
+    const res = await runVerifyLoop({
+      team,
+      verifierAgentName: "verifier",
+      workerAgentName: "implementer",
+      workerStep: "build",
+      workerVerdict: baseVerdict,
+      runId: "r11",
+      runDir,
+      maxVerifyLoops: 1,
+    });
+    expect(res.verdict).toBe("FAIL");
     // single iteration: only verifier called, no worker reroute
     expect(calls.map((c) => c.agent)).toEqual(["verifier"]);
   });

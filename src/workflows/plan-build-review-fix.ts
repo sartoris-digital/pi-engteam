@@ -81,6 +81,7 @@ const buildStep: Step = {
   timeoutSeconds: 1800,
   verify: true,
   agent: "implementer",
+  maxVerifyLoops: 1,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["plan"] ?? "No plan artifact found";
     const prompt = `You are the implementer. Here is the plan you need to execute:
@@ -240,13 +241,13 @@ export const planBuildReviewFix: Workflow = {
     { from: "plan",   when: (r) => r.verdict === "PASS",  to: "build" },
     { from: "plan",   when: (r) => r.verdict !== "PASS",  to: "build" },
     { from: "build",  when: (r) => r.verdict === "PASS",  to: "review" },
-    // M4: build failures loop back to plan so the planner can revise rather than halting
-    { from: "build",  when: (r) => r.verdict !== "PASS",  to: "plan" },
+    // Always forward — avoids build→plan→build loops under GHCP context exhaustion
+    { from: "build",  when: (r) => r.verdict !== "PASS",  to: "review" },
     { from: "review", when: (r) => r.verdict === "PASS",  to: "halt" },
     { from: "review", when: (r) => r.verdict !== "PASS",  to: "fix" },
     { from: "fix",    when: (r) => r.verdict === "PASS",  to: "review" },
-    // H3: if the fixer is blocked, re-plan instead of halting the self-healing workflow
-    { from: "fix",    when: (r) => r.verdict !== "PASS",  to: "plan" },
+    // Always halt on fix FAIL — avoids fix→plan→build loops under GHCP
+    { from: "fix",    when: (r) => r.verdict !== "PASS",  to: "halt" },
   ],
   defaults: {
     maxIterations: 12,

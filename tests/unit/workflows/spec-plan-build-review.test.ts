@@ -7,17 +7,17 @@ describe("specPlanBuildReview workflow", () => {
     expect(names).toEqual(["discover", "design", "plan", "build", "review"]);
   });
 
-  it("discover has pauseAfter answering, design and plan have pauseAfter approving, build and review have none", () => {
+  it("no step pauses for the user — pauseAfter flags removed for autonomous GHCP runs (a4247c3)", () => {
     const discover = specPlanBuildReview.steps.find(s => s.name === "discover")!;
     const design   = specPlanBuildReview.steps.find(s => s.name === "design")!;
     const plan     = specPlanBuildReview.steps.find(s => s.name === "plan")!;
     const build    = specPlanBuildReview.steps.find(s => s.name === "build")!;
     const review   = specPlanBuildReview.steps.find(s => s.name === "review")!;
 
-    expect(discover.pauseAfter).toBe("answering");
     expect(discover.planMode).toBe(false);
-    expect(design.pauseAfter).toBe("approving");
-    expect(plan.pauseAfter).toBe("approving");
+    expect(discover.pauseAfter).toBeUndefined();
+    expect(design.pauseAfter).toBeUndefined();
+    expect(plan.pauseAfter).toBeUndefined();
     expect(build.pauseAfter).toBeUndefined();
     expect(review.pauseAfter).toBeUndefined();
   });

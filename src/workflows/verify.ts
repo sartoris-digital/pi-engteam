@@ -247,11 +247,14 @@ export const verify: Workflow = {
     // M3: on write-tests failure skip to validate rather than retrying — GHCP agents exhaust context
     { from: "write-tests", when: (r) => r.verdict !== "PASS",  to: "validate" },
     { from: "validate",    when: (r) => r.verdict === "PASS",                               to: "review" },
-    { from: "validate",    when: (r) => r.verdict !== "PASS",                               to: "write-tests" },
+    // Always proceed to review even on FAIL — avoids infinite write-tests↔validate loops under GHCP
+    { from: "validate",    when: (r) => r.verdict !== "PASS",                               to: "review" },
     { from: "review",      when: (r) => r.verdict === "PASS",                               to: "judge-gate" },
-    { from: "review",      when: (r) => r.verdict !== "PASS",                               to: "write-tests" },
+    // On review FAIL, proceed to judge-gate to produce verdict.md rather than looping
+    { from: "review",      when: (r) => r.verdict !== "PASS",                               to: "judge-gate" },
     { from: "judge-gate",  when: (r) => r.verdict === "PASS",                               to: "halt" },
-    { from: "judge-gate",  when: (r) => r.verdict !== "PASS",                               to: "write-tests" },
+    // On judge FAIL still halt — run captured the outcome in verdict.md
+    { from: "judge-gate",  when: (r) => r.verdict !== "PASS",                               to: "halt" },
   ],
   defaults: {
     maxIterations: 8,

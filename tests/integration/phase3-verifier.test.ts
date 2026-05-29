@@ -153,7 +153,7 @@ describe("Phase 3 Verifier integration", () => {
     expect(buildCalls).toBe(1); // build is called once by ADW; verifier corrective uses team.deliver to worker, which the test counts via summary too — already addressed in test by checking only "Execute step: build"
   });
 
-  it("pauses run with waiting_user on verifier exhaustion", async () => {
+  it("fails the run on verifier exhaustion via the workflow's FAIL transition (no waiting_user pause)", async () => {
     const { engine } = buildEngine(async (agent, msg) => {
       if (agent === "verifier") {
         const runId = msg.message.match(/RUN_ID: (\S+)/)![1];
@@ -169,8 +169,11 @@ describe("Phase 3 Verifier integration", () => {
       goal: "g",
       budget: { maxIterations: 8, maxCostUsd: 10, maxWallSeconds: 60 },
     });
+    // VerifierLoop no longer throws on exhaustion — it returns FAIL, which the
+    // engine applies to the step result so the workflow's own transition
+    // (build verify-FAIL → halt) drives the outcome to "failed".
     const final = await engine.executeRun(state.runId);
-    expect(final.status).toBe("waiting_user");
+    expect(final.status).toBe("failed");
   });
 
   it("does NOT run verifier when step.verify is unset", async () => {

@@ -11,7 +11,7 @@ import {
 } from "./RunState.js";
 import { checkBudget, tickBudget } from "./BudgetGuard.js";
 import { writeActiveRun } from "./ActiveRun.js";
-import { runVerifyLoop, VerifyExhaustedError } from "../verifier/VerifierLoop.js";
+import { runVerifyLoop } from "../verifier/VerifierLoop.js";
 import { resolveDag, validateWorkflow } from "./DagResolver.js";
 import { mkdir, appendFile } from "fs/promises";
 import { join as joinPath } from "path";
@@ -98,7 +98,7 @@ export class ADWEngine {
           throw new Error(v.message);
         }
         if (v.level === "warn" || v.level === "unknown") {
-          console.error(`[pi-eng] ${v.message}`);
+          console.error(`[pi-engineering] ${v.message}`);
         }
       }
     } catch (err) {
@@ -474,7 +474,7 @@ export class ADWEngine {
       });
     } catch (err) {
       // Never block run start on telemetry/snapshot wiring.
-      console.error("[pi-eng] feature-decisions snapshot failed:", err instanceof Error ? err.message : String(err));
+      console.error("[pi-engineering] feature-decisions snapshot failed:", err instanceof Error ? err.message : String(err));
     }
 
     // Phase B item 13: per-run activity queue. Created at run start
@@ -494,7 +494,7 @@ export class ADWEngine {
           this.activityQueues.set(runId, queue);
         } catch (err) {
           console.error(
-            `[pi-eng] activity queue lock failed for ${runId}; continuing without realtime stream:`,
+            `[pi-engineering] activity queue lock failed for ${runId}; continuing without realtime stream:`,
             err instanceof Error ? err.message : String(err),
           );
         }
@@ -710,7 +710,7 @@ export class ADWEngine {
       } catch (err) {
         // Predicate failure must never crash the engine. Log and
         // continue with the original verdict.
-        console.error(`[pi-eng] acceptPass predicate threw for step ${state.currentStep}:`, err instanceof Error ? err.message : String(err));
+        console.error(`[pi-engineering] acceptPass predicate threw for step ${state.currentStep}:`, err instanceof Error ? err.message : String(err));
       }
 
       const elapsed = Math.max(0, (performance.now() - stepStart) / 1000);
@@ -852,31 +852,29 @@ export class ADWEngine {
             },
             summary: `verifier ${verifyResult.verdict} on ${state.currentStep}`,
           });
-        } catch (err) {
-          if (err instanceof VerifyExhaustedError) {
+
+          // A verifier FAIL downgrades the step result so the workflow's own
+          // FAIL transition decides what happens next (e.g. build verify-FAIL →
+          // halt → status "failed"). VerifierLoop no longer throws on
+          // exhaustion — it returns FAIL — so verifier outcomes are handled
+          // transition-driven rather than via a hard waiting_user pause.
+          // PARTIAL stays non-blocking (surfaced via onPartialGap → gaps.jsonl)
+          // and deliberately does not downgrade the result.
+          if (verifyResult.verdict === "FAIL") {
+            const mergedIssues = [
+              ...(result.issues ?? []),
+              ...(verifyResult.issues ?? []),
+            ];
+            result = { ...result, success: false, verdict: "FAIL", issues: mergedIssues };
             state = updateStep(state, state.currentStep, {
               verdict: "FAIL",
-              issues: err.lastIssues,
-              error: err.message,
+              issues: verifyResult.issues,
             });
-            state = { ...state, status: "waiting_user" };
-            await saveRunState(this.config.runsDir, state);
-            this.config.observer.emit({
-              runId,
-              step: state.currentStep,
-              iteration: state.iteration,
-              category: "verdict",
-              type: "verify_exhausted",
-              payload: { issues: err.lastIssues, attempts: err.attempts },
-              summary: `verifier exhausted on ${state.currentStep}`,
-            });
-            this.uiCallbacks?.notify(
-              `⏸ Verifier exhausted on ${state.currentStep} after ${err.attempts} loop(s). Run paused.`,
-              "warning",
-            );
-            this.uiCallbacks?.setStatus("engineering", `⏸ verifier exhausted (${state.currentStep})`);
-            break;
           }
+        } catch (err) {
+          // VerifierLoop returns (PASS/FAIL) rather than throwing for verdicts;
+          // anything thrown here is genuine infra failure — propagate it to the
+          // run-level handler, which marks the run failed.
           throw err;
         }
       }

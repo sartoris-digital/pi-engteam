@@ -137,6 +137,7 @@ const implementStep: Step = {
   timeoutSeconds: 1800,
   verify: true,
   agent: "implementer",
+  maxVerifyLoops: 1,
   run: async (ctx: StepContext): Promise<StepResult> => {
     const planArtifact = ctx.run.artifacts["migration-plan"] ?? "migration-plan.md";
     const prompt = `You are the implementer writing database migration scripts.

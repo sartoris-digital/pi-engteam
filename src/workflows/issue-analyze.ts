@@ -10,14 +10,17 @@ async function waitForVerdict(
   prompt: string,
   stepName: string,
 ): Promise<VerdictPayload> {
-  const verdict = await ctx.team.deliver(agentName, {
-    id: crypto.randomUUID(),
-    from: "system",
-    to: agentName,
-    summary: `Execute step: ${stepName}`,
-    message: prompt,
-    ts: new Date().toISOString(),
-  }, { runId: ctx.run.runId });
+  const verdict = await Promise.race([
+    ctx.team.deliver(agentName, {
+      id: crypto.randomUUID(),
+      from: "system",
+      to: agentName,
+      summary: `Execute step: ${stepName}`,
+      message: prompt,
+      ts: new Date().toISOString(),
+    }, { runId: ctx.run.runId }),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 700_000)),
+  ]) as Awaited<ReturnType<typeof ctx.team.deliver>> | null;
   if (!verdict) {
     throw new Error(`Agent ${agentName} did not emit verdict for step ${stepName} within timeout`);
   }
