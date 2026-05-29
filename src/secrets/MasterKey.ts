@@ -1,9 +1,9 @@
 // src/secrets/MasterKey.ts
 import { readFileSync, writeFileSync, existsSync } from "fs";
-import { generateMasterKey, generateSalt, deriveKeyFromPassphrase, zeroBuffer } from "./Crypto.js";
+import { generateMasterKey, generateSalt, deriveKeyFromPassphrase, wrapMasterKey, unwrapMasterKey, zeroBuffer } from "./Crypto.js";
 import { type KeyringBackend, KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER } from "./Keyring.js";
 import { type promptPassphrase } from "./Passphrase.js";
-import { Vault } from "./Vault.js";
+import { Vault, RECOVERY_KDF, type RecoveryBlob } from "./Vault.js";
 
 export type MasterKeyConfig = {
   keyringBackend: KeyringBackend | null;
@@ -12,9 +12,17 @@ export type MasterKeyConfig = {
   promptFn?: typeof promptPassphrase;
 };
 
+export type UnlockSource =
+  | "keychain"
+  | "first-run-keychain"
+  | "passphrase-recovery"
+  | "passphrase"
+  | null;
+
 export class MasterKeyManager {
   private config: MasterKeyConfig;
   private cachedKey: Buffer | null = null;
+  public unlockSource: UnlockSource = null;
 
   constructor(config: MasterKeyConfig) {
     this.config = config;
@@ -30,6 +38,7 @@ export class MasterKeyManager {
     if (keyringBackend) {
       const result = keyringBackend.get(KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER);
       if (result.kind === "value") {
+        this.unlockSource = "keychain";
         this.cachedKey = Buffer.from(result.value, "hex");
         return this.cachedKey;
       }
@@ -63,6 +72,7 @@ export class MasterKeyManager {
           `Passphrase did not match. Vault is intact but inaccessible until the correct passphrase is supplied.`,
         );
       }
+      this.unlockSource = "passphrase";
       this.cachedKey = candidate;
       return this.cachedKey;
     }
@@ -73,6 +83,7 @@ export class MasterKeyManager {
       if (!promptFn) throw new Error("No promptFn provided for passphrase derivation.");
       const salt = readFileSync(saltPath);
       const passphrase = await promptFn();
+      this.unlockSource = "passphrase";
       this.cachedKey = deriveKeyFromPassphrase(passphrase, salt);
       return this.cachedKey;
     }
@@ -80,12 +91,14 @@ export class MasterKeyManager {
     if (keyringBackend) {
       const key = generateMasterKey();
       keyringBackend.set(KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER, key.toString("hex"));
+      this.unlockSource = "first-run-keychain";
       this.cachedKey = key;
     } else {
       if (!promptFn) throw new Error("No promptFn provided for passphrase derivation.");
       const salt = generateSalt();
       const passphrase = await promptFn({ confirm: true });
       writeFileSync(saltPath, salt);
+      this.unlockSource = "passphrase";
       this.cachedKey = deriveKeyFromPassphrase(passphrase, salt);
     }
 
@@ -95,6 +108,25 @@ export class MasterKeyManager {
   async getMasterKey(): Promise<Buffer> {
     if (!this.cachedKey) throw new Error("Call ensureInitialized() before getMasterKey().");
     return this.cachedKey;
+  }
+
+  // Enroll a passphrase-wrapped backup of the live master key into the vault DB.
+  // Requires an unlocked vault (call ensureInitialized first). Idempotent —
+  // overwriting the blob doubles as "change recovery passphrase".
+  async enrollRecovery(passphrase: string): Promise<void> {
+    if (!this.cachedKey) {
+      throw new Error("Vault must be unlocked before enrolling recovery. Call ensureInitialized() first.");
+    }
+    const salt = generateSalt();
+    const { wrap, iv, tag } = wrapMasterKey(this.cachedKey, passphrase, salt);
+    const vault = new Vault({ dbPath: this.config.vaultDbPath, masterKey: this.cachedKey });
+    try {
+      vault.init();
+      const blob: RecoveryBlob = { salt, wrap, iv, tag, kdf: RECOVERY_KDF, enrolledAt: Date.now() };
+      vault.writeRecoveryBlob(blob);
+    } finally {
+      vault.close();
+    }
   }
 
   zeroize(): void {
