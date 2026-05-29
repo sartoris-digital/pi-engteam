@@ -38,3 +38,37 @@ export function decrypt(
 export function zeroBuffer(buf: Buffer): void {
   buf.fill(0);
 }
+
+// Envelope encryption for vault recovery: a passphrase-derived KEK wraps a copy
+// of the random master key. The wrapped copy is stored in vault_meta so the
+// vault can be reopened after OS-keychain access is lost. The master key is
+// serialized as hex through the existing string-oriented encrypt/decrypt.
+export function wrapMasterKey(
+  masterKey: Buffer,
+  passphrase: string,
+  salt: Buffer,
+): { wrap: Buffer; iv: Buffer; tag: Buffer } {
+  const kek = deriveKeyFromPassphrase(passphrase, salt);
+  try {
+    const { ciphertext, iv, tag } = encrypt(masterKey.toString("hex"), kek);
+    return { wrap: ciphertext, iv, tag };
+  } finally {
+    zeroBuffer(kek);
+  }
+}
+
+export function unwrapMasterKey(
+  wrap: Buffer,
+  iv: Buffer,
+  tag: Buffer,
+  passphrase: string,
+  salt: Buffer,
+): Buffer {
+  const kek = deriveKeyFromPassphrase(passphrase, salt);
+  try {
+    const hex = decrypt(wrap, kek, iv, tag); // throws on wrong passphrase / tamper
+    return Buffer.from(hex, "hex");
+  } finally {
+    zeroBuffer(kek);
+  }
+}
