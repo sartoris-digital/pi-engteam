@@ -9,6 +9,24 @@ vi.mock("fs/promises", () => ({
   realpath: vi.fn(),
 }));
 
+// doctor.ts (Task 10) added real I/O: existsSync(secrets.db) + keyring diagnosis.
+// Mock them so the doctor test stays hermetic and deterministic regardless of
+// the developer's actual ~/.pi vault/keychain state.
+vi.mock("fs", async (importActual) => {
+  const actual = await importActual<typeof import("fs")>();
+  return {
+    ...actual,
+    // Skip the vault/recovery check block: pretend the vault DB doesn't exist.
+    existsSync: (p: any) => (String(p).includes("secrets.db") ? false : actual.existsSync(p)),
+  };
+});
+vi.mock("../../../src/secrets/Keyring.js", () => ({
+  diagnoseKeyring: () => ({ status: "ok" }),
+  createKeyringBackend: () => null,
+  KEYRING_SERVICE: "pi-engineering",
+  KEYRING_ACCOUNT_MASTER: "secrets-master",
+}));
+
 import { stat, readFile, readdir, realpath } from "fs/promises";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
