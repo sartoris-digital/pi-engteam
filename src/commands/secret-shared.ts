@@ -8,17 +8,22 @@ import { promptPassphrase } from "../secrets/Passphrase.js";
 
 const DATA_DIR = join(homedir(), ".pi", "engineering-team");
 
-export async function loadVaultForCommand(): Promise<Vault> {
-  const keyringBackend = createKeyringBackend();
-  const manager = new MasterKeyManager({
-    keyringBackend,
-    saltPath: join(DATA_DIR, "secrets.salt"),
-    vaultDbPath: join(DATA_DIR, "secrets.db"),
+export const VAULT_DB_PATH = join(DATA_DIR, "secrets.db");
+export const VAULT_SALT_PATH = join(DATA_DIR, "secrets.salt");
+
+export function buildMasterKeyManager(): MasterKeyManager {
+  return new MasterKeyManager({
+    keyringBackend: createKeyringBackend(),
+    saltPath: VAULT_SALT_PATH,
+    vaultDbPath: VAULT_DB_PATH,
     promptFn: promptPassphrase,
   });
+}
 
+export async function loadVaultForCommand(): Promise<Vault> {
+  const manager = buildMasterKeyManager();
   const masterKey = await manager.ensureInitialized();
-  const vault = new Vault({ dbPath: join(DATA_DIR, "secrets.db"), masterKey });
+  const vault = new Vault({ dbPath: VAULT_DB_PATH, masterKey });
   vault.init();
   return vault;
 }
