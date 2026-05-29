@@ -12,6 +12,7 @@ import { checkDomain } from "./DomainLock.js";
 import { substituteRunIdInPolicy } from "./teams-config.js";
 import { loadSafetyConfigStrict } from "../config.js";
 import type { DomainPolicyMap } from "./default-domains.js";
+import { inlineOperatorApproval } from "../ui/ConfirmInput.js";
 
 // Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
 // "write"|"grep"|"find"|"ls"|<custom>) and `input` (typed input object). All
@@ -409,7 +410,7 @@ export function registerSafetyGuard(
   pi: ExtensionAPI,
   config: SafetyConfig & { runsDir: string; domainLock?: DomainLockConfig },
 ): void {
-  pi.on("tool_call", async (event: any, _ctx: any) => {
+  pi.on("tool_call", async (event: any, ctx: any) => {
     const { toolName, toolInput } = normalizeToolEvent(event);
 
     // --- Layer A: Hard blockers ---
@@ -459,12 +460,17 @@ export function registerSafetyGuard(
         const argsHash = hashArgs({ op: "bash", command: toolInput.command as string });
         const approved = await findValidApproval(config.runsDir, "bash", argsHash);
         if (!approved) {
-          return {
-            block: true,
-            reason: `[Layer C] Destructive command requires Judge approval. Call RequestApproval first.`,
-            layer: "C",
-            classifierRule: result.reason,
-          };
+          const detail = toolInput.command as string;
+          if (!(await inlineOperatorApproval(ctx, "destructive command", detail))) {
+            return {
+              block: true,
+              reason: `[Layer C] Destructive command requires Judge approval. Call RequestApproval first.`,
+              layer: "C",
+              classifierRule: result.reason,
+            };
+          }
+          // operator approved inline — allow this call (fall through)
+          console.warn(`[pi-engineering] Layer C: operator approved destructive command inline — ${detail}`);
         }
       }
     }
@@ -498,11 +504,15 @@ export function registerSafetyGuard(
           argsHash,
         );
         if (!approved) {
-          return {
-            block: true,
-            reason: `[Layer C] ${toolName} on active verifier-script requires a verifier-script-update approval token. Stage the change under .staging/ and let the Learner orchestrator promote it.`,
-            layer: "C",
-          };
+          if (!(await inlineOperatorApproval(ctx, `${toolName} on active verifier-script`, filePath))) {
+            return {
+              block: true,
+              reason: `[Layer C] ${toolName} on active verifier-script requires a verifier-script-update approval token. Stage the change under .staging/ and let the Learner orchestrator promote it.`,
+              layer: "C",
+            };
+          }
+          // operator approved inline — allow this call (fall through)
+          console.warn(`[pi-engineering] Layer C: operator approved ${toolName} on active verifier-script inline — ${filePath}`);
         }
       } else {
         const argsHash = hashArgs({ op: toolName.toLowerCase(), command: filePath });
@@ -512,11 +522,15 @@ export function registerSafetyGuard(
           argsHash,
         );
         if (!approved) {
-          return {
-            block: true,
-            reason: `[Layer C] ${toolName} requires Judge approval. Call RequestApproval first.`,
-            layer: "C",
-          };
+          if (!(await inlineOperatorApproval(ctx, toolName, filePath))) {
+            return {
+              block: true,
+              reason: `[Layer C] ${toolName} requires Judge approval. Call RequestApproval first.`,
+              layer: "C",
+            };
+          }
+          // operator approved inline — allow this call (fall through)
+          console.warn(`[pi-engineering] Layer C: operator approved ${toolName} inline — ${filePath}`);
         }
       }
     }
