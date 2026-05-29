@@ -1138,6 +1138,17 @@ export default async function (pi: ExtensionAPI) {
       "[pi-engineering] Vault unavailable — installing fail-closed secret-input guard:",
       err instanceof Error ? err.message : String(err),
     );
+    // A NODE_MODULE_VERSION mismatch here means better_sqlite3.node was built
+    // for a different Node major than the one running pi. pi is a plain
+    // `#!/usr/bin/env node` script, so it uses whatever Node is on PATH —
+    // rebuild the addon against that Node and reinstall.
+    if (err instanceof Error && /NODE_MODULE_VERSION/.test(err.message)) {
+      console.warn(
+        `[pi-engineering] This is a Node ABI mismatch (pi is running under ${process.version}, ABI ${process.versions.modules}). ` +
+          "Rebuild the native addon against this Node and reinstall: " +
+          "nvm use 22 && pnpm rebuild better-sqlite3 && pnpm run engineering:install",
+      );
+    }
     let fallbackPatterns: ReturnType<typeof loadPatterns> = [];
     try {
       fallbackPatterns = loadPatterns();

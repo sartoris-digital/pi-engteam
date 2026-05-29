@@ -41,6 +41,35 @@ if [ -n "$SQLITE3_NODE" ]; then
   echo "Installed native:    $ENGINEERING_DIR/better_sqlite3.node"
   cp "$SQLITE3_NODE" "$EXTENSION_DIR/better_sqlite3.node"
   echo "Installed native:    $EXTENSION_DIR/better_sqlite3.node"
+
+  # ABI smoke test — better_sqlite3.node is compiled for ONE Node ABI
+  # (NODE_MODULE_VERSION). The extension is loaded by `pi`, which is a plain
+  # `#!/usr/bin/env node` script running under whatever Node is on PATH. If the
+  # build-time Node major differs from the Node that runs pi, the addon fails to
+  # load at runtime and the Vault degrades to the fail-closed guard. Verify the
+  # just-copied binary loads under THIS Node now, and surface its ABI so any
+  # future mismatch is immediately diagnosable.
+  INSTALLED_NODE="$EXTENSION_DIR/better_sqlite3.node"
+  if SMOKE=$(node -e "const D=require('better-sqlite3'); new D(':memory:',{nativeBinding:process.argv[1]}).close(); process.stdout.write(process.versions.modules+' '+process.version)" "$INSTALLED_NODE" 2>/dev/null); then
+    BUILD_ABI="${SMOKE%% *}"
+    BUILD_NODE="${SMOKE##* }"
+    echo "Verified native:     better_sqlite3.node loads under ${BUILD_NODE} (ABI ${BUILD_ABI})"
+  else
+    echo "ERROR: better_sqlite3.node failed to load under $(node --version) (ABI $(node -p process.versions.modules))." >&2
+    echo "       The addon was built for a different Node ABI. Rebuild against the Node that runs pi:" >&2
+    echo "         nvm use 22 && pnpm rebuild better-sqlite3 && pnpm run engineering:install" >&2
+    exit 1
+  fi
+
+  # Warn if the build Node major isn't the pinned major (.nvmrc = 22). pi must
+  # run under the SAME major or the addon's ABI won't match at runtime.
+  NODE_MAJOR=$(node -p "process.versions.node.split('.')[0]")
+  PINNED_MAJOR=22
+  if [ "$NODE_MAJOR" != "$PINNED_MAJOR" ]; then
+    echo "WARNING: built under Node ${NODE_MAJOR}.x but this project pins Node ${PINNED_MAJOR} (.nvmrc)." >&2
+    echo "         The Vault will only load when pi runs under Node ${NODE_MAJOR}.x too." >&2
+    echo "         Standardize: 'nvm use ${PINNED_MAJOR}', reinstall pi-cli, then re-run pnpm run engineering:install." >&2
+  fi
 else
   echo "WARNING: better_sqlite3.node not found — run pnpm install first" >&2
 fi
