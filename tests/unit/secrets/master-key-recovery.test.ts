@@ -143,4 +143,33 @@ describe("MasterKeyManager.ensureInitialized — Approach A recovery precedence"
     });
     await expect(mgr.ensureInitialized()).rejects.toThrow(/no master key in keyring and no passphrase salt/i);
   });
+
+  it("empty vault + recovery blob: GCM tag still rejects a wrong passphrase", async () => {
+    // Build a vault with a recovery blob but NO secrets written — verifyDecryptable()
+    // is vacuously true for an empty vault, so the GCM auth tag on the wrapped key
+    // (inside unwrapMasterKey) must be the sole passphrase gate.
+    async function seedEmptyVaultWithRecovery(passphrase: string) {
+      const dir = tmpDir();
+      const vaultDbPath = join(dir, "secrets.db");
+      const saltPath = join(dir, "secrets.salt");
+      const backend = fakeKeyring();
+      const mgr = new MasterKeyManager({ keyringBackend: backend, saltPath, vaultDbPath });
+      await mgr.ensureInitialized();
+      // Intentionally skip v.set(...) — vault stays empty.
+      await mgr.enrollRecovery(passphrase);
+      return { vaultDbPath, saltPath };
+    }
+
+    const { vaultDbPath, saltPath } = await seedEmptyVaultWithRecovery("correct-pass");
+
+    // A second manager with empty keychain and a WRONG passphrase must be rejected.
+    const mgr = new MasterKeyManager({
+      keyringBackend: fakeKeyring(), // empty — no keychain entry
+      saltPath,
+      vaultDbPath,
+      promptFn: async () => "wrong-pass",
+    });
+
+    await expect(mgr.ensureInitialized()).rejects.toThrow(/did not match/i);
+  });
 });
