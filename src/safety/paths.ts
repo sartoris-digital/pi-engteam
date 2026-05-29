@@ -177,6 +177,16 @@ export function isProtectedPath(filePath: string, opts?: { runsDir?: string }): 
       (runsDirAbs && (cand === runsDirAbs || cand.startsWith(runsDirAbs + "/"))) ||
       /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(cand);
     if (runUnderRuns) {
+      // Phase 2 (controller-judge-approval): block agent access to the
+      // _controller pseudo-run dir so no agent can cat the HMAC secret or
+      // write a forged approval token via Write/Edit/Bash-redirect.
+      if (/(^|\/)_controller(\/|$)/.test(cand)) {
+        return {
+          blocked: true,
+          reason: "_controller approval context is operator-owned; agents must not read the secret or write tokens here.",
+        };
+      }
+
       const ORCH_OWNED = [
         /\/state\.json$/i,
         /\/events\.jsonl$/i,

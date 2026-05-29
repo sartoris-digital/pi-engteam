@@ -13,6 +13,7 @@ import { substituteRunIdInPolicy } from "./teams-config.js";
 import { loadSafetyConfigStrict } from "../config.js";
 import type { DomainPolicyMap } from "./default-domains.js";
 import { inlineOperatorApproval } from "../ui/ConfirmInput.js";
+import { CONTROLLER_RUN_ID, recordPendingControllerApproval } from "./controllerApproval.js";
 
 // Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
 // "write"|"grep"|"find"|"ls"|<custom>) and `input` (typed input object). All
@@ -100,7 +101,13 @@ async function findValidApproval(
       runId = envRunId;
     } else {
       const activeFile = join(runsDir, "active-run.txt");
-      runId = (await readFile(activeFile, "utf8")).trim();
+      try {
+        runId = (await readFile(activeFile, "utf8")).trim();
+      } catch {
+        // No active run and no subprocess env — fall back to the _controller
+        // pseudo-run context so tokens minted by /approve are honored.
+        runId = CONTROLLER_RUN_ID;
+      }
     }
     const secretFile = join(runsDir, runId, ".secret");
     const approvalDir = join(runsDir, runId, "approvals");
@@ -462,9 +469,14 @@ export function registerSafetyGuard(
         if (!approved) {
           const detail = toolInput.command as string;
           if (!(await inlineOperatorApproval(ctx, "destructive command", detail))) {
+            if (!process.env["PI_ENGINEERING_RUN_ID"]) {
+              try {
+                await recordPendingControllerApproval(config.runsDir, { op: "bash", argsHash, display: detail });
+              } catch { /* best-effort; never changes the block decision */ }
+            }
             return {
               block: true,
-              reason: `[Layer C] Destructive command requires Judge approval. Call RequestApproval first.`,
+              reason: `[Layer C] Destructive command requires Judge approval. Call RequestApproval first — or run /approve to authorize.`,
               layer: "C",
               classifierRule: result.reason,
             };
@@ -505,9 +517,15 @@ export function registerSafetyGuard(
         );
         if (!approved) {
           if (!(await inlineOperatorApproval(ctx, `${toolName} on active verifier-script`, filePath))) {
+            if (!process.env["PI_ENGINEERING_RUN_ID"]) {
+              try {
+                const vsArgsHash = hashArgs({ op: "verifier-script-update", command: filePath });
+                await recordPendingControllerApproval(config.runsDir, { op: "verifier-script-update", argsHash: vsArgsHash, display: filePath });
+              } catch { /* best-effort; never changes the block decision */ }
+            }
             return {
               block: true,
-              reason: `[Layer C] ${toolName} on active verifier-script requires a verifier-script-update approval token. Stage the change under .staging/ and let the Learner orchestrator promote it.`,
+              reason: `[Layer C] ${toolName} on active verifier-script requires a verifier-script-update approval token. Stage the change under .staging/ and let the Learner orchestrator promote it — or run /approve to authorize.`,
               layer: "C",
             };
           }
@@ -523,9 +541,14 @@ export function registerSafetyGuard(
         );
         if (!approved) {
           if (!(await inlineOperatorApproval(ctx, toolName, filePath))) {
+            if (!process.env["PI_ENGINEERING_RUN_ID"]) {
+              try {
+                await recordPendingControllerApproval(config.runsDir, { op: toolName.toLowerCase(), argsHash, display: filePath });
+              } catch { /* best-effort; never changes the block decision */ }
+            }
             return {
               block: true,
-              reason: `[Layer C] ${toolName} requires Judge approval. Call RequestApproval first.`,
+              reason: `[Layer C] ${toolName} requires Judge approval. Call RequestApproval first — or run /approve to authorize.`,
               layer: "C",
             };
           }

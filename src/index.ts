@@ -27,6 +27,7 @@ import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerObserveCommand } from "./commands/observe.js";
 import { registerApprovalWatcherCommand } from "./commands/approval-watcher.js";
 import { registerApprovalStatusCommand } from "./commands/approval-status.js";
+import { registerApproveCommands } from "./commands/approve.js";
 import { registerWorkflowShortcuts } from "./commands/workflow-shortcuts.js";
 import { registerSpecCommand } from "./commands/spec.js";
 import { registerLearnCommand } from "./commands/learn.js";
@@ -1071,6 +1072,7 @@ export default async function (pi: ExtensionAPI) {
   // Phase 8 lands.
   registerApprovalWatcherCommand(pi, RUNS_DIR);
   registerApprovalStatusCommand(pi);
+  registerApproveCommands(pi, RUNS_DIR);
   registerWorkflowShortcuts(pi, engine, RUNS_DIR);
   registerSpecCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);
   registerIssueCommand(pi, engine, team, AGENT_DEFS, RUNS_DIR);

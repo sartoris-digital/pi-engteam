@@ -74,6 +74,25 @@ describe("isProtectedPath", () => {
       expect(isProtectedPath(`${runsDir}/abc/triage-summary.md`, { runsDir }).blocked).toBe(false);
     });
 
+    // Phase 2 (controller-judge-approval): _controller dir is Layer-A protected.
+    describe("_controller approval context protection", () => {
+      it("blocks reads/writes to _controller/.secret", () => {
+        expect(isProtectedPath(`${runsDir}/_controller/.secret`, { runsDir }).blocked).toBe(true);
+      });
+      it("blocks reads/writes to _controller/approvals/<token>.json", () => {
+        expect(
+          isProtectedPath(`${runsDir}/_controller/approvals/tok-abc.json`, { runsDir }).blocked,
+        ).toBe(true);
+      });
+      it("blocks access to the _controller dir itself", () => {
+        expect(isProtectedPath(`${runsDir}/_controller`, { runsDir }).blocked).toBe(true);
+      });
+      it("reason mentions operator-owned", () => {
+        const result = isProtectedPath(`${runsDir}/_controller/.secret`, { runsDir });
+        expect(result.reason).toMatch(/operator-owned/);
+      });
+    });
+
     // Phase A item 4: narrow exception for the agent's own verdict slot.
     describe("PI_ENGINEERING_VERDICT_FILE exception", () => {
       const savedEnv = process.env.PI_ENGINEERING_VERDICT_FILE;
