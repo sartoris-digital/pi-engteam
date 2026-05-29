@@ -33,6 +33,17 @@ type SecretRow = {
   notes: string | null;
 };
 
+export const RECOVERY_KDF = "scrypt-N32768-r8-p1";
+
+export type RecoveryBlob = {
+  salt: Buffer;
+  wrap: Buffer;
+  iv: Buffer;
+  tag: Buffer;
+  kdf: string;
+  enrolledAt: number;
+};
+
 export class Vault {
   private db: Database.Database;
   private masterKey: Buffer;
@@ -138,6 +149,67 @@ export class Vault {
       }
     }
     return false;
+  }
+
+  private getMeta(key: string): string | undefined {
+    const row = this.db
+      .prepare("SELECT value FROM vault_meta WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  hasRecoveryBackup(): boolean {
+    // Require the full set the reader needs, so a `true` here guarantees
+    // readRecoveryBlob() returns a blob rather than throwing on a partial one.
+    const required = ["recovery_salt", "recovery_wrap", "recovery_iv", "recovery_tag", "recovery_kdf"];
+    return required.every((k) => this.getMeta(k) !== undefined);
+  }
+
+  // Reads the passphrase-wrapped master-key backup from vault_meta. Returns null
+  // when nothing is enrolled. Throws a distinct "corrupt" error when the blob is
+  // partially written so callers don't mistake it for a wrong passphrase.
+  readRecoveryBlob(): RecoveryBlob | null {
+    const salt = this.getMeta("recovery_salt");
+    const wrap = this.getMeta("recovery_wrap");
+    const iv = this.getMeta("recovery_iv");
+    const tag = this.getMeta("recovery_tag");
+    const kdf = this.getMeta("recovery_kdf");
+    const enrolledAt = this.getMeta("recovery_enrolled_at");
+
+    const present = [salt, wrap, iv, tag, kdf].filter((v) => v !== undefined).length;
+    if (present === 0) return null;
+    if (present !== 5) {
+      throw new Error("Vault recovery blob is incomplete/corrupt — re-run /secret-setup-recovery while the vault is unlocked.");
+    }
+    try {
+      return {
+        salt: Buffer.from(salt!, "hex"),
+        wrap: Buffer.from(wrap!, "hex"),
+        iv: Buffer.from(iv!, "hex"),
+        tag: Buffer.from(tag!, "hex"),
+        kdf: kdf!,
+        enrolledAt: enrolledAt ? Number(enrolledAt) : 0,
+      };
+    } catch {
+      throw new Error("Vault recovery blob is corrupt (invalid hex) — re-run /secret-setup-recovery while the vault is unlocked.");
+    }
+  }
+
+  // Writes all rows in a single transaction so a crash can never leave a
+  // partially-written (unusable) blob behind.
+  writeRecoveryBlob(blob: RecoveryBlob): void {
+    const upsert = this.db.prepare(
+      "INSERT OR REPLACE INTO vault_meta (key, value) VALUES (?, ?)",
+    );
+    const tx = this.db.transaction((b: RecoveryBlob) => {
+      upsert.run("recovery_salt", b.salt.toString("hex"));
+      upsert.run("recovery_wrap", b.wrap.toString("hex"));
+      upsert.run("recovery_iv", b.iv.toString("hex"));
+      upsert.run("recovery_tag", b.tag.toString("hex"));
+      upsert.run("recovery_kdf", b.kdf);
+      upsert.run("recovery_enrolled_at", String(b.enrolledAt));
+    });
+    tx(blob);
   }
 
   close(): void {

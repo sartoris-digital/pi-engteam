@@ -11,7 +11,7 @@ import {
   encrypt,
   decrypt,
 } from "../../../src/secrets/Crypto.js";
-import { Vault } from "../../../src/secrets/Vault.js";
+import { Vault, RECOVERY_KDF, type RecoveryBlob } from "../../../src/secrets/Vault.js";
 
 // --- Crypto ---
 
@@ -198,5 +198,58 @@ describe("Vault — verifyDecryptable (round-3 MEDIUM #2 regression)", () => {
     const afterRow = vault.list().find((r) => r.name === "AUDITED");
     expect(afterRow!.use_count).toBe(beforeCount);
     expect(afterRow!.last_used_at).toBe(beforeUsed);
+  });
+});
+
+// --- Recovery blob ---
+
+function freshVaultPath(): string {
+  const dir = join(tmpdir(), `vault-rec-${randomBytes(6).toString("hex")}`);
+  mkdirSync(dir, { recursive: true });
+  return join(dir, "secrets.db");
+}
+
+describe("Vault — recovery blob", () => {
+  it("round-trips a recovery blob through vault_meta", () => {
+    const v = new Vault({ dbPath: freshVaultPath(), masterKey: generateMasterKey() });
+    v.init();
+    expect(v.hasRecoveryBackup()).toBe(false);
+    const blob: RecoveryBlob = {
+      salt: randomBytes(16),
+      wrap: randomBytes(48),
+      iv: randomBytes(12),
+      tag: randomBytes(16),
+      kdf: RECOVERY_KDF,
+      enrolledAt: 1700000000000,
+    };
+    v.writeRecoveryBlob(blob);
+    expect(v.hasRecoveryBackup()).toBe(true);
+    const read = v.readRecoveryBlob()!;
+    expect(read.salt.equals(blob.salt)).toBe(true);
+    expect(read.wrap.equals(blob.wrap)).toBe(true);
+    expect(read.iv.equals(blob.iv)).toBe(true);
+    expect(read.tag.equals(blob.tag)).toBe(true);
+    expect(read.kdf).toBe(RECOVERY_KDF);
+    expect(read.enrolledAt).toBe(1700000000000);
+    v.close();
+  });
+
+  it("returns null when no blob is enrolled", () => {
+    const v = new Vault({ dbPath: freshVaultPath(), masterKey: generateMasterKey() });
+    v.init();
+    expect(v.readRecoveryBlob()).toBeNull();
+    v.close();
+  });
+
+  it("throws a distinct corrupt error on a partial blob", () => {
+    const path = freshVaultPath();
+    const v = new Vault({ dbPath: path, masterKey: generateMasterKey() });
+    v.init();
+    // Write only some of the rows directly to simulate a partial/corrupt blob.
+    (v as unknown as { db: import("better-sqlite3").Database }).db
+      .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('recovery_salt', ?)")
+      .run(randomBytes(16).toString("hex"));
+    expect(() => v.readRecoveryBlob()).toThrow(/corrupt|incomplete/i);
+    v.close();
   });
 });
