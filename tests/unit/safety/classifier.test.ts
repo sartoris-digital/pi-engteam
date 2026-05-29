@@ -138,6 +138,74 @@ describe("bashLayerAGuard — _controller Bash rule (CRITICAL self-forge fix)", 
   });
 });
 
+describe("classifyCommand — write redirects", () => {
+  // DESTRUCTIVE: safe verb + write redirect to a real file
+  it("cat x > /etc/foo → destructive", () =>
+    expect(classifyCommand("cat x > /etc/foo").classification).toBe("destructive"));
+
+  it("jq . a > out.json → destructive", () =>
+    expect(classifyCommand("jq . a > out.json").classification).toBe("destructive"));
+
+  it("echo hi >> log.txt → destructive", () =>
+    expect(classifyCommand("echo hi >> log.txt").classification).toBe("destructive"));
+
+  it("sort f > sorted.txt → destructive", () =>
+    expect(classifyCommand("sort f > sorted.txt").classification).toBe("destructive"));
+
+  it("cat a > b → destructive", () =>
+    expect(classifyCommand("cat a > b").classification).toBe("destructive"));
+
+  it("date > stamp → destructive", () =>
+    expect(classifyCommand("date > stamp").classification).toBe("destructive"));
+
+  it("grep x log > matches.txt → destructive", () =>
+    expect(classifyCommand("grep x log > matches.txt").classification).toBe("destructive"));
+
+  it("tr a b < in > out → destructive (has write redirect)", () =>
+    expect(classifyCommand("tr a b < in > out").classification).toBe("destructive"));
+
+  it("cmd 2> err.log → destructive (stderr to file)", () =>
+    expect(classifyCommand("cmd 2> err.log").classification).toBe("destructive"));
+
+  it("cat x >| f → destructive (clobber redirect)", () =>
+    expect(classifyCommand("cat x >| f").classification).toBe("destructive"));
+
+  it("cat secret >| /etc/foo → destructive (clobber redirect)", () =>
+    expect(classifyCommand("cat secret >| /etc/foo").classification).toBe("destructive"));
+
+  it("cat secret >| cat → destructive (clobber target that is itself a safe verb)", () =>
+    expect(classifyCommand("cat secret >| cat").classification).toBe("destructive"));
+
+  // SAFE: no redirect, or harmless redirect targets, or input-redirect only
+  it("cat file (no redirect) → safe", () =>
+    expect(classifyCommand("cat file").classification).toBe("safe"));
+
+  it("cat file > /dev/null → safe (harmless target excluded)", () =>
+    expect(classifyCommand("cat file > /dev/null").classification).toBe("safe"));
+
+  it("cat file > /dev/null 2>&1 → safe (harmless target + fd dup)", () =>
+    expect(classifyCommand("cat file > /dev/null 2>&1").classification).toBe("safe"));
+
+  it("grep x file 2>&1 (fd dup only, no file target) → safe", () =>
+    expect(classifyCommand("grep x file 2>&1").classification).toBe("safe"));
+
+  it("cat x >| /dev/null → safe (clobber to harmless target)", () =>
+    expect(classifyCommand("cat x >| /dev/null").classification).toBe("safe"));
+
+  it("grep x file (no redirect) → safe", () =>
+    expect(classifyCommand("grep x file").classification).toBe("safe"));
+
+  it("sort f < input (input redirect only) → safe", () =>
+    expect(classifyCommand("sort f < input").classification).toBe("safe"));
+
+  it("ls -la (no redirect) → safe", () =>
+    expect(classifyCommand("ls -la").classification).toBe("safe"));
+
+  // Destructive verb unaffected
+  it("rm x → destructive (verb, not redirect rule)", () =>
+    expect(classifyCommand("rm x").classification).toBe("destructive"));
+});
+
 describe("isPlanModeAllowed", () => {
   it("Read with file_path → allowed", () =>
     expect(isPlanModeAllowed("Read", { file_path: "src/index.ts" })).toBe(true));

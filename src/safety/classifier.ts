@@ -58,6 +58,14 @@ function splitCompound(command: string): string[] {
         i++;
         continue;
       }
+      // A bare `|` that immediately follows a `>` (ignoring whitespace) is the
+      // clobber half of a `>|` redirect, NOT a pipe. Splitting there would tear
+      // the redirect from its target and let `safeverb >| file` slip through as
+      // two safe segments. Treat it as a literal so the redirect walk sees it.
+      if (ch === "|" && /(?:^|[^|>])>\s*$/.test(current)) {
+        current += ch;
+        continue;
+      }
       if (ch === "|" || ch === ";") {
         segments.push(current.trim());
         current = "";
@@ -242,13 +250,37 @@ function classifySegment(segment: string): ClassifierResult {
   }
 
   const rawParsed = shellParse(trimmed);
-  const hasRedirect = rawParsed.some(t => typeof t === "object" && t !== null && "op" in (t as object));
-  if (hasRedirect) {
-    const redirectTargets = rawParsed
-      .filter((t) => typeof t === "object" && t !== null)
-      .map((t) => ((t as Record<string, string>).file ?? ""));
-    const toFile = redirectTargets.some(f => f && !f.match(/^[012]$/));
-    if (toFile) return { classification: "destructive", reason: "redirect to file" };
+  // shell-quote emits a redirect operator as { op: ">" } with the target as the
+  // NEXT token (the old code read a non-existent `.file` field, so write
+  // redirects were never detected). Walk the tokens: a WRITE redirect whose
+  // target is a real file — not a fd dup (2>&1) and not /dev/null & friends —
+  // is destructive. Writing a file via redirect must be gated like the Write tool.
+  const HARMLESS_REDIRECT_TARGETS = new Set([
+    "/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty",
+  ]);
+  for (let i = 0; i < rawParsed.length; i++) {
+    const tok = rawParsed[i];
+    if (typeof tok !== "object" || tok === null || !("op" in (tok as object))) continue;
+    const op = String((tok as { op: string }).op);
+    // Only WRITE redirects. Matches: > >> >| &> &>> and fd-numbered forms like 2> 2>>.
+    // Excludes input redirects (< <<) and fd-dup ops (>& <&), which don't write a file.
+    const isWriteRedirect = /^(\d*>>?|>\||&>>?)$/.test(op);
+    if (!isWriteRedirect) continue;
+    // Find the target token. shell-quote splits ">|" (clobber) into
+    // { op:">" }{ op:"|" }, so skip an intervening { op:"|" } to reach the file.
+    let target: unknown = undefined;
+    for (let j = i + 1; j < rawParsed.length; j++) {
+      const t = rawParsed[j];
+      if (typeof t === "string") { target = t; break; }
+      if (typeof t === "object" && t !== null && "op" in (t as object) && String((t as { op: string }).op) === "|") {
+        continue; // part of >| clobber redirect
+      }
+      break; // any other op (or end) → this redirect has no file target
+    }
+    if (typeof target !== "string") continue;
+    if (/^&?\d+$/.test(target)) continue;             // fd dup target (e.g. >&1)
+    if (HARMLESS_REDIRECT_TARGETS.has(target)) continue;
+    return { classification: "destructive", reason: "redirect to file" };
   }
 
   if (SAFE_VERBS.has(verb)) return { classification: "safe" };
