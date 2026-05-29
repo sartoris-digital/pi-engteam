@@ -1,11 +1,14 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { stat, readFile, readdir } from "fs/promises";
+import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { loadTeamsConfig } from "../safety/teams-config.js";
 import { DEFAULT_DOMAINS } from "../safety/default-domains.js";
+import { diagnoseKeyring, createKeyringBackend, KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER } from "../secrets/Keyring.js";
+import { Vault } from "../secrets/Vault.js";
 
-type CheckResult = { name: string; ok: boolean; message: string };
+type CheckResult = { name: string; ok: boolean; message: string; severity?: "warn" };
 
 async function checkExists(path: string, label: string): Promise<CheckResult> {
   try {
@@ -151,17 +154,59 @@ export function registerDoctorCommand(pi: ExtensionAPI): void {
           : `No policy for: ${missing.join(", ")}`,
       });
 
-      const passed = checks.filter(c => c.ok).length;
-      const failed = checks.filter(c => !c.ok).length;
+      // --- Vault & recovery checks ---
+      const VAULT_DB = join(home, ".pi", "engineering-team", "secrets.db");
+      const diag = diagnoseKeyring();
+      if (diag.status === "load-failed") {
+        checks.push({ name: "Keyring addon", ok: false, message: `Failed to load (${diag.detail ?? "ABI mismatch"}). Rebuild: pnpm run engineering:install` });
+      } else if (diag.status === "locked") {
+        checks.push({ name: "Keyring addon", ok: true, severity: "warn", message: "Keychain locked/denied — unlock your login keychain" });
+      } else if (diag.status === "ok") {
+        checks.push({ name: "Keyring addon", ok: true, message: "Loads OK" });
+      } else {
+        checks.push({ name: "Keyring addon", ok: true, severity: "warn", message: `Unavailable (${diag.detail ?? "unknown"})` });
+      }
+
+      if (existsSync(VAULT_DB)) {
+        if (diag.status === "ok") {
+          const backend = createKeyringBackend();
+          const hasKeychainKey = backend?.get(KEYRING_SERVICE, KEYRING_ACCOUNT_MASTER).kind === "value";
+          if (!hasKeychainKey) {
+            checks.push({ name: "Keychain master key", ok: true, severity: "warn", message: "Vault exists but no key in keychain — run /secret-reconnect" });
+          }
+        }
+        let vault: Vault | undefined;
+        try {
+          vault = new Vault({ dbPath: VAULT_DB, masterKey: Buffer.alloc(32) });
+          vault.init();
+          const enrolled = vault.hasRecoveryBackup();
+          checks.push({
+            name: "Vault recovery backup",
+            ok: true,
+            severity: enrolled ? undefined : "warn",
+            message: enrolled ? "Recovery passphrase enrolled" : "Not enrolled — run /secret-setup-recovery",
+          });
+        } catch (err) {
+          checks.push({ name: "Vault openable", ok: false, message: `Cannot open ${VAULT_DB}: ${err instanceof Error ? err.message : String(err)}` });
+        } finally {
+          vault?.close();
+        }
+      }
+
+      const passed = checks.filter(c => c.ok && c.severity !== "warn").length;
+      const warned = checks.filter(c => c.severity === "warn").length;
+      const failed = checks.filter(c => !c.ok && c.severity !== "warn").length;
 
       const output = [
-        `pi-engineering doctor — ${passed} passed, ${failed} issues`,
+        `pi-engineering doctor — ${passed} passed, ${warned} warnings, ${failed} issues`,
         "",
-        ...checks.map(c => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.message}`),
+        ...checks.map(c => `${c.severity === "warn" ? "⚠" : c.ok ? "✓" : "✗"} ${c.name}: ${c.message}`),
         "",
         failed > 0
           ? "Run 'pnpm install:extension' to fix missing files."
-          : "All checks passed.",
+          : warned > 0
+            ? "Checks passed with warnings."
+            : "All checks passed.",
       ].join("\n");
 
       ctx.ui.notify(output, "info");
