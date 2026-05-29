@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { classifyCommand } from "../../../src/safety/classifier.js";
 import { isPlanModeAllowed } from "../../../src/safety/PlanMode.js";
+import { bashLayerAGuard } from "../../../src/safety/SafetyGuard.js";
 import { SAFE_COMMANDS, DESTRUCTIVE_COMMANDS, BLOCKED_COMMANDS } from "../../helpers/fixtures.js";
 
 describe("classifyCommand — fixture arrays", () => {
@@ -94,6 +95,47 @@ describe("classifyCommand — npm/pnpm", () => {
 
   it("npm install lodash → destructive", () =>
     expect(classifyCommand("npm install lodash").classification).toBe("destructive"));
+});
+
+describe("bashLayerAGuard — _controller Bash rule (CRITICAL self-forge fix)", () => {
+  it("blocks: cat /x/runs/_controller/.secret", () => {
+    const result = bashLayerAGuard("cat /x/runs/_controller/.secret");
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.layer).toBe("A");
+    expect(result!.reason).toMatch(/_controller/);
+  });
+
+  it("blocks: echo y > /x/runs/_controller/approvals/t.json", () => {
+    const result = bashLayerAGuard("echo y > /x/runs/_controller/approvals/t.json");
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.layer).toBe("A");
+  });
+
+  it("blocks: cat z > runs/_controller/approvals/a.json", () => {
+    const result = bashLayerAGuard("cat z > runs/_controller/approvals/a.json");
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.layer).toBe("A");
+  });
+
+  it("blocks quote-concat bypass: cat runs/_cont\"roller\"/.secret", () => {
+    // After dequoting: cat runs/_controller/.secret
+    const result = bashLayerAGuard('cat runs/_cont"roller"/.secret');
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.layer).toBe("A");
+  });
+
+  it("does NOT block a benign command not referencing _controller", () => {
+    const result = bashLayerAGuard("ls runs/");
+    // Should return undefined (not blocked by this rule); other rules may or may not match
+    // The _controller rule specifically must not trigger
+    if (result) {
+      expect(result.reason).not.toMatch(/_controller/);
+    }
+  });
 });
 
 describe("isPlanModeAllowed", () => {

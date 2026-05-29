@@ -177,6 +177,15 @@ export function isProtectedPath(filePath: string, opts?: { runsDir?: string }): 
       (runsDirAbs && (cand === runsDirAbs || cand.startsWith(runsDirAbs + "/"))) ||
       /(?:\/runs\/|\/engineering-team\/runs\/)/i.test(cand);
     if (runUnderRuns) {
+      // SECURITY: active-run.txt is the pointer that findValidApproval uses to
+      // locate the current run's approval context. Letting an agent overwrite
+      // it via Write/Edit could redirect the approval lookup to an attacker-
+      // controlled run dir. Block tool writes; Bash deletion is already
+      // destructive/Layer-C-gated.
+      if (/(^|\/)active-run\.txt$/i.test(cand)) {
+        return { blocked: true, reason: "active-run.txt is orchestrator-owned; agents must not modify it." };
+      }
+
       // Phase 2 (controller-judge-approval): block agent access to the
       // _controller pseudo-run dir so no agent can cat the HMAC secret or
       // write a forged approval token via Write/Edit/Bash-redirect.

@@ -103,10 +103,13 @@ async function findValidApproval(
       const activeFile = join(runsDir, "active-run.txt");
       try {
         runId = (await readFile(activeFile, "utf8")).trim();
-      } catch {
-        // No active run and no subprocess env — fall back to the _controller
-        // pseudo-run context so tokens minted by /approve are honored.
-        runId = CONTROLLER_RUN_ID;
+        if (!runId) runId = CONTROLLER_RUN_ID; // empty file → controller context
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+          runId = CONTROLLER_RUN_ID; // no active run → operator-approval context
+        } else {
+          return false; // unreadable active-run.txt → fail closed
+        }
       }
     }
     const secretFile = join(runsDir, runId, ".secret");
@@ -290,8 +293,11 @@ async function applyLayerD(
  * registerHardBlockers (subprocess mode) and registerSafetyGuard
  * (controller mode). Returns a block descriptor when the command should
  * be hard-blocked, or undefined to allow downstream layers to evaluate.
+ *
+ * Exported for unit testing only — callers should use registerHardBlockers
+ * or registerSafetyGuard rather than invoking this directly.
  */
-function bashLayerAGuard(command: string): { block: true; reason: string; layer: string } | undefined {
+export function bashLayerAGuard(command: string): { block: true; reason: string; layer: string } | undefined {
   const result = classifyCommand(command);
   if (result.classification === "blocked") {
     return {
@@ -314,6 +320,18 @@ function bashLayerAGuard(command: string): { block: true; reason: string; layer:
     return {
       block: true,
       reason: "[Layer A] Bash command mentions tasks.json; only the TaskUpdate tool may modify run task ledgers.",
+      layer: "A",
+    };
+  }
+  // SECURITY: the _controller approval context (.secret + approval tokens) is the
+  // HMAC trust root for operator approvals in the controller session. Layer A only
+  // path-gates the Read/Write/Edit tools, so without this a Bash command could
+  // `cat` the secret or write a forged token and bypass the Layer-C Judge gate.
+  // Block any Bash that references _controller (raw or quote-concat bypass).
+  if (/(^|[\/\s'"`])_controller([\/\s'"`]|$)/.test(command) || /(^|[\/\s'"`])_controller([\/\s'"`]|$)/.test(dequoted)) {
+    return {
+      block: true,
+      reason: "[Layer A] Bash command references the _controller approval context; its secret and tokens are off-limits to commands. Use /approve to authorize a destructive op.",
       layer: "A",
     };
   }
@@ -483,6 +501,11 @@ export function registerSafetyGuard(
           }
           // operator approved inline — allow this call (fall through)
           console.warn(`[pi-engineering] Layer C: operator approved destructive command inline — ${detail}`);
+          config.domainLock?.emitEvent({
+            category: "safety",
+            type: "layerC_operator_approval",
+            payload: { op: "bash", detail, approved: true },
+          });
         }
       }
     }
@@ -531,6 +554,11 @@ export function registerSafetyGuard(
           }
           // operator approved inline — allow this call (fall through)
           console.warn(`[pi-engineering] Layer C: operator approved ${toolName} on active verifier-script inline — ${filePath}`);
+          config.domainLock?.emitEvent({
+            category: "safety",
+            type: "layerC_operator_approval",
+            payload: { op: "verifier-script-update", detail: filePath, approved: true },
+          });
         }
       } else {
         const argsHash = hashArgs({ op: toolName.toLowerCase(), command: filePath });
@@ -554,6 +582,11 @@ export function registerSafetyGuard(
           }
           // operator approved inline — allow this call (fall through)
           console.warn(`[pi-engineering] Layer C: operator approved ${toolName} inline — ${filePath}`);
+          config.domainLock?.emitEvent({
+            category: "safety",
+            type: "layerC_operator_approval",
+            payload: { op: toolName.toLowerCase(), detail: filePath, approved: true },
+          });
         }
       }
     }

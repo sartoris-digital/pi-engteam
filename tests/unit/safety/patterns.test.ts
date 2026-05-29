@@ -74,6 +74,22 @@ describe("isProtectedPath", () => {
       expect(isProtectedPath(`${runsDir}/abc/triage-summary.md`, { runsDir }).blocked).toBe(false);
     });
 
+    // Change 3 (defense-in-depth): active-run.txt is orchestrator-owned.
+    describe("active-run.txt protection", () => {
+      it("blocks Write/Edit to active-run.txt under runsDir", () => {
+        expect(isProtectedPath(`${runsDir}/active-run.txt`, { runsDir }).blocked).toBe(true);
+      });
+      it("reason mentions orchestrator-owned", () => {
+        const result = isProtectedPath(`${runsDir}/active-run.txt`, { runsDir });
+        expect(result.reason).toMatch(/orchestrator-owned/);
+      });
+      it("blocks active-run.txt matched via /runs/ marker (no runsDir opt)", () => {
+        expect(
+          isProtectedPath("/home/user/.pi/engineering-team/runs/active-run.txt").blocked,
+        ).toBe(true);
+      });
+    });
+
     // Phase 2 (controller-judge-approval): _controller dir is Layer-A protected.
     describe("_controller approval context protection", () => {
       it("blocks reads/writes to _controller/.secret", () => {
