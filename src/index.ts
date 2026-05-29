@@ -75,6 +75,8 @@ import { registerSecretRotateCommand } from "./commands/secret-rotate.js";
 import { registerSecretExportCommand } from "./commands/secret-export.js";
 import { registerSecretImportCommand } from "./commands/secret-import.js";
 import { registerSecretScrubCommand } from "./commands/secret-scrub.js";
+import { registerSecretSetupRecoveryCommand } from "./commands/secret-setup-recovery.js";
+import { registerSecretReconnectCommand } from "./commands/secret-reconnect.js";
 import { RateLimitGuard } from "./rateLimit/RateLimitGuard.js";
 import { loadRateLimitConfig } from "./rateLimit/config.js";
 
@@ -719,6 +721,23 @@ export default async function (pi: ExtensionAPI) {
     const masterKey = await masterMgr.ensureInitialized();
     const v = new Vault({ dbPath: VAULT_PATH, masterKey });
     v.init();
+    // Nag: a keychain-only vault with no recovery backup is one keychain loss
+    // away from being unrecoverable. Warn when we unlocked via the keychain and
+    // no passphrase backup is enrolled. We nag (rather than launching an
+    // interactive prompt here) because getVault is lazy and can be triggered by
+    // a background secret-store mid-run — blocking it on a prompt would stall the
+    // run. New vaults get a stronger call-to-action than returning ones.
+    if (
+      (masterMgr.unlockSource === "keychain" || masterMgr.unlockSource === "first-run-keychain") &&
+      !v.hasRecoveryBackup()
+    ) {
+      const firstRun = masterMgr.unlockSource === "first-run-keychain";
+      console.warn(
+        firstRun
+          ? "[pi-engineering] New vault created. Set a recovery passphrase NOW with /secret-setup-recovery — without it, losing this machine's keychain means losing every stored secret."
+          : "[pi-engineering] No vault recovery passphrase enrolled — if this machine's keychain is lost you cannot recover stored secrets. Run /secret-setup-recovery.",
+      );
+    }
     cachedVault = v;
     return v;
   }
@@ -1092,6 +1111,8 @@ export default async function (pi: ExtensionAPI) {
   registerSecretExportCommand(pi);
   registerSecretImportCommand(pi);
   registerSecretScrubCommand(pi);
+  registerSecretSetupRecoveryCommand(pi);
+  registerSecretReconnectCommand(pi);
 
   try {
     const watcherVault = await getVault();
