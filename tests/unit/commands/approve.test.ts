@@ -13,7 +13,9 @@ vi.mock("../../../src/safety/controllerApproval.js", () => ({
   recordPendingControllerApproval: vi.fn(),
   CONTROLLER_RUN_ID: "_controller",
   controllerDir: (runsDir: string) => `${runsDir}/_controller`,
-  ensureControllerSecret: vi.fn(),
+  ensureControllerApprovalsDir: vi.fn(),
+  getControllerSecret: vi.fn().mockReturnValue("a".repeat(64)),
+  __resetControllerSecretForTest: vi.fn(),
 }));
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";

@@ -5,7 +5,8 @@
 // behaviour rather than mocking. Each test suite gets its own isolated dir.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, rm, readFile } from "fs/promises";
+import { mkdtemp, rm, readFile, writeFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "node:crypto";
@@ -13,7 +14,9 @@ import { randomUUID } from "node:crypto";
 import {
   CONTROLLER_RUN_ID,
   controllerDir,
-  ensureControllerSecret,
+  ensureControllerApprovalsDir,
+  getControllerSecret,
+  __resetControllerSecretForTest,
   mintControllerToken,
   recordPendingControllerApproval,
   readPendingControllerApproval,
@@ -44,31 +47,78 @@ describe("CONTROLLER_RUN_ID", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ensureControllerSecret
+// getControllerSecret / __resetControllerSecretForTest — in-memory singleton
 // ---------------------------------------------------------------------------
 
-describe("ensureControllerSecret", () => {
+describe("getControllerSecret", () => {
+  beforeEach(() => {
+    __resetControllerSecretForTest();
+  });
+
+  it("returns a stable 64-hex string within the process", () => {
+    const secret = getControllerSecret();
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("returns the SAME value on repeated calls without reset", () => {
+    const first = getControllerSecret();
+    const second = getControllerSecret();
+    expect(second).toBe(first);
+  });
+
+  it("returns a DIFFERENT value after __resetControllerSecretForTest", () => {
+    const first = getControllerSecret();
+    __resetControllerSecretForTest();
+    const second = getControllerSecret();
+    expect(second).not.toBe(first);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureControllerApprovalsDir
+// ---------------------------------------------------------------------------
+
+describe("ensureControllerApprovalsDir", () => {
   let runsDir: string;
 
   beforeEach(async () => {
     runsDir = await makeTmpRunsDir();
+    __resetControllerSecretForTest();
   });
 
-  it("creates a 64-hex secret on first call and an approvals dir", async () => {
-    const secret = await ensureControllerSecret(runsDir);
-    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+  it("creates the approvals dir and does NOT write a .secret file", async () => {
+    await ensureControllerApprovalsDir(runsDir);
 
-    // approvals dir must exist
     const { stat } = await import("fs/promises");
     const approvalsDir = join(controllerDir(runsDir), "approvals");
     const s = await stat(approvalsDir);
     expect(s.isDirectory()).toBe(true);
+
+    const secretPath = join(controllerDir(runsDir), ".secret");
+    expect(existsSync(secretPath)).toBe(false);
   });
 
-  it("returns the SAME secret on subsequent calls", async () => {
-    const first = await ensureControllerSecret(runsDir);
-    const second = await ensureControllerSecret(runsDir);
-    expect(second).toBe(first);
+  it("removes a pre-existing stale .secret file", async () => {
+    // Simulate stale on-disk secret from old design.
+    const dir = controllerDir(runsDir);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const staleSecretPath = join(dir, ".secret");
+    await writeFile(staleSecretPath, "stalecontent", { mode: 0o600 });
+    expect(existsSync(staleSecretPath)).toBe(true);
+
+    await ensureControllerApprovalsDir(runsDir);
+
+    expect(existsSync(staleSecretPath)).toBe(false);
+    // approvals dir must also exist
+    const { stat } = await import("fs/promises");
+    const approvalsDir = join(dir, "approvals");
+    const s = await stat(approvalsDir);
+    expect(s.isDirectory()).toBe(true);
+  });
+
+  it("is idempotent (calling twice does not error)", async () => {
+    await expect(ensureControllerApprovalsDir(runsDir)).resolves.toBeUndefined();
+    await expect(ensureControllerApprovalsDir(runsDir)).resolves.toBeUndefined();
   });
 });
 
@@ -81,6 +131,7 @@ describe("mintControllerToken", () => {
 
   beforeEach(async () => {
     runsDir = await makeTmpRunsDir();
+    __resetControllerSecretForTest();
   });
 
   it("rejects an op not in ALLOWED_OPS", async () => {
@@ -115,9 +166,13 @@ describe("mintControllerToken", () => {
     expect(raw.consumed).toBe(false);
     expect(typeof raw.grantedAt).toBe("string");
 
-    // verifyToken must accept it
-    const secret = await ensureControllerSecret(runsDir);
+    // verifyToken must accept it using the in-memory secret
+    const secret = getControllerSecret();
     expect(verifyToken(secret, raw)).toBe(true);
+
+    // NO .secret file must exist on disk — the secret is in-memory only
+    const secretPath = join(controllerDir(runsDir), ".secret");
+    expect(existsSync(secretPath)).toBe(false);
   });
 
   it("minted token has runId === _controller", async () => {

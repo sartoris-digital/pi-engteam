@@ -13,7 +13,7 @@ import { substituteRunIdInPolicy } from "./teams-config.js";
 import { loadSafetyConfigStrict } from "../config.js";
 import type { DomainPolicyMap } from "./default-domains.js";
 import { inlineOperatorApproval } from "../ui/ConfirmInput.js";
-import { CONTROLLER_RUN_ID, recordPendingControllerApproval } from "./controllerApproval.js";
+import { CONTROLLER_RUN_ID, getControllerSecret, recordPendingControllerApproval } from "./controllerApproval.js";
 
 // Pi 0.67 emits ToolCallEvent with `toolName` (lowercase: "bash"|"read"|"edit"|
 // "write"|"grep"|"find"|"ls"|<custom>) and `input` (typed input object). All
@@ -112,9 +112,14 @@ async function findValidApproval(
         }
       }
     }
-    const secretFile = join(runsDir, runId, ".secret");
     const approvalDir = join(runsDir, runId, "approvals");
-    const secret = (await readFile(secretFile, "utf8")).trim();
+    let secret: string;
+    if (runId === CONTROLLER_RUN_ID) {
+      secret = getControllerSecret(); // in-memory; never on disk
+    } else {
+      const secretFile = join(runsDir, runId, ".secret");
+      secret = (await readFile(secretFile, "utf8")).trim();
+    }
 
     // Phase 7: read current pauseEpoch so we can reject tokens minted
     // under a different (pre-emergency-stop) epoch even if their

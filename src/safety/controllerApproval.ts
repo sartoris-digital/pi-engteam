@@ -10,13 +10,15 @@
 // Security notes:
 //   - The _controller dir is Layer-A blocked in paths.ts so agents can't
 //     cat the secret or write forged tokens via Write/Edit.
-//   - bash-redirection forge (`bash cmd > _controller/.secret`) is a
-//     pre-existing residual risk for all run secrets; out of scope here.
+//   - The controller HMAC secret is held ONLY in process memory (never
+//     written to disk), so the agent's Bash cannot read it via a glob and
+//     forge an operator-approval token.
 //   - Tokens are HMAC-signed with the same signToken machinery as GrantApproval.
 //   - mintControllerToken validates op against ALLOWED_OPS before writing.
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, unlink } from "fs/promises";
+import { existsSync } from "fs";
 import { join } from "path";
 import { ALLOWED_OPS, generateRunSecret, signToken } from "./approvals.js";
 import { loadSafetyConfigStrict } from "../config.js";
@@ -29,24 +31,51 @@ export function controllerDir(runsDir: string): string {
   return join(runsDir, CONTROLLER_RUN_ID);
 }
 
+// ---------------------------------------------------------------------------
+// Ephemeral in-memory HMAC secret — never written to disk.
+// ---------------------------------------------------------------------------
+
 /**
- * Read the controller secret from disk; create it (with a fresh
- * generateRunSecret()) if it doesn't exist yet. Creates the _controller dir
- * (0o700) and approvals subdir (0o700) on first call.
+ * Ephemeral per-process HMAC secret for controller operator-approval tokens.
+ * Held only in memory — never written to disk — so the agent's Bash cannot
+ * read it (closing the _controller/.secret glob-forge). Lazily generated on
+ * first use; shared by mintControllerToken and findValidApproval within the
+ * single controller process. Not persisted: tokens are valid only for the
+ * current session, which suffices for the /approve → re-run flow.
  */
-export async function ensureControllerSecret(runsDir: string): Promise<string> {
+let controllerSecret: string | null = null;
+
+export function getControllerSecret(): string {
+  if (!controllerSecret) controllerSecret = generateRunSecret();
+  return controllerSecret;
+}
+
+/** Test-only reset so unit tests don't leak the singleton across cases. */
+export function __resetControllerSecretForTest(): void {
+  controllerSecret = null;
+}
+
+/**
+ * Ensure the _controller dir (0o700) and its approvals subdir (0o700) exist.
+ * On first call, best-effort removes any stale .secret file left by the
+ * previous on-disk design so it can't mislead anything. NO .secret is ever
+ * written by this function.
+ */
+export async function ensureControllerApprovalsDir(runsDir: string): Promise<void> {
   const dir = controllerDir(runsDir);
-  const secretPath = join(dir, ".secret");
-  try {
-    return (await readFile(secretPath, "utf8")).trim();
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    // First call: scaffold the dir tree and generate a fresh secret.
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await mkdir(join(dir, "approvals"), { recursive: true, mode: 0o700 });
-    const secret = generateRunSecret();
-    await writeFile(secretPath, secret, { mode: 0o600 });
-    return secret;
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await mkdir(join(dir, "approvals"), { recursive: true, mode: 0o700 });
+  // Remove any stale .secret left by the old on-disk design.
+  const staleSecret = join(dir, ".secret");
+  if (existsSync(staleSecret)) {
+    try {
+      await unlink(staleSecret);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        // Non-fatal: log but don't block normal operation.
+        // Stale file remains but in-memory secret is still never exposed.
+      }
+    }
   }
 }
 
@@ -79,7 +108,8 @@ export async function mintControllerToken(
     throw new Error(`mintControllerToken: op "${op}" is not in ALLOWED_OPS.`);
   }
 
-  const secret = await ensureControllerSecret(runsDir);
+  await ensureControllerApprovalsDir(runsDir);
+  const secret = getControllerSecret();
 
   // Load pauseEpoch + tokenTtlSeconds ceiling from safety config.
   // loadSafetyConfigStrict throws on parse error (fail-closed); ENOENT → defaults.
@@ -117,7 +147,6 @@ export async function mintControllerToken(
   };
 
   const approvalsDir = join(controllerDir(runsDir), "approvals");
-  await mkdir(approvalsDir, { recursive: true, mode: 0o700 });
   await writeFile(
     join(approvalsDir, `${tokenId}.json`),
     JSON.stringify(token, null, 2),
