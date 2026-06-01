@@ -84,6 +84,47 @@ async function loadRunPlanMode(runsDir: string): Promise<boolean> {
   }
 }
 
+/**
+ * Is an engineering-team run currently in flight?
+ *
+ * The controller's Layers B and C only arbitrate while a run is active. When
+ * the controller is idle, its `tool_call` hook is firing for the bare operator
+ * session — or, critically, for OTHER extensions that issue Bash/Write/Edit and
+ * have no knowledge of the Judge approval token system. Those callers must NOT
+ * be gated: with no token and no interactive TUI they would be hard-blocked
+ * with no way to approve. Layers A (catastrophic hard-blocks) and D (self-gates
+ * on PI_ENGINEERING_AGENT_NAME) stay unconditional; only B/C become run-scoped.
+ *
+ * Resolution mirrors loadRunPlanMode: prefer PI_ENGINEERING_RUN_ID, fall back to
+ * active-run.txt. Fail-closed (return true → keep the gate on) when state is
+ * present-but-unreadable so a torn/locked file cannot silently disable the gate
+ * mid-run; fail-open (return false) only on genuine ENOENT (no run).
+ */
+async function hasActiveRun(runsDir: string): Promise<boolean> {
+  const envRunId = process.env["PI_ENGINEERING_RUN_ID"];
+  let runId: string;
+  if (envRunId) {
+    runId = envRunId;
+  } else {
+    const activeFile = join(runsDir, "active-run.txt");
+    try {
+      runId = (await readFile(activeFile, "utf8")).trim();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      return true; // present but unreadable → fail closed
+    }
+  }
+  if (!runId) return false;
+  const stateFile = join(runsDir, runId, "state.json");
+  try {
+    const state = JSON.parse(await readFile(stateFile, "utf8"));
+    return state.status === "running" || state.status === "waiting_user";
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return true; // existing-but-corrupt state.json → fail closed
+  }
+}
+
 async function findValidApproval(
   runsDir: string,
   op: string,
@@ -467,6 +508,20 @@ export function registerSafetyGuard(
           }
         }
       }
+    }
+
+    // --- Run-scoping gate: Layers B & C only govern active runs ---
+    // The controller's tool_call hook is process-global: it fires for the bare
+    // operator session and for OTHER extensions' tool calls too. Those callers
+    // never see the Judge token system and, lacking a TUI, cannot satisfy an
+    // inline approval — so when no engineering-team run is in flight we must not
+    // gate them. Skip straight to Layer D (which self-gates on agent name and is
+    // therefore inert for non-engineering callers). Layer A already ran above.
+    if (!(await hasActiveRun(config.runsDir))) {
+      if (config.domainLock) {
+        return applyLayerD(toolName, toolInput, config.domainLock);
+      }
+      return undefined;
     }
 
     // --- Layer B: Plan-mode gate ---
