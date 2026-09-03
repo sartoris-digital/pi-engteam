@@ -21,3 +21,5 @@ export type { BashPolicy, DomainPolicy, PolicyAgentEntry, PolicyFile } from "./l
 export { EMPTY_POLICY, domainBlock, globToRegExp, loadDomainPolicy, matchesRoot, parsePolicyFile, policyForAgent, resolvePolicy, resolveRoot } from "./layer-d.js";
 export type { GuardDeps, GuardHost, GuardStats, InstalledGuard, ToolCallBlock, ToolCallEventLike } from "./guard.js";
 export { evaluateToolCall, installControllerHardBlockers, installSafetyGuard, readRunSecretSync } from "./guard.js";
+export type { DispatchCallback, DispatchDecision, DispatchOnceResult, RegisterApprovalDispatcherOpts } from "./dispatch.js";
+export { dispatchOnce, localDestructiveOnly, registerApprovalDispatcher } from "./dispatch.js";

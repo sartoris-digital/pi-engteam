@@ -46,8 +46,8 @@ export function createRequestApprovalTool(opts: RequestApprovalOptions): ToolDef
     name: REQUEST_APPROVAL_TOOL_NAME,
     label: "Request approval",
     description:
-      'Ask the operator for a once-scope approval of a destructive command. Returns a request id; afterwards call VerdictEmit with verdict "NEEDS_MORE" and flags ["approval-needed"]. The step resumes once the operator grants the request.',
-    promptSnippet: "Request operator approval for a destructive command, then VerdictEmit NEEDS_MORE with flags approval-needed",
+      'Ask the operator for a once-scope approval of a destructive command. The host judge dispatcher may auto-grant local-destructive ops (rm, mv, chmod, git stash in the worktree); git push/commit, gh/az/jira, and anything that opens a socket always need /factory grant. Returns a request id; afterwards call VerdictEmit with verdict "NEEDS_MORE" and flags ["approval-needed"]. The step resumes once the request is granted.',
+    promptSnippet: "Request approval for a destructive command (judge may auto-grant local-destructive rm/mv/chmod/git stash), then VerdictEmit NEEDS_MORE with flags approval-needed",
     parameters: RequestApprovalParams,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
