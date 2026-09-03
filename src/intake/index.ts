@@ -35,3 +35,8 @@ export type {
   ReproSteps,
   TicketKind,
 } from "./brief-schema.js";
+export { acAgreement, mergeSamples } from "./merge-samples.js";
+export { computeConfidence, computeTier } from "./confidence.js";
+export type { ConfidenceOpts, ConfidenceResult } from "./confidence.js";
+export { evaluateDoR, stripTemplateBoilerplate } from "./dor.js";
+export type { DorFail, DorFailure, DorOk, DorOpts, DorResult } from "./dor.js";
