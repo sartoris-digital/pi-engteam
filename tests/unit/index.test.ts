@@ -6,6 +6,7 @@ import { join } from "node:path";
 import activate_default, { activate, selectMode } from "../../src/index.js";
 import { registerController } from "../../src/controller/index.js";
 import { FakePi } from "../helpers/fake-pi.js";
+import { withTmpHome } from "../helpers/tmp-home.js";
 
 describe("extension entry", () => {
   let root: string;
@@ -66,15 +67,20 @@ describe("extension entry", () => {
 
     it("registers no worker tools in controller mode", async () => {
       const fake = new FakePi();
-      expect(await activate(fake.asPi(), { HOME: root })).toBe("controller");
+      await withTmpHome(async () => {
+        expect(await activate(fake.asPi(), { HOME: root })).toBe("controller");
+      });
       expect(fake.hasTool("VerdictEmit")).toBe(false);
       expect(fake.hasTool("RequestApproval")).toBe(false);
     });
 
-    it("exports the extension factory as default and the controller stub is callable", () => {
+    it("exports the extension factory as default and the controller is callable", async () => {
       expect(typeof activate_default).toBe("function");
       const fake = new FakePi();
-      expect(() => registerController(fake.asPi())).not.toThrow();
+      await withTmpHome(async () => {
+        await registerController(fake.asPi());
+      });
+      expect(fake.commands.has("factory")).toBe(true);
     });
   });
 });

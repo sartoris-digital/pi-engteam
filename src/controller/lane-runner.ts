@@ -18,7 +18,7 @@ import { runSetupCommand } from "../workspace/setup.js";
 import { sanitizeSlug } from "../workspace/git-provider.js";
 import type { WorkspaceProvider } from "../workspace/types.js";
 import { writeTicketMarkdown } from "./artifacts.js";
-import { makeStageHooks, policyShaOf } from "./stage-hooks.js";
+import { makeStageHooks, pinWorkspaceArtifacts, policyShaOf } from "./stage-hooks.js";
 
 export interface FactoryDeps {
   home: string;
@@ -139,6 +139,9 @@ export async function runTicket(
     cfgSha: cfg.configSha,
     budget: lane.budget,
   });
+
+  pinWorkspaceArtifacts(state, ws);
+  await saveRunState(deps.runsDir, state);
 
   const dir = join(deps.runsDir, state.runId);
   await writeTicketMarkdown(dir, ticket.body, state.nonce);

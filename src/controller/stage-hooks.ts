@@ -11,9 +11,38 @@ import type { StageDef } from "../lanes/schema.js";
 import { writeStepPrompt } from "../runtime/prompt.js";
 import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import { makeSteerStep, type SteerHooks } from "../steer/stage.js";
+import type { RunState } from "../engine/types.js";
 import type { Workspace } from "../workspace/types.js";
 import { ensureGeneratedMarker } from "./artifacts.js";
 import { allGatesOk, evaluateGates } from "./predicates.js";
+
+const ART_CONFIG = "workspace.configSha";
+const ART_COMMON = "workspace.gitCommonDir";
+const ART_REMOTE = "workspace.remote";
+const ART_REMOTE_URL = "workspace.remoteUrl";
+
+export function workspaceFromState(state: RunState): Workspace {
+  const remote = state.artifacts[ART_REMOTE];
+  const remoteUrl = state.artifacts[ART_REMOTE_URL];
+  return {
+    provider: "git",
+    path: state.workspaceDir,
+    branch: state.branch,
+    baseSha: state.baseSha,
+    repoRoot: state.mainCheckout,
+    gitCommonDir: state.artifacts[ART_COMMON] ?? join(state.mainCheckout, ".git"),
+    configSha: state.artifacts[ART_CONFIG] ?? state.configSha,
+    ...(remote === undefined ? {} : { remote }),
+    ...(remoteUrl === undefined ? {} : { remoteUrl }),
+  };
+}
+
+export function pinWorkspaceArtifacts(state: RunState, ws: Workspace): void {
+  state.artifacts[ART_CONFIG] = ws.configSha;
+  state.artifacts[ART_COMMON] = ws.gitCommonDir;
+  if (ws.remote !== undefined) state.artifacts[ART_REMOTE] = ws.remote;
+  if (ws.remoteUrl !== undefined) state.artifacts[ART_REMOTE_URL] = ws.remoteUrl;
+}
 
 export interface StageHookDeps {
   executor: WorkerExecutor;
@@ -27,15 +56,7 @@ export interface StageHookDeps {
 }
 
 function ws(ctx: StepContext): Workspace {
-  return {
-    provider: "git",
-    path: ctx.workspaceDir,
-    branch: ctx.state.branch,
-    baseSha: ctx.state.baseSha,
-    repoRoot: ctx.state.mainCheckout,
-    gitCommonDir: join(ctx.state.mainCheckout, ".git"),
-    configSha: ctx.state.configSha,
-  };
+  return workspaceFromState(ctx.state);
 }
 
 export function makeStageHooks(deps: StageHookDeps): StageHooks {

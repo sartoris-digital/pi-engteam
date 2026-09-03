@@ -23,11 +23,11 @@ export function selectMode(env: NodeJS.ProcessEnv): ExtensionMode {
   return env.PI_SDLC_AGENT_MODE === "1" && carriesRunContext(env) ? "worker" : "controller";
 }
 
-/** Async so Pi can await the factory (D20); registerController becomes async in Task 9.12. */
+/** Async so Pi can await the factory (D20). */
 export async function activate(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): Promise<ExtensionMode> {
   const mode = selectMode(env);
   if (mode === "worker") registerWorker(pi, { env });
-  else registerController(pi);
+  else await registerController(pi);
   return mode;
 }
 

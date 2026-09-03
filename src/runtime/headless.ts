@@ -21,8 +21,8 @@ export interface HeadlessExecutorOptions {
   providerKeys?: readonly string[];
   /** Extra PI_SDLC_* variables (tests: PI_SDLC_STUB_SCENARIO). Parent PI_SDLC_* variables are dropped by env -i. */
   extraEnv?: Record<string, string>;
-  /** Builds the sandbox profile for a request; null runs unwrapped (tests, sandbox: off). */
-  sandbox?: ((req: WorkerRequest) => SandboxProfile) | null;
+  /** Builds the sandbox profile for a request; null (or a null return) runs unwrapped (tests, sandbox: off). */
+  sandbox?: ((req: WorkerRequest) => SandboxProfile | null) | null;
   killGraceMs?: number;
   pollMs?: number;
   stderrTailBytes?: number;
@@ -73,7 +73,8 @@ export class HeadlessExecutor implements WorkerExecutor {
     });
 
     let argv = [req.piBinary, "-p", "--no-session", "-e", this.opts.extensionEntry ?? DEFAULT_EXTENSION_ENTRY, promptPointer(req.promptPath)];
-    if (this.opts.sandbox) argv = wrapArgv(argv, this.opts.sandbox(req));
+    const profile = this.opts.sandbox?.(req) ?? null;
+    if (profile) argv = wrapArgv(argv, profile);
     const [cmd, ...args] = argv;
     if (cmd === undefined) throw new Error("HeadlessExecutor: empty argv");
 

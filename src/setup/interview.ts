@@ -73,15 +73,15 @@ export async function runGlobalInterview(
       return v === undefined ? 2 : Number(v);
     }),
   ) as SetupAnswers["maxLanesPerRepo"];
-  answers.sandbox = await pick(opts.answers, "sandbox", "required", () =>
+  answers.sandbox = (await pick(opts.answers, "sandbox", "required", () =>
     ui.select(`sandbox (probe: ${opts.probes.sandbox.detail})`, ["required", "best-effort", "off"]),
-  );
-  answers.steering = await pick(opts.answers, "steering", "always", () =>
+  )) as SetupAnswers["sandbox"];
+  answers.steering = (await pick(opts.answers, "steering", "always", () =>
     ui.select("steering", ["always", "elevated", "never"]),
-  );
-  answers.planApproval = await pick(opts.answers, "planApproval", "never", () =>
+  )) as SetupAnswers["steering"];
+  answers.planApproval = (await pick(opts.answers, "planApproval", "never", () =>
     ui.select("planApproval", ["never", "elevated", "always"]),
-  );
+  )) as SetupAnswers["planApproval"];
   const worktreeRoot = await pick(opts.answers, "worktreeRoot", "", () => ui.input("worktreeRoot"));
   if (typeof worktreeRoot === "string" && worktreeRoot.length > 0) answers.worktreeRoot = worktreeRoot;
 
