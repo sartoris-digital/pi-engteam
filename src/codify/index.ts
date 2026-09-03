@@ -34,3 +34,20 @@ export type {
 
 export { FEATURE_WEIGHTS, MECHANICAL_SHAPES, detectMechanicalShape, featuresOf, scoreFeatures } from "./shapes.js";
 export { commandShape, diffShape, pathShape, stageSignature } from "./signature.js";
+export {
+  clusterExecutions,
+  isEligible,
+  isNeverCandidate,
+  toCandidate,
+  verifiedExecutions,
+} from "./miner.js";
+export type { EvidenceItem } from "./miner.js";
+export {
+  appendCodifyInbox,
+  codifyInboxPath,
+  landedFromInbox,
+  readCodifyInbox,
+  stampLanded,
+} from "./inbox.js";
+export type { CodifyInboxRecord } from "./inbox.js";
+
