@@ -31,3 +31,12 @@ export { nextRebaseBranch, runRebaseCycle } from "./rebase-cycle.js";
 export type { RebaseCycleInput, RebaseCycleResult, RebaseDeps } from "./rebase-cycle.js";
 export { afterLand, landReconcile } from "./land-reconcile.js";
 export type { LandAdapter, SchedulerLandOpts } from "./land-reconcile.js";
+export { drainReviseOnce, watchPublished } from "./revise-cycle.js";
+export type {
+  ReviewEvent,
+  ReviewSource,
+  ReviseAction,
+  ReviseMemory,
+  ReviseOpts,
+  ReviseResult,
+} from "./revise-cycle.js";
