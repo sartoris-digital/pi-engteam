@@ -27,6 +27,7 @@ import { loadEffectiveRules } from "../rules/load.js";
 import { operatorRulesBlock } from "../rules/prompt.js";
 import type { RuleRecord } from "../rules/schema.js";
 import { ensureGeneratedMarker } from "./artifacts.js";
+import { buildStageFacts, writeStageFacts } from "./stage-facts.js";
 import { isSeedWriterAgent, listScriptFiles, seedAfterWriterStage } from "../codify/seeds.js";
 import { appendLedger } from "../scheduler/ledger.js";
 import type { Vault } from "../vault/vault.js";
@@ -215,6 +216,11 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     "",
   ].join("\n");
   const promptPath = await writeStepPrompt(ctx.runDir, stage.name, body, round);
+  try {
+    await writeStageFacts(ctx.runDir, buildStageFacts({ state: ctx.state, cfg: ctx.cfg, stage: stage.name, rules }));
+  } catch {
+    /* facts.json is advisory: AskHost degrades gracefully without it, so a write failure never fails the stage */
+  }
   const writerRoots = agent.name === "implementer" ? implementerWriteRoots(ctx) : { extraUpsert: [] as string[], denyUpsert: [] as string[] };
   const req: WorkerRequest = {
     runId: ctx.state.runId,

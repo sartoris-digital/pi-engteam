@@ -22,7 +22,6 @@ export interface FusionRequest {
   slots: FusionSlot[];
   stage: string;
   synthesizer?: string;
-  syncBack?: boolean;
   /** Debate rounds, capped at 3. */
   rounds?: number;
 }

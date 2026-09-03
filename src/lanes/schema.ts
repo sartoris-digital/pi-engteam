@@ -88,7 +88,6 @@ export const StageFusionSchema = Type.Object(
     /** Debate rounds; the runner caps at 3. */
     rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
     synthesizer: Type.Optional(Type.String({ minLength: 1 })),
-    syncBack: Type.Optional(Type.Boolean()),
   },
   strict,
 );

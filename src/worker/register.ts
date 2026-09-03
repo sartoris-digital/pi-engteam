@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runContextFromEnv, type RunContext } from "../safety/context.js";
 import { installSafetyGuard } from "../safety/guard.js";
+import { createAskHostTool } from "./ask-host.js";
 import { createRequestApprovalTool } from "./request-approval.js";
 import { createVerdictEmitTool } from "./verdict-emit.js";
 
@@ -75,5 +76,6 @@ export function registerWorker(pi: ExtensionAPI, opts: RegisterWorkerOptions = {
   installSafetyGuard(pi, ctx);
   pi.registerTool(createVerdictEmitTool({ verdictFile, expectedStep: ctx.stage, runId: ctx.runId, exit: resolved.exit }));
   pi.registerTool(createRequestApprovalTool({ runDir: ctx.runDir, runId: ctx.runId, stage: ctx.stage, agent: ctx.agent }));
+  pi.registerTool(createAskHostTool({ runDir: ctx.runDir }));
   return ctx;
 }

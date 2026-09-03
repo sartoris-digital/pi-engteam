@@ -1,4 +1,14 @@
 export {
+  ASK_HOST_TOOL_NAME,
+  AskHostParams,
+  createAskHostTool,
+  factKeys,
+  lookupFact,
+  type AskHostDetails,
+  type AskHostInput,
+  type AskHostOptions,
+} from "./ask-host.js";
+export {
   createVerdictEmitTool,
   DEFAULT_EXIT_DELAY_MS,
   VERDICT_EMIT_TOOL_NAME,

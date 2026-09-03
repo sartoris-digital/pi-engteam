@@ -40,12 +40,17 @@ function render(rules: RuleRecord[]): string {
   return rules.map(formatRule).join("\n");
 }
 
-export function operatorRulesBlock(rules: RuleRecord[], stage: string, kind: string): string {
+/** The rules in scope for a stage, most specific first. One definition, shared by the prompt block and facts.json. */
+export function applicableRules(rules: RuleRecord[], stage: string, kind: string): RuleRecord[] {
   const applicable = rules.filter(
     (rule) => live(rule) && stageMatch(rule, stage) && kindMatch(rule, kind) && classAllowed(stage, rule.class),
   );
   applicable.sort((a, b) => ruleSpecificity(b) - ruleSpecificity(a) || a.id.localeCompare(b.id));
-  const selected = [...applicable];
+  return applicable;
+}
+
+export function operatorRulesBlock(rules: RuleRecord[], stage: string, kind: string): string {
+  const selected = applicableRules(rules, stage, kind);
   while (selected.length > 0) {
     const overCount = selected.length > MAX_RULES;
     const overBytes = Buffer.byteLength(render(selected), "utf8") > MAX_BYTES;

@@ -63,13 +63,14 @@ describe("registerWorker", () => {
     expect(policyShaOf(policyFile)).toBe(policySha);
   });
 
-  it("installs the safety guard and registers VerdictEmit and RequestApproval", () => {
+  it("installs the safety guard and registers VerdictEmit, RequestApproval and AskHost", () => {
     const fake = new FakePi();
     const result = registerWorker(fake.asPi(), { env: env(), ...opts() });
     expect(result?.runId).toBe("run-w1");
     expect(result?.stage).toBe("implement");
     expect(fake.hasTool("VerdictEmit")).toBe(true);
     expect(fake.hasTool("RequestApproval")).toBe(true);
+    expect(fake.hasTool("AskHost")).toBe(true);
     expect((fake.handlers.get("tool_call") ?? []).length).toBeGreaterThanOrEqual(1);
     expect(exits).toEqual([]);
   });

@@ -18,7 +18,16 @@ describe("stage classes", () => {
       expect(stageClassOf(a), a).toBe("writer");
     }
     expect(stageClassOf("unknown-agent")).toBe("read-only");
-    expect([...READ_ONLY_TOOLS].sort()).toEqual(["RequestApproval", "VerdictEmit", "find", "glob", "grep", "ls", "read"]);
+    expect([...READ_ONLY_TOOLS].sort()).toEqual([
+      "AskHost",
+      "RequestApproval",
+      "VerdictEmit",
+      "find",
+      "glob",
+      "grep",
+      "ls",
+      "read",
+    ]);
   });
 });
 

@@ -97,7 +97,6 @@ describe("lane schemas", () => {
         slots: ["A", { name: "B" }, { name: "C", model: "gpt-x", thinking: "high" }],
         rounds: 3,
         synthesizer: "A",
-        syncBack: true,
       }),
     ).toBe(true);
   });
@@ -113,7 +112,9 @@ describe("lane schemas", () => {
     expect(Value.Check(StageFusionSchema, { mode: "veto", slots: [""] })).toBe(false);
     expect(Value.Check(StageFusionSchema, { mode: "veto", slots: [{ model: "gpt-x" }] })).toBe(false);
     expect(Value.Check(StageFusionSchema, { mode: "veto", slots: [{ name: "A", role: "x" }] })).toBe(false);
-    expect(Value.Check(StageFusionSchema, { mode: "veto", syncBack: "yes" })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", synthesizer: 5 })).toBe(false);
+    // Retired flags stay retired: strict mode turns a stale key into a loud load-time rejection.
+    expect(Object.keys(StageFusionSchema.properties)).toEqual(["mode", "slots", "rounds", "synthesizer"]);
     expect(Value.Check(StageDefSchema, { name: "review", agent: "reviewer", fusion: { mode: "debat" } })).toBe(false);
     expect(Value.Check(StageDefSchema, { name: "review", agent: "reviewer", fusion: { mode: "debate" } })).toBe(true);
   });

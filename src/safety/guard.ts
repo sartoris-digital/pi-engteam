@@ -41,7 +41,7 @@ export interface InstalledGuard {
 }
 
 const POLICY_GATED_TOOLS = new Set(["write", "edit", "bash", "powershell", "read", "grep", "glob", "find", "ls"]);
-const WORKER_INTRINSIC_TOOLS = new Set(["verdictemit", "requestapproval"]);
+const WORKER_INTRINSIC_TOOLS = new Set(["verdictemit", "requestapproval", "askhost"]);
 
 function toolInAllowlist(tool: string, allow: string[] | undefined): boolean {
   if (allow === undefined) return true;

@@ -23,7 +23,7 @@ export const READ_ONLY_STAGE_CLASSES: ReadonlySet<string> = new Set(
   Object.entries(STAGE_CLASS_BY_AGENT).filter(([, cls]) => cls === "read-only").map(([agent]) => agent),
 );
 
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "find", "ls", "VerdictEmit", "RequestApproval"]);
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "glob", "find", "ls", "VerdictEmit", "RequestApproval", "AskHost"]);
 
 export function stageClassOf(agent: string): "read-only" | "writer" {
   return STAGE_CLASS_BY_AGENT[agent] ?? "read-only";

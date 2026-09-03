@@ -91,7 +91,6 @@ export function fusionRequestFromStage(
     slots,
     stage: stage.name,
     ...(typeof rec.synthesizer === "string" ? { synthesizer: rec.synthesizer } : {}),
-    ...(rec.syncBack === true ? { syncBack: true } : {}),
     ...(rounds === undefined ? {} : { rounds }),
   };
 }
