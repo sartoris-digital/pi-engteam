@@ -12,6 +12,9 @@ coverage/
 .serena/
 .playwright-mcp/
 
+# agent session state (Grok/procoder)
+.procoder/
+
 # python bytecode from the codify lint helpers
 __pycache__/
 *.pyc
