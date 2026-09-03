@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { withTmpHome } from "../helpers/tmp-home.js";
 
 describe("scaffold", () => {
-  it("package.json declares the pi extension entry and only typebox + yaml at runtime", async () => {
+  it("package.json declares the pi extension entry and v1 vault runtime deps", async () => {
     const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
       name: string;
       type: string;
@@ -15,7 +15,12 @@ describe("scaffold", () => {
     expect(pkg.type).toBe("module");
     expect(pkg.engines.node).toBe(">=22");
     expect(pkg.pi).toEqual({ extensions: ["./src/index.ts"] });
-    expect(Object.keys(pkg.dependencies).sort()).toEqual(["typebox", "yaml"]);
+    expect(Object.keys(pkg.dependencies).sort()).toEqual([
+      "@napi-rs/keyring",
+      "better-sqlite3",
+      "typebox",
+      "yaml",
+    ]);
   });
 
   it("locks the 0.84 peer range, NodeNext toolchain and no-bundler contract", async () => {
@@ -64,6 +69,6 @@ describe("scaffold", () => {
     await withTmpHome(async () => {
       await mod.default(pi as never);
     });
-    expect(touched).toEqual(["registerCommand", "on"]);
+    expect(touched).toEqual(["registerCommand", "on", "on"]);
   });
 });
