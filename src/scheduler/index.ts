@@ -15,3 +15,6 @@ export type { AcquireLeaseOptions, DaemonLease } from "./lease.js";
 export { drainInbox, enqueueInbox, inboxDir } from "./inbox.js";
 export { appendLedger, ledgerPath, readLedger } from "./ledger.js";
 export type { LedgerEvent } from "./ledger.js";
+export { Scheduler } from "./poller.js";
+export type { SchedulerDeps } from "./poller.js";
+export { readWatermark, writeWatermark, watermarkPath } from "./watermark.js";
