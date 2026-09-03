@@ -17,3 +17,4 @@ export { writeHandoff } from "./handoff.js";
 export type { Handoff } from "./handoff.js";
 export { githubPrClient, renderPrTitle, isDraftPr, GhPrError } from "./pr.js";
 export type { PrClient, GhExec, GhResult } from "./pr.js";
+export { upsertStickyComment } from "./sticky.js";
