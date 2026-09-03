@@ -4,8 +4,10 @@ import { isAbsolute, join } from "node:path";
 import type { StepContext, StepResult } from "../engine/types.js";
 import { runChecks } from "../gate/checks.js";
 import { finalize } from "../gate/finalize.js";
+import { readQueue, writeQueue } from "../commands/enqueue.js";
 import { hostGit } from "../git/host-git.js";
 import { publish } from "../git/publish.js";
+import type { PrClient } from "../git/pr.js";
 import type { StageHooks } from "../lanes/hooks.js";
 import type { StageDef } from "../lanes/schema.js";
 import { writeStepPrompt } from "../runtime/prompt.js";
@@ -60,6 +62,9 @@ export interface StageHookDeps {
   policySha: string;
   writeEvidence: SteerHooks["writeEvidence"];
   rehash?: SteerHooks["rehash"];
+  /** Injected PR client. Absent → push-only publish (v0). */
+  pr?: PrClient | null;
+  runsDir?: string;
 }
 
 function ws(ctx: StepContext): Workspace {
@@ -186,10 +191,10 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
   return result;
 }
 
-async function runHost(ctx: StepContext, stage: StageDef, _deps: StageHookDeps): Promise<StepResult> {
+async function runHost(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {
   if (stage.host === "scope-check") return scopeCheck(ctx);
   if (stage.host === "checks") return runTestChecks(ctx, stage);
-  if (stage.host === "publish") return runPublish(ctx, stage);
+  if (stage.host === "publish") return runPublish(ctx, stage, deps);
   if (stage.host === "escalate") {
     return { verdict: "FAIL", issues: ctx.state.escalation?.detail ? [ctx.state.escalation.detail] : ["escalated"] };
   }
@@ -256,7 +261,7 @@ async function runTestChecks(ctx: StepContext, stage: StageDef): Promise<StepRes
   return stepResult;
 }
 
-async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult> {
+async function runPublish(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {
   const published: StepResult = { verdict: "PASS" };
   const gates = await evaluateGates(ctx, stage.gates ?? [], published);
   applyGateOutcomes(published, gates);
@@ -268,7 +273,9 @@ async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult
       evidence: published.evidence,
     };
   }
-  const result = await publish(ctx.state, ctx.cfg, ws(ctx));
+  const result = await publish(ctx.state, ctx.cfg, ws(ctx), {
+    ...(deps.pr == null ? {} : { pr: deps.pr, runDir: ctx.runDir }),
+  });
   if (!result.pushed) {
     return {
       verdict: "FAIL",
@@ -277,13 +284,27 @@ async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult
       evidence: published.evidence,
     };
   }
+  if (deps.runsDir !== undefined) {
+    const queue = await readQueue(deps.runsDir);
+    const entry = queue.entries.find((e) => e.runId === ctx.state.runId);
+    if (entry !== undefined) {
+      entry.state = "published";
+      entry.updatedAt = new Date().toISOString();
+      entry.judgedSha = result.sha;
+      if (result.pr !== undefined) {
+        entry.prUrl = result.pr.url;
+        entry.prNumber = result.pr.number;
+      }
+      await writeQueue(deps.runsDir, queue);
+    }
+  }
   ctx.emit({
     category: "lifecycle",
     type: "run.published",
     runId: ctx.state.runId,
     ts: new Date().toISOString(),
     step: "publish",
-    data: { sha: result.sha, branch: result.branch },
+    data: { sha: result.sha, branch: result.branch, ...(result.pr === undefined ? {} : { prUrl: result.pr.url }) },
   });
   return { verdict: "PASS", evidence: published.evidence };
 }

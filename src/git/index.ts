@@ -13,3 +13,7 @@ export { publish } from "./publish.js";
 export type { PublishResult, PublishOptions } from "./publish.js";
 export { composePrBody, neutralizeQuoted } from "./prbody.js";
 export type { ComposePrBodyInput, PrBrief, PrBriefAc, AcSource } from "./prbody.js";
+export { writeHandoff } from "./handoff.js";
+export type { Handoff } from "./handoff.js";
+export { githubPrClient, renderPrTitle, isDraftPr, GhPrError } from "./pr.js";
+export type { PrClient, GhExec, GhResult } from "./pr.js";

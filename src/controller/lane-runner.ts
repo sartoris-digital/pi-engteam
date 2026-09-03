@@ -87,6 +87,7 @@ async function stageHookDeps(deps: FactoryDeps): Promise<StageHookDeps> {
     policyFile: BUILTIN_POLICY_PATH,
     policySha: policyShaOf(policyBytes),
     writeEvidence: async (dir, rec) => writeEvidence(dir, rec, await readRunSecret(dir)),
+    runsDir: deps.runsDir,
   };
 }
 

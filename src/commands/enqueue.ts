@@ -20,6 +20,13 @@ export interface QueueEntry {
   runId?: string;
   enqueuedAt: string;
   updatedAt: string;
+  prUrl?: string;
+  prNumber?: number;
+  judgedSha?: string;
+  hostCommits?: string[];
+  patchIds?: string[];
+  baseSha?: string;
+  writebacks?: Record<string, string>;
 }
 
 export interface QueueFile {
