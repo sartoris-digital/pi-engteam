@@ -128,6 +128,100 @@ describe("loadEffectiveConfig", () => {
     );
   });
 
+  it.each([
+    { key: "steering", floor: "always", attempt: "elevated", layer: "committed" },
+    { key: "steering", floor: "always", attempt: "never", layer: "committed" },
+    { key: "planApproval", floor: "always", attempt: "elevated", layer: "committed" },
+    { key: "planApproval", floor: "always", attempt: "never", layer: "committed" },
+    { key: "steering", floor: "always", attempt: "elevated", layer: "overrides" },
+    { key: "steering", floor: "always", attempt: "never", layer: "overrides" },
+    { key: "planApproval", floor: "always", attempt: "elevated", layer: "overrides" },
+    { key: "planApproval", floor: "always", attempt: "never", layer: "overrides" },
+    { key: "steering", floor: "always", attempt: "elevated", layer: "local" },
+    { key: "planApproval", floor: "always", attempt: "never", layer: "local" },
+  ] as const)("rejects $key loosening at $layer ($floor → $attempt)", async ({ key, floor, attempt, layer }) => {
+    if (layer === "committed") {
+      await writeJson(join(home, "factory.json"), { schemaVersion: 1, defaults: { [key]: floor } });
+      await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1, [key]: attempt });
+    } else if (layer === "overrides") {
+      await writeJson(join(home, "factory.json"), {
+        schemaVersion: 1,
+        repos: [{ path: repo, overrides: { [key]: attempt } }],
+      });
+      await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1, [key]: floor });
+    } else {
+      await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1, [key]: floor });
+      await writeJson(join(repo, ".pi", "factory.local.json"), { schemaVersion: 1, [key]: attempt });
+    }
+    const err = await loadEffectiveConfig(repo, { home, defaultBase: trunk }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NarrowingError);
+    expect((err as NarrowingError).key).toBe(key);
+    expect((err as NarrowingError).layer).toBe(layer);
+    expect((err as NarrowingError).keyPath).toBe(key);
+    expect((err as NarrowingError).message).toBe(
+      `config: layer "${layer}" may not loosen "${key}" (${floor} → ${attempt})`,
+    );
+  });
+
+  it.each([
+    { key: "steering", restored: "never" },
+    { key: "sandbox", restored: "off" },
+  ] as const)("rejects global null-deletion of $key before committed can restore $restored", async ({ key, restored }) => {
+    await writeJson(join(home, "factory.json"), { schemaVersion: 1, defaults: { [key]: null } });
+    await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1, [key]: restored });
+    const err = await loadEffectiveConfig(repo, { home, defaultBase: trunk }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NarrowingError);
+    expect((err as NarrowingError).key).toBe(key);
+    expect((err as NarrowingError).layer).toBe("global");
+    expect((err as NarrowingError).keyPath).toBe(key);
+    expect((err as NarrowingError).message).toBe(
+      `config: layer "global" may not loosen "${key}" (safety keys cannot be deleted with null)`,
+    );
+  });
+
+  it("rejects committed null-deletion of maxDiffLines before overrides can restore a looser cap", async () => {
+    await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1, maxDiffLines: null });
+    await writeJson(join(home, "factory.json"), {
+      schemaVersion: 1,
+      repos: [{ path: repo, overrides: { maxDiffLines: 800 } }],
+    });
+    const err = await loadEffectiveConfig(repo, { home, defaultBase: trunk }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NarrowingError);
+    expect((err as NarrowingError).key).toBe("maxDiffLines");
+    expect((err as NarrowingError).layer).toBe("committed");
+  });
+
+  it.each([
+    { winning: "global", values: { global: 2 } },
+    { winning: "committed", values: { global: 2, committed: 3 } },
+    { winning: "overrides", values: { global: 2, committed: 3, overrides: 4 } },
+    { winning: "local", values: { global: 2, committed: 3, overrides: 4, local: 5 } },
+  ] as const)("later layer wins when checksConcurrency collides through $winning", async ({ winning, values }) => {
+    const expected = values[winning];
+    await writeJson(join(home, "factory.json"), {
+      schemaVersion: 1,
+      ...(values.global !== undefined ? { defaults: { checksConcurrency: values.global } } : {}),
+      ...(values.overrides !== undefined
+        ? { repos: [{ path: repo, overrides: { checksConcurrency: values.overrides } }] }
+        : {}),
+    });
+    if (values.committed !== undefined) {
+      await writeJson(join(repo, ".pi", "factory.json"), {
+        schemaVersion: 1,
+        checksConcurrency: values.committed,
+      });
+    }
+    if (values.local !== undefined) {
+      await writeJson(join(repo, ".pi", "factory.local.json"), {
+        schemaVersion: 1,
+        checksConcurrency: values.local,
+      });
+    }
+    const cfg = await loadEffectiveConfig(repo, { home, defaultBase: trunk });
+    expect(cfg.repo.checksConcurrency).toBe(expected);
+    expect(cfg.provenance["repo.checksConcurrency"]).toBe(winning);
+  });
+
   it("refuses null-deleting a key that has a built-in default", async () => {
     await writeJson(join(repo, ".pi", "factory.local.json"), { schemaVersion: 1, checksConcurrency: null });
     const err = await loadEffectiveConfig(repo, { home, defaultBase: trunk }).catch((e: unknown) => e);
@@ -156,6 +250,38 @@ describe("loadEffectiveConfig", () => {
     expect(c.configSha).toBe(a.configSha);
     expect(d.configSha).not.toBe(a.configSha);
     expect(sha256Hex("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+  });
+
+  it("configSha is equal for identical effective values produced by different layers", async () => {
+    await writeJson(join(home, "factory.json"), { schemaVersion: 1, defaults: { checksConcurrency: 2 } });
+    const fromGlobal = await loadEffectiveConfig(repo, { home, defaultBase: trunk });
+
+    await writeJson(join(home, "factory.json"), { schemaVersion: 1 });
+    await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1, checksConcurrency: 2 });
+    const fromCommitted = await loadEffectiveConfig(repo, { home, defaultBase: trunk });
+
+    await writeJson(join(repo, ".pi", "factory.json"), { schemaVersion: 1 });
+    await writeJson(join(home, "factory.json"), {
+      schemaVersion: 1,
+      repos: [{ path: repo, overrides: { checksConcurrency: 2 } }],
+    });
+    const fromOverrides = await loadEffectiveConfig(repo, { home, defaultBase: trunk });
+
+    await writeJson(join(home, "factory.json"), { schemaVersion: 1 });
+    await writeJson(join(repo, ".pi", "factory.local.json"), { schemaVersion: 1, checksConcurrency: 2 });
+    const fromLocal = await loadEffectiveConfig(repo, { home, defaultBase: trunk });
+
+    expect(fromGlobal.repo.checksConcurrency).toBe(2);
+    expect(fromCommitted.repo.checksConcurrency).toBe(2);
+    expect(fromOverrides.repo.checksConcurrency).toBe(2);
+    expect(fromLocal.repo.checksConcurrency).toBe(2);
+    expect(fromGlobal.configSha).toBe(fromCommitted.configSha);
+    expect(fromCommitted.configSha).toBe(fromOverrides.configSha);
+    expect(fromOverrides.configSha).toBe(fromLocal.configSha);
+    expect(fromGlobal.provenance["repo.checksConcurrency"]).toBe("global");
+    expect(fromCommitted.provenance["repo.checksConcurrency"]).toBe("committed");
+    expect(fromOverrides.provenance["repo.checksConcurrency"]).toBe("overrides");
+    expect(fromLocal.provenance["repo.checksConcurrency"]).toBe("local");
   });
 });
 

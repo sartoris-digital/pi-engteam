@@ -107,6 +107,36 @@ describe("assertNarrowing", () => {
     expect(() => assertNarrowing({ steering: null }, upper, "committed")).toThrow(/"steering"/);
   });
 
+  it("rejects null-deletion of every built-in safety key at the layer that attempts it", () => {
+    expect(() => assertNarrowing({ steering: null }, upper, "global")).toThrow(
+      'config: layer "global" may not loosen "steering" (safety keys cannot be deleted with null)',
+    );
+    expect(() => assertNarrowing({ sandbox: null }, upper, "global")).toThrow(
+      'config: layer "global" may not loosen "sandbox" (safety keys cannot be deleted with null)',
+    );
+    expect(() => assertNarrowing({ planApproval: null }, upper, "global")).toThrow(/"planApproval"/);
+    expect(() => assertNarrowing({ maxDiffLines: null }, upper, "committed")).toThrow(
+      'config: layer "committed" may not loosen "maxDiffLines" (safety keys cannot be deleted with null)',
+    );
+    expect(() => assertNarrowing({ maxChangedFiles: null }, upper, "committed")).toThrow(/"maxChangedFiles"/);
+    expect(() => assertNarrowing({ riskPaths: null }, upper, "committed")).toThrow(/"riskPaths"/);
+    expect(() => assertNarrowing({ securityPaths: null }, upper, "global")).toThrow(/"securityPaths"/);
+    expect(() => assertNarrowing({ exclusivePaths: null }, upper, "global")).toThrow(/"exclusivePaths"/);
+    expect(() => assertNarrowing({ generatedDocPatterns: null }, upper, "global")).toThrow(/"generatedDocPatterns"/);
+    expect(() => assertNarrowing({ writeRoots: { feature: null } }, upper, "global")).toThrow(/"writeRoots\.feature"/);
+    expect(() => assertNarrowing({ writeRoots: { chore: null } }, upper, "committed")).toThrow(/"writeRoots\.chore"/);
+    const err = (() => {
+      try {
+        assertNarrowing({ steering: null }, upper, "global");
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    expect(err).toBeInstanceOf(NarrowingError);
+    expect((err as NarrowingError).key).toBe("steering");
+    expect((err as NarrowingError).layer).toBe("global");
+  });
+
   it("ignores operational keys, unset upper values and the builtin layer entirely", () => {
     expect(() => assertNarrowing({ checksConcurrency: 8, stageTimeoutSeconds: 1 }, upper, "local")).not.toThrow();
     expect(() => assertNarrowing({ steering: "never", sandbox: "off" }, upper, "builtin")).not.toThrow();

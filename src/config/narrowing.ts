@@ -52,8 +52,11 @@ export function narrowedKeysFor(layer: LayerName): readonly SafetyKey[] {
 /**
  * `lower` is the overlay a layer contributes; `upper` is the effective config before that layer.
  * Throws NarrowingError naming the key and the layer on the first loosening attempt.
+ * Null on a built-in safety key is rejected at the attempting layer even when that key is not
+ * in narrowedKeysFor(layer), so a later overlay cannot restore a looser value.
  */
 export function assertNarrowing(lower: RepoDefaults, upper: RepoDefaults, layer: LayerName): void {
+  rejectNullSafetyKeys(lower, layer);
   const keys = new Set<SafetyKey>(narrowedKeysFor(layer));
 
   if (keys.has("steering")) {
@@ -92,6 +95,21 @@ export function assertNarrowing(lower: RepoDefaults, upper: RepoDefaults, layer:
       guard(key, layer, lower.writeRoots[kind], upper.writeRoots?.[kind], (prev, next) =>
         subset(key, layer, prev, next),
       );
+    }
+  }
+}
+
+/** Built-in safety keys may not be null-deleted at the layer that attempts it. */
+function rejectNullSafetyKeys(lower: RepoDefaults, layer: LayerName): void {
+  if (layer === "builtin") return;
+  for (const key of SAFETY_KEYS) {
+    if (lower[key] === null) throw new NarrowingError(key, layer, "safety keys cannot be deleted with null");
+  }
+  if (lower.writeRoots !== undefined) {
+    for (const kind of KINDS) {
+      if (lower.writeRoots[kind] === null) {
+        throw new NarrowingError(`writeRoots.${kind}`, layer, "safety keys cannot be deleted with null");
+      }
     }
   }
 }
