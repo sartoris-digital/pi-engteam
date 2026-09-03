@@ -2,6 +2,7 @@ import type { FactoryDeps } from "../controller/lane-runner.js";
 import { TERMINAL_QUEUE_STATES, queueKey, readQueue, writeQueue, type QueueEntry } from "../scheduler/queue.js";
 import type { Ticket, TicketKind } from "../trackers/adapter.js";
 import { isTicketKind, refToString } from "../trackers/adapter.js";
+import { looksLikeSecret } from "../vault/input-guard.js";
 import type { ParsedFactoryArgs } from "./router.js";
 
 export {
@@ -49,6 +50,7 @@ export async function runEnqueue(
   let ticket: Ticket;
   const refArg = parsed.args[0];
   if (typeof parsed.flags.task === "string") {
+    if (looksLikeSecret(parsed.flags.task)) throw new Error("enqueue: looks like a secret; use /factory secret set");
     ticket = await deps.tracker.createFromTask(parsed.flags.task, { kind });
   } else if (refArg !== undefined) {
     const parsedRef = deps.tracker.parseRef(refArg) ?? { tracker: "local", id: refArg };

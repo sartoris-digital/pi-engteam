@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { FactoryDeps } from "../controller/lane-runner.js";
 import { addRule, type RuleRecord } from "../rules/index.js";
 import { screenText } from "../trackers/screen.js";
+import { looksLikeSecret } from "../vault/input-guard.js";
 import type { ParsedFactoryArgs } from "./router.js";
 
 function flagString(flags: Record<string, string | boolean>, name: string): string | undefined {
@@ -25,6 +26,7 @@ export async function runRemember(parsed: ParsedFactoryArgs, deps: FactoryDeps):
   const quoted = flagString(parsed.flags, "task");
   const text = (quoted ?? parsed.args.join(" ")).trim();
   if (text.length === 0) throw new Error("remember: rule text is required");
+  if (looksLikeSecret(text)) throw new Error("remember: looks like a secret; use /factory secret set");
   const target = resolveTarget(parsed, deps);
   const stageFlag = flagString(parsed.flags, "stage");
   const pathsFlag = flagString(parsed.flags, "paths");

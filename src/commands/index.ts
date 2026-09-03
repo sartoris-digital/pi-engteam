@@ -15,12 +15,14 @@ import { runClosed } from "./closed.js";
 import { completeFactoryArgs, type AutocompleteItem, type CompletionDeps } from "./completions.js";
 import { readQueue, runEnqueue } from "./enqueue.js";
 import { runForget } from "./forget.js";
+import { runGrant } from "./grant.js";
 import { runGrill } from "./grill.js";
 import { runLanded } from "./landed.js";
 import { runReconcile } from "./reconcile.js";
 import { runRemember } from "./remember.js";
 import { parseFactoryArgs, type FactoryVerb } from "./router.js";
 import { runRules } from "./rules.js";
+import { runSecret } from "./secret.js";
 import { runStart } from "./start.js";
 import { runStatus } from "./status.js";
 
@@ -210,16 +212,20 @@ async function dispatchFactoryVerb(
       const { ticket } = await runGrill(parsed, deps);
       return info(`grilled ${refToString(ticket.ref)}: ${ticket.title}`);
     }
+    case "grant": {
+      const state = await runGrant(parsed, deps, ctx);
+      return info(`${state.runId} granted → ${state.status}`);
+    }
+    case "secret":
+      return info(await runSecret(parsed, deps));
     case "config":
     case "lanes":
-    case "secret":
     case "watch":
     case "interrupt":
     case "stop":
     case "doctor":
     case "classify":
     case "resume":
-    case "grant":
     case "replan":
     case "cancel":
     case "drop":
@@ -235,4 +241,6 @@ export { runRemember } from "./remember.js";
 export { runRules } from "./rules.js";
 export { runForget } from "./forget.js";
 export { runGrill } from "./grill.js";
+export { runGrant } from "./grant.js";
+export { runSecret } from "./secret.js";
 
