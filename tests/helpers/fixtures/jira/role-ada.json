@@ -1,0 +1,6 @@
+{
+  "permissions": {
+    "EDIT_ISSUES": { "havePermission": true, "id": "EDIT_ISSUES" },
+    "TRANSITION_ISSUES": { "havePermission": true, "id": "TRANSITION_ISSUES" }
+  }
+}

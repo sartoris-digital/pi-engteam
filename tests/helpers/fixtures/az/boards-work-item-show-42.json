@@ -1,0 +1,22 @@
+{
+  "id": 42,
+  "rev": 3,
+  "fields": {
+    "System.Id": 42,
+    "System.Title": "Widgets rattle",
+    "System.Description": "They rattle when dropped.",
+    "System.Tags": "factory:ready",
+    "System.State": "New",
+    "System.CreatedBy": {
+      "displayName": "Ada",
+      "uniqueName": "ada@contoso"
+    },
+    "System.ChangedDate": "2026-09-01T00:00:00.000Z",
+    "System.WorkItemType": "User Story",
+    "Microsoft.VSTS.Common.Priority": 2
+  },
+  "_links": {
+    "html": { "href": "https://dev.azure.com/contoso/widgets/_workitems/edit/42" }
+  },
+  "url": "https://dev.azure.com/contoso/widgets/_apis/wit/workItems/42"
+}

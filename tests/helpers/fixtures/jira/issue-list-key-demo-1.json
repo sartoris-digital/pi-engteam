@@ -1,0 +1,32 @@
+[
+  {
+    "key": "DEMO-1",
+    "id": "10000",
+    "fields": {
+      "summary": "Widgets rattle",
+      "description": "They rattle when dropped.",
+      "labels": ["factory:ready"],
+      "status": { "name": "To Do", "statusCategory": { "key": "new" } },
+      "reporter": {
+        "accountId": "ada",
+        "emailAddress": "ada@example.com",
+        "displayName": "Ada"
+      },
+      "issuetype": { "name": "Story" },
+      "updated": "2026-09-01T00:00:00.000Z",
+      "priority": { "name": "Medium" }
+    },
+    "changelog": {
+      "histories": [
+        {
+          "author": {
+            "accountId": "ada",
+            "emailAddress": "ada@example.com",
+            "displayName": "Ada"
+          },
+          "items": [{ "field": "labels", "fromString": "", "toString": "factory:ready" }]
+        }
+      ]
+    }
+  }
+]

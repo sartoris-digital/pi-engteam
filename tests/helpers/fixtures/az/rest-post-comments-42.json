@@ -1,0 +1,9 @@
+{
+  "id": 7,
+  "text": "claimed",
+  "createdDate": "2026-09-03T00:00:00.000Z",
+  "createdBy": {
+    "uniqueName": "factory@contoso",
+    "displayName": "factory"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": 42,
+  "rev": 4,
+  "fields": {
+    "System.Id": 42,
+    "System.Title": "Widgets rattle",
+    "System.Description": "They rattle when dropped.",
+    "System.Tags": "factory:in-progress",
+    "System.State": "New",
+    "System.CreatedBy": {
+      "displayName": "Ada",
+      "uniqueName": "ada@contoso"
+    },
+    "System.ChangedDate": "2026-09-01T00:00:00.000Z",
+    "System.WorkItemType": "User Story"
+  }
+}

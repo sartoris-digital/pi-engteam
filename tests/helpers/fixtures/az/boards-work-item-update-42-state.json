@@ -1,0 +1,15 @@
+{
+  "id": 42,
+  "rev": 5,
+  "fields": {
+    "System.Id": 42,
+    "System.Title": "Widgets rattle",
+    "System.Tags": "factory:in-progress",
+    "System.State": "Active",
+    "System.CreatedBy": {
+      "displayName": "Ada",
+      "uniqueName": "ada@contoso"
+    },
+    "System.WorkItemType": "User Story"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "count": 2,
+  "value": [
+    {
+      "id": 1,
+      "revisedBy": { "uniqueName": "old@contoso", "displayName": "Old" },
+      "fields": {
+        "System.Tags": { "oldValue": "", "newValue": "other-tag" }
+      }
+    },
+    {
+      "id": 2,
+      "revisedBy": { "uniqueName": "ada@contoso", "displayName": "Ada" },
+      "fields": {
+        "System.Tags": { "oldValue": "other-tag", "newValue": "factory:ready; other-tag" }
+      }
+    }
+  ]
+}
