@@ -191,6 +191,51 @@ describe("buildWorkerEnv", () => {
       }),
     ).toThrow(/not allowlisted/);
   });
+
+  it("does not set proxy env by default (chore-lane egress off)", () => {
+    const env = buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), { scrub: createScrubDirs(tmp) });
+    expect(env).not.toHaveProperty("HTTP_PROXY");
+    expect(env).not.toHaveProperty("HTTPS_PROXY");
+    expect(env).not.toHaveProperty("ALL_PROXY");
+    expect(env).not.toHaveProperty("NO_PROXY");
+    expect(env).not.toHaveProperty("PI_SDLC_PROXY");
+  });
+
+  it("sets HTTP_PROXY HTTPS_PROXY ALL_PROXY, empty NO_PROXY, and PI_SDLC_PROXY, still strips GH_TOKEN", () => {
+    const env = buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), {
+      scrub: createScrubDirs(tmp),
+      proxyUrl: "http://127.0.0.1:1847",
+    });
+    expect(env.HTTP_PROXY).toBe("http://127.0.0.1:1847");
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:1847");
+    expect(env.ALL_PROXY).toBe("http://127.0.0.1:1847");
+    expect(Object.hasOwn(env, "NO_PROXY")).toBe(true);
+    expect(env.NO_PROXY).toBe("");
+    expect(env.PI_SDLC_PROXY).toBe("http://127.0.0.1:1847");
+    expect(env).not.toHaveProperty("GH_TOKEN");
+    expect(env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(env).not.toHaveProperty("AZURE_CLIENT_SECRET");
+    expect(env).not.toHaveProperty("JIRA_API_TOKEN");
+  });
+
+  it("reads proxyUrl from req.egress when options omit it", () => {
+    const env = buildWorkerEnv(
+      LEAKY_BASE,
+      makeWorkerRequest({ egress: { mode: "required", proxyUrl: "http://127.0.0.1:9" } }),
+      { scrub: createScrubDirs(tmp) },
+    );
+    expect(env.HTTP_PROXY).toBe("http://127.0.0.1:9");
+    expect(env.PI_SDLC_PROXY).toBe("http://127.0.0.1:9");
+  });
+
+  it("refuses extraEnv override of PI_SDLC_PROXY", () => {
+    expect(() =>
+      buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), {
+        scrub: createScrubDirs(tmp),
+        extra: { PI_SDLC_PROXY: "http://evil.example" },
+      }),
+    ).toThrow(/cannot override a locked PI_SDLC_/);
+  });
 });
 
 describe("verdictFilePath", () => {

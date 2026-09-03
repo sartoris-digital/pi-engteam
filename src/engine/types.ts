@@ -65,7 +65,9 @@ export type EscalationCode =
   | "human-owned"
   | "not-codifiable"
   | "validation-failed"
-  | "codified-safety";
+  | "codified-safety"
+  | "holdout-fail"
+  | "proxy-unavailable";
 
 export const ESCALATION_CODES: readonly EscalationCode[] = [
   "needs-decision",
@@ -103,6 +105,8 @@ export const ESCALATION_CODES: readonly EscalationCode[] = [
   "not-codifiable",
   "validation-failed",
   "codified-safety",
+  "holdout-fail",
+  "proxy-unavailable",
 ];
 
 export function isEscalationCode(value: unknown): value is EscalationCode {

@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { connect as netConnect } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { generatedMarker } from "./marker.js";
-import type { WorkerRequest } from "./types.js";
+import type { EgressMode, WorkerEgress, WorkerRequest } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,9 +18,11 @@ export interface SandboxProfile {
   /** Absolute paths; an entry ending in "*" is a filename-prefix glob (e.g. ~/.config/jira*). */
   denyRead: string[];
   denyUnixSockets: string[];
-  network: "allow" | "deny";
+  network: "allow" | "deny" | "proxy";
   /** Host allowlist for v1.5/v2 workers; unused by the v1 wrap (no CONNECT proxy). */
   networkAllow?: string[];
+  /** Loopback CONNECT proxy URL when `network === "proxy"` (`http://127.0.0.1:<port>`). */
+  proxyUrl?: string;
 }
 
 export interface SandboxProbe {
@@ -105,6 +108,11 @@ export function renderSeatbeltProfile(profile: SandboxProfile, runId: string): s
     lines.push(`(deny network-outbound (literal ${sbString(canonical(s))}))`);
   }
   if (profile.network === "deny") lines.push("(deny network*)");
+  if (profile.network === "proxy") {
+    lines.push("(deny network*)");
+    const port = proxyListenPort(profile.proxyUrl);
+    if (port !== null) lines.push(`(allow network-outbound (remote ip "127.0.0.1:${port}"))`);
+  }
   if (profile.networkAllow !== undefined && profile.networkAllow.length > 0) {
     lines.push(`;; networkAllow ${profile.networkAllow.join(" ")}`);
   }
@@ -200,6 +208,20 @@ export function worktreeGitDir(workspaceDir: string): string | null {
 export interface ProfileForRequestOptions {
   home?: string;
   tmpDir?: string;
+  egress?: WorkerEgress;
+}
+
+function proxyListenPort(proxyUrl: string | undefined): number | null {
+  if (proxyUrl === undefined || proxyUrl.length === 0) return null;
+  try {
+    const parsed = new URL(proxyUrl);
+    if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") return null;
+    const port = parsed.port === "" ? 80 : Number(parsed.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return port;
+  } catch {
+    return null;
+  }
 }
 
 export function profileForRequest(req: WorkerRequest, opts: ProfileForRequestOptions = {}): SandboxProfile {
@@ -207,12 +229,54 @@ export function profileForRequest(req: WorkerRequest, opts: ProfileForRequestOpt
   const allowWrite = [req.cwd, req.runDir, opts.tmpDir ?? tmpdir()];
   const gitDir = worktreeGitDir(req.cwd);
   if (gitDir !== null) allowWrite.push(gitDir);
+  const egress = opts.egress ?? req.egress;
+  const proxyUrl = egress?.mode !== "off" ? egress?.proxyUrl : undefined;
+  const proxy = proxyUrl !== undefined && proxyListenPort(proxyUrl) !== null;
   return {
     workspaceDir: req.cwd,
     runDir: req.runDir,
     allowWrite,
     denyRead: PROTECTED_READ_DENY.map((rel) => (rel.startsWith("/") ? rel : join(home, rel))),
     denyUnixSockets: [join(home, HERDR_SOCKET)],
-    network: "allow",
+    network: proxy ? "proxy" : "allow",
+    ...(proxy ? { proxyUrl } : {}),
   };
+}
+
+export interface PrepareRunProxyOptions {
+  mode: EgressMode;
+  proxy?: { url: string; port: number } | null;
+  probe?: (proxy: { url: string; port: number }) => Promise<boolean>;
+}
+
+export type PrepareRunProxyResult =
+  | { ok: true; proxyUrl?: string }
+  | { ok: false; escalate: "proxy-unavailable"; detail: string };
+
+async function probeLoopbackPort(port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = netConnect({ host: "127.0.0.1", port, family: 4 });
+    const done = (ok: boolean): void => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(250);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+    socket.once("timeout", () => done(false));
+  });
+}
+
+/** Lane start: required egress + a down proxy is `proxy-unavailable`. Default mode is off. */
+export async function prepareRunProxy(opts: PrepareRunProxyOptions): Promise<PrepareRunProxyResult> {
+  if (opts.mode === "off") return { ok: true };
+  const proxy = opts.proxy ?? null;
+  if (proxy !== null && Number.isInteger(proxy.port) && proxy.port > 0 && proxy.url.length > 0) {
+    const listening = opts.probe !== undefined ? await opts.probe(proxy) : await probeLoopbackPort(proxy.port);
+    if (listening) return { ok: true, proxyUrl: proxy.url };
+  }
+  if (opts.mode === "required") {
+    return { ok: false, escalate: "proxy-unavailable", detail: "egress proxy is required but is not listening" };
+  }
+  return { ok: true };
 }

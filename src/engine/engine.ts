@@ -98,6 +98,8 @@ export const HUMAN_ACTIONS: Record<EscalationCode, string> = {
   "not-codifiable": "The assessment rubric failed; pick another candidate or /factory drop <ref>",
   "validation-failed": "Validation exhausted; wait for cooldown or /factory drop <ref>",
   "codified-safety": "A safety-class event retired the tool; inspect the registry then /factory drop <ref>",
+  "holdout-fail": "A hidden holdout gate failed; inspect holdouts/ then /factory resume <ref> --from publish or /factory drop <ref>",
+  "proxy-unavailable": "Start the worker egress proxy, then /factory resume <ref>",
 };
 
 export function agentLabel(step: Step): string {

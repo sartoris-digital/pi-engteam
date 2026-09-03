@@ -62,4 +62,33 @@ describe("runStart", () => {
       await fixture.cleanup();
     }
   });
+
+  it("clamps exact/shadow dispatch to partial when sandbox is unavailable", async () => {
+    await withTmpHome(async (home) => {
+      await writeGlobalConfig(home, {
+        operator: { codify: { dispatch: "exact", repos: ["/repo"] } },
+      });
+      const runs = join(home, "runs");
+      await mkdir(join(runs, "_factory"), { recursive: true });
+      const deps = {
+        home,
+        runsDir: runs,
+        projectRootDefault: "/pkg",
+        engine: {},
+        executor: {},
+        provider: {},
+        tracker: {},
+        agents: [],
+        lanes: {},
+        piBinary: "pi",
+        repos: [],
+        probeSandbox: async () => ({ available: false, provider: null, detail: "none" }),
+      } as unknown as FactoryDeps;
+      const states = await runStart(parseFactoryArgs("start"), deps);
+      expect(states).toEqual([]);
+      expect(deps.codifyDispatch).toBe("partial");
+      expect(deps.codifyStartWarning).toMatch(/codified exact dispatch disabled: no sandbox/);
+    });
+  });
 });
+

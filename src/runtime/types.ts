@@ -14,6 +14,14 @@ export interface AgentDef {
   stageClass: "read-only" | "writer";
 }
 
+export type EgressMode = "off" | "best-effort" | "required";
+
+export interface WorkerEgress {
+  mode: EgressMode;
+  proxyUrl?: string;
+  extraHosts?: string[];
+}
+
 export interface WorkerRequest {
   runId: string;
   runDir: string;
@@ -35,6 +43,8 @@ export interface WorkerRequest {
   piBinary: string;
   /** Tool allowlist copied into PI_SDLC_TOOLS; defaults to agent.tools when omitted. */
   tools?: string[];
+  /** Host-injected egress; absent means off (chore-lane default). */
+  egress?: WorkerEgress;
 }
 
 export interface WorkerResult {

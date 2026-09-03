@@ -10,6 +10,8 @@ import { Observer } from "../observer/events.js";
 import { CATALOG, compileLane, BUILTIN_POLICY_PATH } from "../lanes/index.js";
 import type { LaneDef, NamedLane } from "../lanes/schema.js";
 import { probeSandbox, profileForRequest, type SandboxProbe, type SandboxProfile } from "../runtime/sandbox.js";
+import type { DispatchCeiling } from "../codify/dispatch.js";
+import type { ToolRunner } from "../codify/runner.js";
 import type { AnalystPort } from "../intake/analyze.js";
 import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import type { Ticket } from "../trackers/adapter.js";
@@ -52,6 +54,11 @@ export interface FactoryDeps {
   analyst?: AnalystPort;
   /** Injected PR client. Absent → push-only publish (v0). */
   pr?: PrClient;
+  /** Process-level dispatch ceiling after `/factory start` sandbox clamp. */
+  codifyDispatch?: DispatchCeiling;
+  /** Doctor-style warning when exact/shadow was clamped to partial. */
+  codifyStartWarning?: string;
+  toolRunner?: ToolRunner;
 }
 
 export const runObservers = new Map<string, Observer>();

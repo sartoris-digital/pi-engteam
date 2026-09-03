@@ -6,6 +6,7 @@ import {
   HERDR_SOCKET,
   PROTECTED_READ_DENY,
   SandboxUnavailableError,
+  prepareRunProxy,
   probeSandbox,
   profileForRequest,
   renderBwrapArgs,
@@ -14,6 +15,7 @@ import {
   wrapArgv,
   type SandboxProfile,
 } from "../../../src/runtime/sandbox.js";
+import { createEgressProxy } from "../../../src/runtime/proxy.js";
 import { makeWorkerRequest } from "../../helpers/worker-request.js";
 
 const MARKER = "<!-- pi-sdlc-factory generated · run run-sb · do not commit -->";
@@ -69,6 +71,18 @@ describe("sandbox", () => {
     it("denies all networking when the profile says so", () => {
       expect(renderSeatbeltProfile({ ...profile, network: "deny" }, "run-sb")).toContain("(deny network*)");
     });
+
+    it("proxy mode denies network* then allows outbound only to 127.0.0.1:<proxyPort>", () => {
+      const text = renderSeatbeltProfile(
+        { ...profile, network: "proxy", proxyUrl: "http://127.0.0.1:1847" },
+        "run-sb",
+      );
+      const denyAt = text.indexOf("(deny network*)");
+      const allowAt = text.indexOf('(allow network-outbound (remote ip "127.0.0.1:1847"))');
+      expect(denyAt).toBeGreaterThan(-1);
+      expect(allowAt).toBeGreaterThan(denyAt);
+      expect(text).not.toContain("unix");
+    });
   });
 
   describe("renderBwrapArgs", () => {
@@ -87,6 +101,12 @@ describe("sandbox", () => {
 
     it("adds --unshare-net when the network is denied", () => {
       expect(renderBwrapArgs({ ...profile, network: "deny" })).toContain("--unshare-net");
+    });
+
+    it("does not --unshare-net in proxy mode (proxy must stay reachable)", () => {
+      expect(renderBwrapArgs({ ...profile, network: "proxy", proxyUrl: "http://127.0.0.1:1847" })).not.toContain(
+        "--unshare-net",
+      );
     });
   });
 
@@ -214,6 +234,52 @@ describe("sandbox", () => {
       expect(text).toContain("api.github.com");
       expect(text).toContain("registry.npmjs.org");
       expect(text).not.toContain("(deny network*)");
+    });
+
+    it("profileForRequest uses network proxy when req.egress is on with a proxyUrl", () => {
+      const p = profileForRequest(
+        makeWorkerRequest({
+          cwd: join(root, "nope"),
+          egress: { mode: "required", proxyUrl: "http://127.0.0.1:1847" },
+        }),
+        { home: root, tmpDir: root },
+      );
+      expect(p.network).toBe("proxy");
+      expect(p.proxyUrl).toBe("http://127.0.0.1:1847");
+      const text = renderSeatbeltProfile(p, "run-sb");
+      expect(text).toContain("(deny network*)");
+      expect(text).toContain('(allow network-outbound (remote ip "127.0.0.1:1847"))');
+    });
+  });
+
+  describe("prepareRunProxy", () => {
+    it("is a no-op when egress is off (chore-lane default)", async () => {
+      await expect(prepareRunProxy({ mode: "off" })).resolves.toEqual({ ok: true });
+    });
+
+    it("required + stopped proxy → proxy-unavailable", async () => {
+      const proxy = createEgressProxy({ allowlist: { hosts: [] } });
+      const result = await prepareRunProxy({ mode: "required", proxy });
+      expect(result).toEqual({
+        ok: false,
+        escalate: "proxy-unavailable",
+        detail: expect.stringMatching(/proxy/i),
+      });
+    });
+
+    it("required + listening proxy returns the url", async () => {
+      const proxy = createEgressProxy({ allowlist: { hosts: [] } });
+      await proxy.start();
+      try {
+        const result = await prepareRunProxy({ mode: "required", proxy });
+        expect(result).toEqual({ ok: true, proxyUrl: proxy.url });
+      } finally {
+        await proxy.stop();
+      }
+    });
+
+    it("best-effort + down proxy continues without a url", async () => {
+      await expect(prepareRunProxy({ mode: "best-effort" })).resolves.toEqual({ ok: true });
     });
   });
 });

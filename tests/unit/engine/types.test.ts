@@ -12,8 +12,8 @@ import {
 
 describe("engine types", () => {
   it("exports the v1 codes plus the three v1.5 codify codes, unique", () => {
-    expect(ESCALATION_CODES).toHaveLength(35);
-    expect(new Set(ESCALATION_CODES).size).toBe(35);
+    expect(ESCALATION_CODES).toHaveLength(37);
+    expect(new Set(ESCALATION_CODES).size).toBe(37);
     for (const code of [
       "needs-decision", "env-setup-failed", "checks-timeout", "gate-invalid", "gate-baseline-green",
       "test-tampering", "scope-violation", "too-large", "loop-exhausted", "stall", "budget-exhausted",
@@ -23,6 +23,7 @@ describe("engine types", () => {
       "gate-defect", "dependency-denied", "security-fail", "rebase-conflict", "rule-violation",
       "needs-rebase", "human-owned",
       "not-codifiable", "validation-failed", "codified-safety",
+      "holdout-fail", "proxy-unavailable",
     ]) {
       expect(ESCALATION_CODES).toContain(code);
     }
@@ -31,6 +32,8 @@ describe("engine types", () => {
   it("isEscalationCode narrows unknown values", () => {
     expect(isEscalationCode("loop-exhausted")).toBe(true);
     expect(isEscalationCode("budget-exhausted")).toBe(true);
+    expect(isEscalationCode("holdout-fail")).toBe(true);
+    expect(isEscalationCode("proxy-unavailable")).toBe(true);
     expect(isEscalationCode("not-a-code")).toBe(false);
     expect(isEscalationCode(42)).toBe(false);
     expect(isEscalationCode(undefined)).toBe(false);

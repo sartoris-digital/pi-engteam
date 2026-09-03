@@ -16,6 +16,7 @@ const EXTRA_ENV_LOCKED = new Set([
   "PI_SDLC_WORKSPACE_DIR",
   "PI_SDLC_NONCE",
   "PI_SDLC_TOOLS",
+  "PI_SDLC_PROXY",
 ]);
 
 export interface ScrubDirs {
@@ -43,6 +44,8 @@ export function verdictFilePath(runDir: string, stage: string, round: number): s
 export interface BuildWorkerEnvOptions {
   providerKeys?: readonly string[];
   scrub?: ScrubDirs;
+  /** Egress proxy the worker must route through; defaults to req.egress.proxyUrl. Absent means no proxy env. */
+  proxyUrl?: string;
   /** Additional PI_SDLC_* variables (tests: PI_SDLC_STUB_SCENARIO). Any other prefix throws. */
   extra?: Record<string, string>;
 }
@@ -82,6 +85,18 @@ export function buildWorkerEnv(
     GH_CONFIG_DIR: scrub.ghConfigDir,
     NPM_CONFIG_USERCONFIG: "/dev/null",
   });
+  // Egress is off by default (chore lane): with no proxy we set none of these, so a worker has no route out.
+  const proxyUrl = opts.proxyUrl ?? req.egress?.proxyUrl;
+  if (typeof proxyUrl === "string" && proxyUrl.length > 0) {
+    Object.assign(env, {
+      HTTP_PROXY: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      ALL_PROXY: proxyUrl,
+      // Empty NO_PROXY: nothing bypasses the proxy, not even localhost.
+      NO_PROXY: "",
+      PI_SDLC_PROXY: proxyUrl,
+    });
+  }
   for (const [key, value] of Object.entries(opts.extra ?? {})) {
     if (!key.startsWith(WORKER_ENV_PREFIX)) {
       throw new Error(`buildWorkerEnv: extra key ${key} must start with ${WORKER_ENV_PREFIX}`);
