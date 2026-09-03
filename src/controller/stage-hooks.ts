@@ -111,7 +111,10 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
   const timedOut = worker.timedOut;
   const verdict = worker.verdict;
   if (verdict === null || timedOut) {
-    return { verdict: "FAIL", issues: timedOut ? ["worker timed out"] : ["no verdict"], evidence: { timedOut: true } };
+    const issues = [timedOut ? "worker timed out" : "no verdict"];
+    if (worker.stderrTail.trim().length > 0) issues.push(worker.stderrTail.trim());
+    if (worker.exitCode !== null) issues.push(`exit ${worker.exitCode}`);
+    return { verdict: "FAIL", issues, evidence: { timedOut } };
   }
   for (const rel of verdict.artifacts ?? []) {
     const abs = isAbsolute(rel) ? rel : join(ctx.runDir, rel);
