@@ -13,6 +13,7 @@ import { runApprove } from "../../src/commands/approve.js";
 import { runEnqueue } from "../../src/commands/enqueue.js";
 import { runStart } from "../../src/commands/start.js";
 import { steerDecisionsDir, type SteerDecisionFile } from "../../src/steer/index.js";
+import type { RunState } from "../../src/engine/types.js";
 import {
   branchTree,
   buildTestDeps,
@@ -20,6 +21,24 @@ import {
   writeFactoryTestConfig,
   writeScenario,
 } from "./harness.js";
+
+async function assertJudgedPush(state: RunState, bare: string): Promise<void> {
+  const head = (
+    await exec("git", ["-C", state.workspaceDir, "rev-parse", "HEAD"], { encoding: "utf8" })
+  ).stdout.trim();
+  expect(head).toBe(state.judgedSha);
+  expect(state.judgedSha).toBe(state.hostCommits.at(-1));
+  await expect(remoteTip(bare, state.branch)).resolves.toBe(state.judgedSha);
+  const listed = (
+    await exec("git", ["-C", state.workspaceDir, "rev-list", "--reverse", `${state.baseSha}..HEAD`], {
+      encoding: "utf8",
+    })
+  ).stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  expect(listed).toEqual(state.hostCommits);
+}
 
 const exec = promisify(execFile);
 const JUNIT = "reports/junit.xml";
@@ -125,7 +144,7 @@ describe("chore lane end to end (unattended)", () => {
         }
 
         expect(state.judgedSha).toBeTypeOf("string");
-        await expect(remoteTip(fixture.bare, state.branch)).resolves.toBe(state.judgedSha);
+        await assertJudgedPush(state, fixture.bare);
 
         const tree = await branchTree(join(state.workspaceDir, ".git"), state.branch).catch(() =>
           branchTree(fixture.bare, state.branch),
@@ -212,7 +231,7 @@ describe("chore lane end to end (steer gate)", () => {
         expect(decision.by).toBe("command");
 
         expect(resumed.judgedSha).toBeTypeOf("string");
-        await expect(remoteTip(fixture.bare, resumed.branch)).resolves.toBe(resumed.judgedSha);
+        await assertJudgedPush(resumed, fixture.bare);
 
         const tree = await branchTree(fixture.bare, resumed.branch);
         expect(tree).not.toContain("steer-packet.md");

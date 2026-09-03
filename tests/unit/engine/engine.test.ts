@@ -1,9 +1,11 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Engine, EngineError, agentLabel } from "../../../src/engine/engine.js";
 import { readEvidence, verifyEvidence } from "../../../src/engine/evidence.js";
 import { loadRunState, readGeneratedJson, readRunSecret, runDirPath } from "../../../src/engine/state.js";
 import type { Escalation, FactoryEvent, RunState } from "../../../src/engine/types.js";
+import { rawGit } from "../../helpers/raw-git.js";
 import {
   buildLaneSteps,
   cleanupTmpDirs,
@@ -84,6 +86,7 @@ describe("Engine.executeRun", () => {
     expect((await readEvidence(runDir, "plan"))?.headSha).toBe("0000000");
     expect((await readEvidence(runDir, "test"))?.headSha).toBe("sha-implement"); // after the checkpoint
     expect((await readEvidence(runDir, "judge"))?.predicates).toEqual([{ name: "checklist", ok: true }]);
+    expect((await readEvidence(runDir, "judge"))?.headSha).toBe("judged1");
     expect(final.steps[0]?.evidencePath).toBe(join(runDir, "evidence", "stage-plan-r0.json"));
 
     expect(events.map((e) => e.type).slice(0, 3)).toEqual(["run.start", "stage.start", "stage.end"]);
@@ -227,6 +230,35 @@ describe("Engine.executeRun", () => {
     const final = await engine.executeRun(run.runId);
     expect(final.status).toBe("waiting_user");
     expect(final.escalation?.code).toBe("approval-needed");
+  });
+
+  it("binds judgedSha to live workspace HEAD on safetyGating PASS, not evidence or hostCommits fallback", async () => {
+    const runsDir = await tmpRunsDir();
+    const ws = join(runsDir, "ws");
+    await mkdir(ws, { recursive: true });
+    await rawGit(ws, "init", "-q", "-b", "main");
+    await rawGit(ws, "config", "user.name", "Fixture");
+    await rawGit(ws, "config", "user.email", "fixture@example.invalid");
+    await writeFile(join(ws, "a.txt"), "a\n");
+    await rawGit(ws, "add", "-A");
+    await rawGit(ws, "commit", "-q", "-m", "init");
+    const liveHead = await rawGit(ws, "rev-parse", "HEAD");
+    const steps = [
+      makeStep({ name: "judge", kind: "agent", agent: "judge", safetyGating: true }, async () => ({
+        verdict: "PASS",
+        evidence: { headSha: "stale-from-agent" },
+      })),
+      makeStep({ name: "publish", host: "publish" }),
+      makeStep({ name: "escalate", host: "escalate" }),
+    ];
+    const engine = new Engine({ runsDir, evalWhen: evalWhenStub });
+    const run = await engine.startRun(startParams(makeWorkflow("head", steps), { workspaceDir: ws, baseSha: "not-the-head" }));
+    const final = await engine.executeRun(run.runId);
+    expect(liveHead).toMatch(/^[0-9a-f]{40}$/);
+    expect(final.judgedSha).toBe(liveHead);
+    expect(final.judgedSha).not.toBe("stale-from-agent");
+    expect(final.judgedSha).not.toBe("not-the-head");
+    expect((await readEvidence(runDirPath(runsDir, run.runId), "judge"))?.headSha).toBe(liveHead);
   });
 
   it("refuses to execute an unregistered run and returns terminal runs untouched", async () => {

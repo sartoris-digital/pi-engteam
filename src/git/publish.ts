@@ -22,7 +22,7 @@ export async function publish(state: RunState, cfg: EffectiveRepoConfig, ws: Wor
     if (!pre.ok) return { pushed: false, code: pre.code, detail: pre.detail };
 
     const pushTarget = ws.remoteUrl ?? pre.remote;
-    const refspec = `HEAD:refs/heads/${pre.branch}`;
+    const refspec = `${pre.headSha}:refs/heads/${pre.branch}`;
     const push = await hostGit(["push", pushTarget, refspec], { cwd: ws.path });
     if (push.code !== 0) {
       const tail = push.stderr.trim().split("\n").slice(-4).join(" | ");

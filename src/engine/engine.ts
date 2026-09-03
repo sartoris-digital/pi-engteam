@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { EffectiveRepoConfig } from "../config/schema.js";
+import { hostGitOk } from "../git/host-git.js";
 import type { SteerDecision } from "../steer/dialog.js";
 import { checkBudget, computeIterationBudget, isTerminalStep, resetRoundIterationGrant } from "./budget.js";
 import { writeEvidence } from "./evidence.js";
@@ -448,6 +449,15 @@ export class Engine {
     startedAt: string,
   ): Promise<void> {
     const ev = result.evidence ?? {};
+    let headSha = ev.headSha ?? state.hostCommits[state.hostCommits.length - 1] ?? state.baseSha;
+    if (step.safetyGating && result.verdict === "PASS" && !skipped) {
+      try {
+        headSha = await hostGitOk(["rev-parse", "HEAD"], { cwd: ctx.workspaceDir });
+      } catch {
+        // workspace HEAD unreadable: keep evidence/hostCommits/base fallback
+      }
+      state.judgedSha = headSha;
+    }
     const record: EvidenceRecord = {
       stage: step.name,
       round,
@@ -458,7 +468,7 @@ export class Engine {
       commands: ev.commands ?? [],
       synthesized: ev.synthesized ?? [],
       timedOut: ev.timedOut ?? false,
-      headSha: ev.headSha ?? state.hostCommits[state.hostCommits.length - 1] ?? state.baseSha,
+      headSha,
       at: this.iso(),
     };
     if (skipped || ev.skipped) record.skipped = true;
@@ -471,7 +481,6 @@ export class Engine {
     state.steps.push(rec);
     if (result.artifacts) Object.assign(state.artifacts, result.artifacts);
     if (typeof result.costUsd === "number" && result.costUsd > 0) state.costUsd += result.costUsd;
-    if (step.safetyGating && result.verdict === "PASS" && !skipped) state.judgedSha = record.headSha;
     if (result.commit && !skipped) {
       const sha = await this.checkpoint(ctx, result.commit.message);
       if (sha) state.hostCommits.push(sha);
