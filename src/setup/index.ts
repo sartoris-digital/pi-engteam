@@ -8,3 +8,4 @@ export {
 export type { ChecksProbe, DefaultBranchProbe, GitProbe, PackageManagerProbe } from "./probes.js";
 export { readAnswersFile, runGlobalInterview, runRepoInterview } from "./interview.js";
 export type { InterviewResult, SetupAnswers, SetupDiff, SetupUi } from "./interview.js";
+export { writeGlobalConfig, writeRepoConfig } from "./writers.js";
