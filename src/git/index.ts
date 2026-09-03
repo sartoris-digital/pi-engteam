@@ -18,3 +18,6 @@ export type { Handoff } from "./handoff.js";
 export { githubPrClient, renderPrTitle, isDraftPr, GhPrError } from "./pr.js";
 export type { PrClient, GhExec, GhResult } from "./pr.js";
 export { upsertStickyComment } from "./sticky.js";
+export { stablePatchId, stableDiffPatchId } from "./patch-id.js";
+export { landReconcile, reconcilePublished } from "./reconcile.js";
+export type { LandedAs, LandReconcileOptions } from "./reconcile.js";

@@ -5,8 +5,27 @@ import type { Ticket, TicketKind } from "../trackers/adapter.js";
 import { isTicketKind, refToString } from "../trackers/adapter.js";
 import type { ParsedFactoryArgs } from "./router.js";
 
-export const QUEUE_STATES = ["queued", "running", "waiting_user", "published", "failed", "cancelled"] as const;
+export const QUEUE_STATES = [
+  "queued",
+  "running",
+  "waiting_user",
+  "published",
+  "failed",
+  "cancelled",
+  "landed",
+  "closed",
+  "needs-rebase",
+] as const;
 export type QueueState = (typeof QUEUE_STATES)[number];
+export type LandedAs = "clean" | "human-modified" | "partial";
+
+export interface QueueWorkspace {
+  provider: "git" | "herdr";
+  path: string;
+  workspaceId?: string;
+  branch: string;
+  lane: string;
+}
 
 export interface QueueEntry {
   key: string;
@@ -27,6 +46,12 @@ export interface QueueEntry {
   patchIds?: string[];
   baseSha?: string;
   writebacks?: Record<string, string>;
+  workspace?: QueueWorkspace;
+  changedFiles?: string[];
+  landedAs?: LandedAs;
+  landedSha?: string;
+  landedBy?: "git" | "operator";
+  lastReconciledSha?: string;
 }
 
 export interface QueueFile {
