@@ -1,5 +1,5 @@
 import { mkdir, readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { signRecord, verifyRecord } from "../safety/evidence-sign.js";
 import { readGeneratedFile, readGeneratedJson, writeGeneratedFile, writeGeneratedJson } from "./state.js";
 import type { EvidenceRecord } from "./types.js";
@@ -7,9 +7,19 @@ import type { EvidenceRecord } from "./types.js";
 export type { EvidenceRecord } from "./types.js";
 
 const FILE_RE = /^stage-(.+)-r(\d+)\.json$/;
+const STAGE_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export function evidencePath(runDir: string, stage: string, round: number): string {
-  return join(runDir, "evidence", `stage-${stage}-r${round}.json`);
+  if (!STAGE_TOKEN_RE.test(stage) || stage.includes("..") || stage.includes("/") || stage.includes("\\") || stage.includes(sep)) {
+    throw new Error(`unsafe evidence stage name: ${JSON.stringify(stage)}`);
+  }
+  const evidenceDir = resolve(runDir, "evidence");
+  const path = resolve(evidenceDir, `stage-${stage}-r${round}.json`);
+  const rel = relative(evidenceDir, path);
+  if (rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel)) {
+    throw new Error(`evidence path escapes ${evidenceDir}: ${JSON.stringify(stage)}`);
+  }
+  return path;
 }
 
 function sigPath(jsonPath: string): string {

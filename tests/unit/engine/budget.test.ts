@@ -6,6 +6,7 @@ import {
   computeIterationBudget,
   fixCycleLength,
   isTerminalStep,
+  resetRoundIterationGrant,
 } from "../../../src/engine/budget.js";
 import type { RunState, Step, Transition, Workflow } from "../../../src/engine/types.js";
 
@@ -87,6 +88,11 @@ describe("computeIterationBudget", () => {
     const linear = [step("a"), step("b"), step("c")];
     expect(fixCycleLength(workflow(linear, 3))).toBe(0);
     expect(computeIterationBudget(workflow(linear, 3))).toBe(3 + 2);
+  });
+
+  it("an authorized reset grants a clean pass of headroom so counters still trip first", () => {
+    expect(resetRoundIterationGrant(workflow(buildSteps, 2, "implement"))).toBe(8);
+    expect(resetRoundIterationGrant(workflow([step("a"), step("b")], 2))).toBe(2);
   });
 });
 

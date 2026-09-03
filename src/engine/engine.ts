@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { EffectiveRepoConfig } from "../config/schema.js";
 import type { SteerDecision } from "../steer/dialog.js";
-import { checkBudget, computeIterationBudget, isTerminalStep } from "./budget.js";
+import { checkBudget, computeIterationBudget, isTerminalStep, resetRoundIterationGrant } from "./budget.js";
 import { writeEvidence } from "./evidence.js";
 import { loadRunState, newRunState, readRunSecret, runDirPath, saveRunState, writeGeneratedJson } from "./state.js";
 import {
@@ -224,6 +224,19 @@ export class Engine {
         await this.finishStep(state, step, ctx, result, skipped, round, startedAt);
 
         if (state.phase === "cancelling") return await this.finish(state, "cancelled");
+        // Last ordinary step can cross wall/cost; re-check before pause/halt/transition.
+        // The terminal escalate step stays budget-exempt.
+        if (!isTerminalStep(step)) {
+          const post = checkBudget(state, reg.workflow);
+          if (post.exhausted.includes("wall") || post.exhausted.includes("cost")) {
+            const kinds = post.exhausted.filter((k) => k === "wall" || k === "cost");
+            const detail =
+              `exhausted ${kinds.join(",")}: wall ${state.wallSecondsUsed.toFixed(1)}s/${state.budget.maxWallSeconds}s, ` +
+              `cost $${state.costUsd.toFixed(2)}/$${state.budget.maxCostUsd}`;
+            if (await this.escalate(reg, state, "budget-exhausted", detail)) return state;
+            continue;
+          }
+        }
         if (result.pauseForUser) {
           state.pauseForUser = result.pauseForUser;
           state.status = "waiting_user";
@@ -267,8 +280,12 @@ export class Engine {
       state.currentStep = opts.fromStep;
       delete state.escalation;
     }
+    const grant = resetRoundIterationGrant(reg.workflow);
     for (const stage of opts.resetRounds ?? []) {
-      state.rounds[stage] = Math.max(0, (state.rounds[stage] ?? 0) - 1);
+      const prev = state.rounds[stage] ?? 0;
+      const next = Math.max(0, prev - 1);
+      state.rounds[stage] = next;
+      if (next < prev) state.budget.maxIterations += grant;
     }
     // Handed to the resumed step as ctx.state.resumeDecision and cleared once it runs.
     // The engine persists no decision file — src/steer/stage.ts owns that.
@@ -367,14 +384,23 @@ export class Engine {
         }
         if (!applies) return { result: { verdict: "PASS", evidence: { skipped: true } }, skipped: true, ctx };
       }
-      let result = await this.invoke(step, ctx, controller);
+      // Consume the one-attempt decision on disk before invoke; the in-flight step
+      // sees a detached snapshot. A crash after the step must not replay it.
+      const resumeDecision = state.resumeDecision;
+      if (resumeDecision !== undefined) {
+        delete state.resumeDecision;
+        await this.save(state);
+      }
+      const stepCtx: StepContext =
+        resumeDecision === undefined ? ctx : { ...ctx, state: { ...state, resumeDecision: structuredClone(resumeDecision) } };
+      let result = await this.invoke(step, stepCtx, controller);
       if (result.verdict === "PASS" && step.verify) {
-        const verified = await this.verify(step, ctx, result);
+        const verified = await this.verify(step, stepCtx, result);
         if (verified.verdict !== "PASS") {
           result = { ...result, verdict: verified.verdict, issues: [...(result.issues ?? []), ...(verified.issues ?? [])] };
         }
       }
-      return { result, skipped: false, ctx };
+      return { result, skipped: false, ctx: stepCtx };
     } finally {
       cancelSignal.removeEventListener("abort", onCancel);
     }
@@ -450,8 +476,6 @@ export class Engine {
       const sha = await this.checkpoint(ctx, result.commit.message);
       if (sha) state.hostCommits.push(sha);
     }
-    // A resume decision is visible to exactly one step attempt (Task 3.7).
-    if (!skipped) delete state.resumeDecision;
     await this.save(state);
     this.emitStep(state, step, "stage.end", { round, verdict: result.verdict, skipped, timedOut: record.timedOut });
   }

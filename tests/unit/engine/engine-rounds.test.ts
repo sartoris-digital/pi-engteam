@@ -95,6 +95,30 @@ describe("fix rounds", () => {
     expect(onDisk?.code).toBe("loop-exhausted");
   });
 
+  it("authorized --from plan round resets still trip the counter before the iteration backstop", async () => {
+    const runsDir = await tmpRunsDir();
+    const steps = buildLaneSteps({ test: async () => ({ verdict: "FAIL", issues: ["red"] }) });
+    const workflow = makeWorkflow("chore", steps, { fixRounds: 2, fixTarget: "implement" });
+    const engine = new Engine({ runsDir, evalWhen: evalWhenStub });
+    const run = await engine.startRun(startParams(workflow));
+    expect(run.budget.maxIterations).toBe(18);
+
+    const first = await engine.executeRun(run.runId);
+    expect(first.escalation?.code).toBe("loop-exhausted");
+    expect(first.escalation?.detail).toContain("fix rounds for 'implement' exhausted");
+    expect(first.escalation?.detail).not.toContain("iteration backstop");
+    expect(first.iteration).toBe(8);
+
+    for (let i = 0; i < 3; i++) {
+      const again = await engine.resumeRun(run.runId, { fromStep: "plan", resetRounds: ["implement"] });
+      expect(again.escalation?.code, `resume ${i + 1}`).toBe("loop-exhausted");
+      expect(again.escalation?.detail, `resume ${i + 1}`).toContain("fix rounds for 'implement' exhausted");
+      expect(again.escalation?.detail, `resume ${i + 1}`).not.toContain("iteration backstop");
+      expect(again.iteration, `resume ${i + 1}`).toBeLessThan(again.budget.maxIterations);
+      expect(again.budget.maxIterations, `resume ${i + 1}`).toBeGreaterThan(18);
+    }
+  });
+
   it("a fix round that then passes clears the way to publish", async () => {
     const runsDir = await tmpRunsDir();
     let testCalls = 0;

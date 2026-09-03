@@ -11,6 +11,7 @@ describe("engine barrel", () => {
       [
         "ESCALATION_CODES", "Engine", "EngineError", "HUMAN_ACTIONS", "ITERATION_SLACK", "RUN_STATUSES",
         "agentLabel", "checkBudget", "cleanPassSteps", "computeIterationBudget", "evidencePath", "fixCycleLength",
+        "resetRoundIterationGrant",
         "isEscalationCode", "isSafeRunId", "isTerminalStep", "listEvidence", "listRuns", "loadRunState", "markerLine",
         "newRunState", "readEvidence", "readGeneratedFile", "readGeneratedJson", "readRunSecret", "runDirPath",
         "saveRunState", "stripMarker", "ulid", "verifyEvidence", "writeEvidence", "writeGeneratedFile", "writeGeneratedJson",

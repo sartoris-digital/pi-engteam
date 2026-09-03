@@ -192,8 +192,8 @@ export interface RunState {
   pauseForUser?: StepResult["pauseForUser"];
   /**
    * Engine addition: the decision handed to Engine.resumeRun. Visible to the resumed step as
-   * ctx.state.resumeDecision for exactly one attempt, then cleared. The engine never persists a
-   * steer-decision file — src/steer/stage.ts owns that.
+   * ctx.state.resumeDecision for exactly one attempt. Cleared from durable state before that
+   * attempt is invoked. The engine never persists a steer-decision file — src/steer/stage.ts owns that.
    */
   resumeDecision?: SteerDecision;
   budget: { maxWallSeconds: number; maxCostUsd: number; maxIterations: number; fixRounds: number };

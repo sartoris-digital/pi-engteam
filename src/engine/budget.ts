@@ -45,6 +45,15 @@ export function computeIterationBudget(workflow: Workflow): number {
   return cleanPassSteps(workflow) + workflow.budget.fixRounds * fixCycleLength(workflow) + ITERATION_SLACK;
 }
 
+/**
+ * Extra maxIterations granted per authorized `resetRounds` decrement.
+ * A clean-pass of headroom covers re-entry from any earlier step so the
+ * restored round counter still trips before the global backstop.
+ */
+export function resetRoundIterationGrant(workflow: Workflow): number {
+  return Math.max(cleanPassSteps(workflow), fixCycleLength(workflow), 1);
+}
+
 export function checkBudget(state: RunState, workflow: Workflow): BudgetCheck {
   const exhausted: BudgetCheck["exhausted"] = [];
   const { maxWallSeconds, maxCostUsd } = state.budget;

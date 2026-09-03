@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Engine, EngineError } from "../../../src/engine/engine.js";
 import { readEvidence, verifyEvidence } from "../../../src/engine/evidence.js";
-import { readRunSecret, runDirPath } from "../../../src/engine/state.js";
+import { loadRunState, readRunSecret, runDirPath } from "../../../src/engine/state.js";
 import type { SteerDecision } from "../../../src/steer/dialog.js";
 import {
   buildLaneSteps,
@@ -107,6 +107,82 @@ describe("Engine.resumeRun", () => {
     expect(final.escalation?.code).toBe("budget-exhausted");
     expect(final.escalation?.detail).toContain("cost");
     expect(final.steps.map((s) => s.name)).toEqual(["plan", "gate", "escalate"]);
+  });
+
+  it("a final step that exceeds maxWallSeconds is budget-exhausted, not succeeded", async () => {
+    const runsDir = await tmpRunsDir();
+    let clock = 0;
+    const steps = [
+      makeStep({ name: "publish", host: "publish" }, async () => {
+        clock += 100_000;
+        return { verdict: "PASS" };
+      }),
+    ];
+    const workflow = makeWorkflow("one", steps, { maxWallSeconds: 60 });
+    const engine = new Engine({ runsDir, evalWhen: evalWhenStub, now: () => clock });
+    const run = await engine.startRun(startParams(workflow));
+    const final = await engine.executeRun(run.runId);
+    expect(final.status).toBe("failed");
+    expect(final.escalation?.code).toBe("budget-exhausted");
+    expect(final.escalation?.detail).toContain("wall");
+    expect(final.wallSecondsUsed).toBeCloseTo(100, 6);
+  });
+
+  it("a final step that exceeds maxCostUsd is budget-exhausted, not succeeded", async () => {
+    const runsDir = await tmpRunsDir();
+    const steps = [makeStep({ name: "publish", host: "publish" }, async () => ({ verdict: "PASS", costUsd: 9 }))];
+    const workflow = makeWorkflow("one", steps, { maxCostUsd: 8 });
+    const engine = new Engine({ runsDir, evalWhen: evalWhenStub });
+    const run = await engine.startRun(startParams(workflow));
+    const final = await engine.executeRun(run.runId);
+    expect(final.status).toBe("failed");
+    expect(final.costUsd).toBe(9);
+    expect(final.escalation?.code).toBe("budget-exhausted");
+    expect(final.escalation?.detail).toContain("cost");
+  });
+
+  it("consumes resumeDecision on disk before the step so a crash cannot replay it", async () => {
+    const runsDir = await tmpRunsDir();
+    const seen: Array<SteerDecision | undefined> = [];
+    const diskDuringStep: Array<SteerDecision | undefined> = [];
+    const steps = [
+      makeStep({ name: "steer", kind: "human", onFail: "escalate:needs-decision" }, async (ctx) => {
+        seen.push(ctx.state.resumeDecision);
+        diskDuringStep.push((await loadRunState(runsDir, ctx.state.runId))?.resumeDecision);
+        if (!ctx.state.resumeDecision) {
+          return { verdict: "PASS", pauseForUser: { reason: "steer", packetPath: join(ctx.runDir, "steer-packet.md") } };
+        }
+        return { verdict: "PASS", commit: { message: "steer: checkpoint" } };
+      }),
+      makeStep({ name: "implement", kind: "agent", agent: "implementer" }),
+    ];
+    let crashOnce = true;
+    const engine = new Engine({
+      runsDir,
+      evalWhen: evalWhenStub,
+      checkpoint: async () => {
+        if (crashOnce) {
+          crashOnce = false;
+          throw new Error("crash after step");
+        }
+        return null;
+      },
+    });
+    const run = await engine.startRun(startParams(makeWorkflow("steer", steps)));
+    expect((await engine.executeRun(run.runId)).status).toBe("waiting_user");
+
+    await expect(engine.resumeRun(run.runId, { decision: { action: "approve", notes: "ship it" } })).rejects.toThrow(
+      /crash after step/,
+    );
+    expect(seen.filter((d) => d?.action === "approve")).toHaveLength(1);
+    expect(diskDuringStep[1]).toBeUndefined();
+    expect((await loadRunState(runsDir, run.runId))?.resumeDecision).toBeUndefined();
+
+    const recovered = await engine.executeRun(run.runId);
+    expect(recovered.status).toBe("waiting_user");
+    expect(seen.filter((d) => d?.action === "approve")).toHaveLength(1);
+    expect(seen[2]).toBeUndefined();
+    expect(recovered.resumeDecision).toBeUndefined();
   });
 
   it("resumes a failed run from a named step, clearing the escalation and resetting one round", async () => {

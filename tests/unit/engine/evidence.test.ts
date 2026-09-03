@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   evidencePath,
@@ -48,6 +48,15 @@ function record(over: Partial<EvidenceRecord> = {}): EvidenceRecord {
 describe("evidence", () => {
   it("names files stage-<stage>-r<round>.json", () => {
     expect(evidencePath("/runs/r1", "scope-check", 2)).toBe("/runs/r1/evidence/stage-scope-check-r2.json");
+  });
+
+  it("rejects stage names with separators or traversal and never writes outside evidence/", async () => {
+    for (const stage of ["../../victim", "foo/bar", "..", "a\\b", "stage/../../victim", "", ".", "foo.bar"]) {
+      expect(() => evidencePath("/runs/R", stage, 0), stage).toThrow(/unsafe evidence stage/);
+    }
+    const runDir = await tmpRunDir();
+    await expect(writeEvidence(runDir, record({ stage: "../../victim" }), SECRET)).rejects.toThrow(/unsafe evidence stage/);
+    await expect(stat(join(dirname(runDir), "victim-r0.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("writes a marker-prefixed record plus a .sig, both 0600", async () => {

@@ -36,7 +36,15 @@ export {
 } from "./state.js";
 
 export type { BudgetCheck } from "./budget.js";
-export { computeIterationBudget, checkBudget, cleanPassSteps, fixCycleLength, isTerminalStep, ITERATION_SLACK } from "./budget.js";
+export {
+  computeIterationBudget,
+  checkBudget,
+  cleanPassSteps,
+  fixCycleLength,
+  isTerminalStep,
+  resetRoundIterationGrant,
+  ITERATION_SLACK,
+} from "./budget.js";
 
 export { writeEvidence, readEvidence, verifyEvidence, listEvidence, evidencePath } from "./evidence.js";
 

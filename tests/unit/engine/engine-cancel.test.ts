@@ -8,8 +8,12 @@ import { cleanupTmpDirs, evalWhenStub, makeStep, makeWorkflow, startParams, tmpR
 afterEach(cleanupTmpDirs);
 
 /** Resolves with the given result only once ctx.signal aborts. */
-function untilAborted(result: Parameters<Step["run"]>[0] extends never ? never : Awaited<ReturnType<Step["run"]>>): Step["run"] {
+function untilAborted(
+  result: Parameters<Step["run"]>[0] extends never ? never : Awaited<ReturnType<Step["run"]>>,
+  onEntered?: () => void,
+): Step["run"] {
   return async (ctx) => {
+    onEntered?.();
     if (!ctx.signal.aborted) {
       await new Promise<void>((resolve) => ctx.signal.addEventListener("abort", () => resolve(), { once: true }));
     }
@@ -21,12 +25,19 @@ describe("Engine.cancelRun", () => {
   it("aborts the running step and finalises cancelled at the next boundary", async () => {
     const runsDir = await tmpRunsDir();
     const log: string[] = [];
+    let entered = (): void => undefined;
+    const implementEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     const steps = [
       makeStep({ name: "plan" }, async () => {
         log.push("plan");
         return { verdict: "PASS" };
       }),
-      makeStep({ name: "implement", kind: "agent", agent: "implementer" }, untilAborted({ verdict: "FAIL", issues: ["worker killed"] })),
+      makeStep(
+        { name: "implement", kind: "agent", agent: "implementer" },
+        untilAborted({ verdict: "FAIL", issues: ["worker killed"] }, entered),
+      ),
       makeStep({ name: "test" }, async () => {
         log.push("test");
         return { verdict: "PASS" };
@@ -35,7 +46,7 @@ describe("Engine.cancelRun", () => {
     const engine = new Engine({ runsDir, evalWhen: evalWhenStub });
     const run = await engine.startRun(startParams(makeWorkflow("cancel", steps)));
     const running = engine.executeRun(run.runId);
-    await new Promise((r) => setTimeout(r, 20));
+    await implementEntered;
     const ack = await engine.cancelRun(run.runId);
     expect(ack.phase).toBe("cancelling");
     const final = await running;
