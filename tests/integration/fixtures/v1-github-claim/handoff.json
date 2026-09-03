@@ -1,0 +1,14 @@
+{
+  "ref": "github:acme/widgets#42",
+  "runId": "run-id",
+  "lane": "chore",
+  "branch": "factory/github-42-slug",
+  "baseSha": "0000000000000000000000000000000000000000",
+  "judgedSha": "1111111111111111111111111111111111111111",
+  "hostCommits": ["1111111111111111111111111111111111111111"],
+  "patchIds": [],
+  "changedFiles": ["src/added.ts"],
+  "writeGlobs": ["src/**"],
+  "prUrl": "https://github.com/acme/widgets/pull/9",
+  "publishedAt": "2026-09-03T00:00:00.000Z"
+}
