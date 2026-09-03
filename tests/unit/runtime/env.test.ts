@@ -155,10 +155,15 @@ describe("buildWorkerEnv", () => {
   it("accepts extra PI_SDLC_* keys and rejects anything else", () => {
     const env = buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), {
       scrub: createScrubDirs(tmp),
-      extra: { PI_SDLC_STUB_SCENARIO: "/tmp/scenario.json", PI_SDLC_STUB_LOG: "/tmp/stub.log" },
+      extra: {
+        PI_SDLC_STUB_SCENARIO: "/tmp/scenario.json",
+        PI_SDLC_STUB_LOG: "/tmp/stub.log",
+        PI_SDLC_STUB_LOAD_EXTENSION: "1",
+      },
     });
     expect(env.PI_SDLC_STUB_SCENARIO).toBe("/tmp/scenario.json");
     expect(env.PI_SDLC_STUB_LOG).toBe("/tmp/stub.log");
+    expect(env.PI_SDLC_STUB_LOAD_EXTENSION).toBe("1");
     expect(() =>
       buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), { scrub: createScrubDirs(tmp), extra: { GITHUB_TOKEN: "x" } }),
     ).toThrow(/must start with PI_SDLC_/);

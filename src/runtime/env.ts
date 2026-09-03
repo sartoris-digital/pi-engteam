@@ -9,7 +9,7 @@ export const WORKER_ENV_PASSTHROUGH = ["PATH", "HOME", "USER", "LANG", "TERM", "
 export const DEFAULT_PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"] as const;
 export const WORKER_ENV_PREFIX = "PI_SDLC_";
 /** The only extraEnv keys a caller may set. Everything else, including locked PI_SDLC_*, is refused. */
-export const EXTRA_ENV_ALLOWLIST = new Set(["PI_SDLC_STUB_SCENARIO", "PI_SDLC_STUB_LOG"]);
+export const EXTRA_ENV_ALLOWLIST = new Set(["PI_SDLC_STUB_SCENARIO", "PI_SDLC_STUB_LOG", "PI_SDLC_STUB_LOAD_EXTENSION"]);
 const EXTRA_ENV_LOCKED = new Set([
   "PI_SDLC_AGENT_MODE",
   "PI_SDLC_VERDICT_FILE",

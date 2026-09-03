@@ -1,0 +1,45 @@
+{
+  "verdict": "codifiable",
+  "inputs": [
+    {
+      "name": "pkg",
+      "type": "identifier",
+      "provenance": "title:",
+      "description": "Package name to bump"
+    },
+    {
+      "name": "version",
+      "type": "semver",
+      "provenance": "title:",
+      "description": "Target semver from the ticket title"
+    },
+    {
+      "name": "date",
+      "type": "shortText",
+      "provenance": "host:today",
+      "description": "Changelog date supplied by the host"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "d1",
+      "oracle": "fs",
+      "file": "package.json",
+      "pattern": "\"name\"",
+      "branches": ["present"]
+    }
+  ],
+  "postconditions": ["checks:lint"],
+  "sideEffects": {
+    "writeGlobs": ["package.json", "src/**"],
+    "readGlobs": ["package.json", "src/**"]
+  },
+  "allowedCommands": ["git-readonly"],
+  "irreversible": false,
+  "residuals": [],
+  "bindings": [
+    { "name": "pkg", "value": "fixture-app" },
+    { "name": "version", "value": "1.1.0", "memberRunId": "run-a" },
+    { "name": "version", "value": "1.2.0", "memberRunId": "run-b" }
+  ]
+}
