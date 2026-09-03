@@ -67,4 +67,34 @@ describe("config schemas", () => {
     expect(Check(FactoryConfigSchema, { schemaVersion: 1, operator: { codify: { eligibility: "published" } } })).toBe(true);
     expect(Check(FactoryConfigSchema, { schemaVersion: 1, operator: { codify: { eligibility: "draft" } } })).toBe(false);
   });
+
+  it("lets the operator enable v3.mergeQueue", () => {
+    expect(
+      Check(FactoryConfigSchema, {
+        schemaVersion: 1,
+        operator: { v3: { mergeQueue: { enabled: true } } },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts bestOfN.n of 2 or 3 and rejects 1 and 4", () => {
+    expect(
+      Check(FactoryConfigSchema, { schemaVersion: 1, operator: { v3: { bestOfN: { n: 2 } } } }),
+    ).toBe(true);
+    expect(
+      Check(FactoryConfigSchema, { schemaVersion: 1, operator: { v3: { bestOfN: { n: 3 } } } }),
+    ).toBe(true);
+    expect(
+      Check(FactoryConfigSchema, { schemaVersion: 1, operator: { v3: { bestOfN: { n: 1 } } } }),
+    ).toBe(false);
+    expect(
+      Check(FactoryConfigSchema, { schemaVersion: 1, operator: { v3: { bestOfN: { n: 4 } } } }),
+    ).toBe(false);
+  });
+
+  it("rejects unknown operator.v3 keys", () => {
+    expect(
+      Check(FactoryConfigSchema, { schemaVersion: 1, operator: { v3: { foo: { enabled: true } } } }),
+    ).toBe(false);
+  });
 });

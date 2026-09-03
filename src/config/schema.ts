@@ -99,6 +99,72 @@ export const CodifyOverlaySchema = Type.Object(
   strict,
 );
 
+export const V3_FLAG_NAMES = [
+  "gitlab",
+  "linear",
+  "mcpTrackers",
+  "setfit",
+  "secondReview",
+  "transcriptAudit",
+  "bestOfN",
+  "dagParallel",
+  "mergeQueue",
+  "webhooks",
+  "collaborateExecution",
+  "crossRepoTools",
+  "learner",
+] as const;
+export type V3FlagName = (typeof V3_FLAG_NAMES)[number];
+
+const v3EnabledBlock = Type.Object({ enabled: leaf(Type.Boolean()) }, strict);
+
+export const V3PolicyOverlaySchema = Type.Object(
+  {
+    gitlab: Type.Optional(v3EnabledBlock),
+    linear: Type.Optional(v3EnabledBlock),
+    mcpTrackers: Type.Optional(v3EnabledBlock),
+    setfit: Type.Optional(
+      Type.Object({ enabled: leaf(Type.Boolean()), minLabelsPerClass: leaf(PositiveInt) }, strict),
+    ),
+    secondReview: Type.Optional(
+      Type.Object({ enabled: leaf(Type.Boolean()), rate: leaf(Type.Number({ minimum: 0, maximum: 1 })) }, strict),
+    ),
+    transcriptAudit: Type.Optional(v3EnabledBlock),
+    bestOfN: Type.Optional(
+      Type.Object(
+        { enabled: leaf(Type.Boolean()), n: leaf(Type.Union([Type.Literal(2), Type.Literal(3)])) },
+        strict,
+      ),
+    ),
+    dagParallel: Type.Optional(v3EnabledBlock),
+    mergeQueue: Type.Optional(v3EnabledBlock),
+    webhooks: Type.Optional(
+      Type.Object({ enabled: leaf(Type.Boolean()), bind: leaf(Type.String()), secret: leaf(Type.String()) }, strict),
+    ),
+    collaborateExecution: Type.Optional(v3EnabledBlock),
+    crossRepoTools: Type.Optional(v3EnabledBlock),
+    learner: Type.Optional(v3EnabledBlock),
+  },
+  strict,
+);
+export type V3PolicyOverlay = Static<typeof V3PolicyOverlaySchema>;
+
+export interface V3Policy {
+  gitlab: { enabled: boolean };
+  linear: { enabled: boolean };
+  mcpTrackers: { enabled: boolean };
+  setfit: { enabled: boolean; minLabelsPerClass: number };
+  secondReview: { enabled: boolean; rate: number };
+  transcriptAudit: { enabled: boolean };
+  bestOfN: { enabled: boolean; n: 2 | 3 };
+  dagParallel: { enabled: boolean };
+  mergeQueue: { enabled: boolean };
+  webhooks: { enabled: boolean; bind?: string; secret?: string };
+  collaborateExecution: { enabled: boolean };
+  crossRepoTools: { enabled: boolean };
+  learner: { enabled: boolean };
+}
+
 export const OperatorOverlaySchema = Type.Object(
   {
     trackers: leaf(Type.Array(TrackerEntrySchema)),
@@ -147,6 +213,7 @@ export const OperatorOverlaySchema = Type.Object(
     gcDays: leaf(NonNegativeInt),
     landReminderDays: leaf(NonNegativeInt),
     codify: Type.Optional(CodifyOverlaySchema),
+    v3: Type.Optional(V3PolicyOverlaySchema),
   },
   strict,
 );
@@ -338,6 +405,7 @@ export interface OperatorConfig {
   gcDays: number;
   landReminderDays: number;
   codify: CodifyConfig;
+  v3: V3Policy;
 }
 
 /** Contract shape (v0-contract.md) plus optional v0 extras that loadEffectiveConfig always fills in. */

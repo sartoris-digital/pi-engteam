@@ -56,6 +56,22 @@ const table: Array<[path: string, expected: unknown]> = [
   ["operator.codify.demoteAfterFailures", 2],
   ["operator.codify.cooldownDays", 30],
   ["operator.codify.taskTools.unattended", "never"],
+  ["operator.v3.gitlab.enabled", false],
+  ["operator.v3.linear.enabled", false],
+  ["operator.v3.mcpTrackers.enabled", false],
+  ["operator.v3.setfit.enabled", false],
+  ["operator.v3.setfit.minLabelsPerClass", 40],
+  ["operator.v3.secondReview.enabled", false],
+  ["operator.v3.secondReview.rate", 0.1],
+  ["operator.v3.transcriptAudit.enabled", false],
+  ["operator.v3.bestOfN.enabled", false],
+  ["operator.v3.bestOfN.n", 2],
+  ["operator.v3.dagParallel.enabled", false],
+  ["operator.v3.mergeQueue.enabled", false],
+  ["operator.v3.webhooks.enabled", false],
+  ["operator.v3.collaborateExecution.enabled", false],
+  ["operator.v3.crossRepoTools.enabled", false],
+  ["operator.v3.learner.enabled", false],
   // trackers[] entry defaults (conditional on kind for transitionOnClaim)
   ["trackerEntry.label", "factory:ready"],
   ["trackerEntry.transitionOnClaim", { github: false, jira: true, "azure-devops": true }],
@@ -141,5 +157,13 @@ describe("DEFAULTS mirrors the spec §2.2 table", () => {
 
   it("is a fresh object graph (callers may structuredClone it safely)", () => {
     expect(structuredClone(DEFAULTS)).toEqual(DEFAULTS);
+  });
+
+  it("defaults every operator.v3.*.enabled flag to false", () => {
+    const v3 = DEFAULTS.operator.v3;
+    expect(v3).toBeDefined();
+    for (const [name, block] of Object.entries(v3)) {
+      expect(block.enabled, `operator.v3.${name}.enabled`).toBe(false);
+    }
   });
 });

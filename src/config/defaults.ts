@@ -1,4 +1,4 @@
-import type { Branching, EffectiveRepoConfig, LaneEnv, OperatorConfig, TrackerKind } from "./schema.js";
+import type { Branching, EffectiveRepoConfig, LaneEnv, OperatorConfig, TrackerKind, V3Policy } from "./schema.js";
 
 /**
  * Spec §2.5 built-in generated-doc patterns: extendable per layer, never shrinkable (narrowing.ts).
@@ -110,6 +110,21 @@ export const DEFAULTS: {
       cooldownDays: 30,
       taskTools: { unattended: "never" },
     },
+    v3: {
+      gitlab: { enabled: false },
+      linear: { enabled: false },
+      mcpTrackers: { enabled: false },
+      setfit: { enabled: false, minLabelsPerClass: 40 },
+      secondReview: { enabled: false, rate: 0.1 },
+      transcriptAudit: { enabled: false },
+      bestOfN: { enabled: false, n: 2 },
+      dagParallel: { enabled: false },
+      mergeQueue: { enabled: false },
+      webhooks: { enabled: false },
+      collaborateExecution: { enabled: false },
+      crossRepoTools: { enabled: false },
+      learner: { enabled: false },
+    } satisfies V3Policy,
   },
   trackerEntry: {
     label: "factory:ready",

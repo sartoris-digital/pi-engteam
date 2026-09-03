@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { migrateConfig, migrateRepoFile } from "../../../src/config/migrate.js";
 import { ConfigError } from "../../../src/config/errors.js";
+import { DEFAULTS } from "../../../src/config/defaults.js";
 
 function fail(fn: () => unknown): ConfigError {
   try {
@@ -71,6 +72,15 @@ describe("migrateConfig (schemaVersion 1)", () => {
   it("rejects non-object input", () => {
     expect(fail(() => migrateConfig([])).code).toBe("parse");
     expect(fail(() => migrateConfig("x")).code).toBe("parse");
+  });
+
+  it("migrates a v1 file with no v3 block; missing v3 ≡ all flags off", () => {
+    const raw = { schemaVersion: 1, operator: { maxLanes: 4 } };
+    expect(migrateConfig(raw)).toEqual(raw);
+    expect(migrateConfig(raw).operator).not.toHaveProperty("v3");
+    for (const [name, block] of Object.entries(DEFAULTS.operator.v3)) {
+      expect(block.enabled, `operator.v3.${name}.enabled`).toBe(false);
+    }
   });
 });
 

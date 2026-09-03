@@ -12,6 +12,10 @@ coverage/
 .serena/
 .playwright-mcp/
 
+# python bytecode from the codify lint helpers
+__pycache__/
+*.pyc
+
 # scratch
 *.png
 .DS_Store
