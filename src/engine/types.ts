@@ -94,6 +94,27 @@ export interface EvidenceRecord {
   skipped?: boolean;
   humanIntervened?: { turns: number };
   at: string;
+  fusion?: {
+    mode: string;
+    slots: Array<{
+      name: string;
+      model: string;
+      verdict?: Verdict;
+      durationMs?: number;
+      cost?: number;
+      artifact?: string;
+    }>;
+    merge: { method: string; discarded: string[] };
+    requested?: string[];
+    ran?: Array<{
+      name: string;
+      model: string;
+      verdict?: Verdict;
+      durationMs?: number;
+      cost?: number;
+      artifact?: string;
+    }>;
+  };
 }
 
 export interface StepContext {

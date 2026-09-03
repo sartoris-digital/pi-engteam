@@ -14,9 +14,10 @@ import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.j
 import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
 import { LocalAdapter } from "../trackers/local.js";
+import { hostGitOk } from "../git/host-git.js";
 import { EnvSetupFailedError, runSetupCommand } from "../workspace/setup.js";
 import { sanitizeSlug } from "../workspace/git-provider.js";
-import type { WorkspaceProvider } from "../workspace/types.js";
+import type { Workspace, WorkspaceProvider } from "../workspace/types.js";
 import { writeTicketMarkdown } from "./artifacts.js";
 import { makeStageHooks, pinWorkspaceArtifacts, policyShaOf, type StageHookDeps } from "./stage-hooks.js";
 
@@ -75,6 +76,22 @@ export function renderBranch(cfg: EffectiveConfig, ticket: Ticket): string {
     out = out.replaceAll(`{{${key}}}`, value).replaceAll(`{${key}}`, value);
   }
   return out;
+}
+
+async function workspaceOnMainCheckout(repo: string, configSha: string, remote?: string): Promise<Workspace> {
+  const baseSha = await hostGitOk(["rev-parse", "HEAD"], { cwd: repo });
+  const branch = await hostGitOk(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo });
+  const gitCommon = await hostGitOk(["rev-parse", "--git-common-dir"], { cwd: repo });
+  return {
+    provider: "git",
+    path: repo,
+    branch: branch === "HEAD" ? "main" : branch,
+    baseSha,
+    repoRoot: repo,
+    gitCommonDir: gitCommon.startsWith("/") ? gitCommon : join(repo, gitCommon),
+    configSha,
+    ...(remote === undefined ? {} : { remote }),
+  };
 }
 
 async function stageHookDeps(deps: FactoryDeps, fusion?: OperatorConfig["fusion"]): Promise<StageHookDeps> {
@@ -167,15 +184,18 @@ export async function runTicket(
   const lane = deps.lanes[laneName];
   if (lane === undefined) throw new Error(`unknown lane ${laneName}`);
   const named: NamedLane = { ...lane, name: laneName };
+  const preBuild = (lane.class ?? "build") === "pre-build";
 
-  const ws = await deps.provider.create({
-    repoRoot: repo,
-    branch: renderBranch(cfg, ticket),
-    base: cfg.repo.branching.base,
-    slug: sanitizeSlug(refToString(ticket.ref)),
-    lockReason: `factory:${refToString(ticket.ref)}`,
-    remote: cfg.repo.remote,
-  });
+  const ws: Workspace = preBuild
+    ? await workspaceOnMainCheckout(repo, cfg.configSha, cfg.repo.remote)
+    : await deps.provider.create({
+        repoRoot: repo,
+        branch: renderBranch(cfg, ticket),
+        base: cfg.repo.branching.base,
+        slug: sanitizeSlug(refToString(ticket.ref)),
+        lockReason: `factory:${refToString(ticket.ref)}`,
+        remote: cfg.repo.remote,
+      });
 
   const hooks = makeStageHooks(await stageHookDeps(deps, cfg.operator.fusion));
   const workflow = compileLane(named, CATALOG, hooks);
@@ -206,7 +226,7 @@ export async function runTicket(
   const dir = join(deps.runsDir, state.runId);
   await writeTicketMarkdown(dir, ticket.body, state.nonce);
 
-  if (cfg.repo.setupCommand !== undefined && cfg.repo.setupCommand.length > 0) {
+  if (!preBuild && cfg.repo.setupCommand !== undefined && cfg.repo.setupCommand.length > 0) {
     try {
       await runSetupCommand(ws, cfg.repo, { timeoutMs: cfg.repo.setupTimeoutSeconds * 1000 });
     } catch (err) {

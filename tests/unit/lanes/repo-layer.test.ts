@@ -32,7 +32,7 @@ async function violation(paths: string[]): Promise<LaneInvariantError> {
 describe("loadEffectiveLanes with a repo layer", () => {
   it("returns the built-ins when no override layer exists", async () => {
     const lanes = await loadEffectiveLanes([BUILTIN_LANES_PATH, join(dir, "missing.yaml")]);
-    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "enhancement", "feature"]);
+    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "enhancement", "feature", "grill"]);
   });
 
   it("rejects a repo lane file that removes the judge", async () => {

@@ -4,9 +4,9 @@ import { checkInvariants } from "../../../src/lanes/invariants.js";
 import { BUILTIN_LANES_PATH, loadBuiltinLanes } from "../../../src/lanes/load.js";
 
 describe("built-in lanes.yaml", () => {
-  it("loads exactly chore, bug, enhancement, feature", async () => {
+  it("loads chore, bug, enhancement, feature, and grill", async () => {
     const lanes = await loadBuiltinLanes();
-    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "enhancement", "feature"]);
+    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "enhancement", "feature", "grill"]);
     expect(BUILTIN_LANES_PATH).toMatch(/assets\/lanes\.yaml$/);
   });
 
@@ -50,9 +50,10 @@ describe("built-in lanes.yaml", () => {
     }
   });
 
-  it("locks gate (when present), steer, test, judge, publish on every lane", async () => {
+  it("locks gate (when present), steer, test, judge, publish on every build lane", async () => {
     const lanes = await loadBuiltinLanes();
     for (const def of Object.values(lanes)) {
+      if ((def.class ?? "build") !== "build") continue;
       for (const name of ["steer", "test", "judge", "publish"]) {
         expect(def.stages.find((s) => s.name === name)?.locked, name).toBe(true);
       }

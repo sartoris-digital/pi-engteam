@@ -70,3 +70,18 @@ lanes:
       - { name: judge, agent: judge, safetyGating: true, locked: true, gates: [evidence-signed, no-synthesized, checklist, ac-spotcheck], onFail: fix-round }
       - { name: publish, host: publish, locked: true, gates: [head-is-judged-sha, preflight], onFail: "escalate:publish-refused" }
     onExhausted: escalate
+
+  grill:
+    class: pre-build
+    match: { trigger: [grill] }
+    priority: 50
+    budget: { fixRounds: 1, maxWallSeconds: 3600, maxCostUsd: 6 }
+    stages:
+      - { name: frame, agent: codebase-cartographer, gates: ["sections:frame.md:Idea,Repo map,Related tickets"] }
+      - { name: interrogate, agent: discoverer, mode: grill, maxRounds: 4 }
+      - { name: spec, agent: architect, gates: ["sections:spec.md:Problem,Approach,Acceptance Criteria,Interfaces,Out of Scope,Open Questions"] }
+      - { name: challenge, agent: architect, mode: refute, gates: ["sections:challenge.md:Infeasible,Untestable ACs,Scope creep,Missing NFRs,Cheaper alternative"] }
+      - { name: revise, agent: architect, gates: ["sections:spec.md:Problem,Approach,Acceptance Criteria,Interfaces,Out of Scope,Open Questions"] }
+      - { name: plan, agent: planner, mode: approach, gates: ["sections:plan.md:Goal,Files to touch,Steps,Verify,Out of scope"] }
+      - { name: handoff, human: true, packet: handoff, locked: true }
+    onExhausted: escalate
