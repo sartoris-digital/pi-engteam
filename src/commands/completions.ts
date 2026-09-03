@@ -23,6 +23,9 @@ const VERB_HELP: Record<(typeof SUBCOMMANDS)[number], string> = {
   start: "drain queued tickets",
   approve: "resume a waiting_user steer gate",
   status: "show queue / one run",
+  landed: "mark a published ticket landed by the operator",
+  closed: "mark a published ticket closed (retain worktree)",
+  reconcile: "detect landings from git history",
 };
 
 const KINDS = ["feature", "enhancement", "bug", "chore"] as const;
@@ -60,8 +63,19 @@ export function completeFactoryArgs(argumentPrefix: string, deps: CompletionDeps
       trimmed,
     );
   }
-  if (trimmed.startsWith("approve") || trimmed.startsWith("status")) {
-    const verb = trimmed.startsWith("approve") ? "approve" : "status";
+  if (
+    trimmed.startsWith("approve") ||
+    trimmed.startsWith("status") ||
+    trimmed.startsWith("landed") ||
+    trimmed.startsWith("closed")
+  ) {
+    const verb = trimmed.startsWith("approve")
+      ? "approve"
+      : trimmed.startsWith("status")
+        ? "status"
+        : trimmed.startsWith("landed")
+          ? "landed"
+          : "closed";
     return items(
       deps.runs.map((r) => ({
         value: `${verb} ${r.ref}`,

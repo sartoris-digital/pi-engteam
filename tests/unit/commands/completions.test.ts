@@ -11,7 +11,16 @@ describe("completeFactoryArgs", () => {
   it("is synchronous and lists v0 verbs on an empty prefix", () => {
     const items = completeFactoryArgs("", deps);
     expect(items).not.toBeInstanceOf(Promise);
-    expect(items?.map((i) => i.value)).toEqual(["setup", "enqueue", "start", "approve", "status"]);
+    expect(items?.map((i) => i.value)).toEqual([
+      "setup",
+      "enqueue",
+      "start",
+      "approve",
+      "status",
+      "landed",
+      "closed",
+      "reconcile",
+    ]);
     expect(items?.every((i) => !i.value.endsWith(" "))).toBe(true);
     expect(items?.every((i) => typeof i.description === "string")).toBe(true);
   });

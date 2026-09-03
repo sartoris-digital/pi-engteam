@@ -67,6 +67,10 @@ export function queueKey(tracker: string, repo: string, ref: string): string {
   return `${tracker}:${repo}:${ref}`;
 }
 
+export function findQueueEntry(queue: QueueFile, ref: string): QueueEntry | undefined {
+  return queue.entries.find((e) => e.ref === ref || e.runId === ref || e.key === ref);
+}
+
 export async function readQueue(runsDir: string): Promise<QueueFile> {
   try {
     const raw = JSON.parse(await readFile(queuePath(runsDir), "utf8")) as QueueFile;

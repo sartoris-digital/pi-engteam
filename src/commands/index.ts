@@ -11,8 +11,11 @@ import {
 import { readAnswersFile, runGlobalInterview, runRepoInterview, type SetupUi } from "../setup/interview.js";
 import { writeGlobalConfig, writeRepoConfig } from "../setup/writers.js";
 import { runApprove } from "./approve.js";
+import { runClosed } from "./closed.js";
 import { completeFactoryArgs, type AutocompleteItem, type CompletionDeps } from "./completions.js";
 import { readQueue, runEnqueue } from "./enqueue.js";
+import { runLanded } from "./landed.js";
+import { runReconcile } from "./reconcile.js";
 import { parseFactoryArgs } from "./router.js";
 import { runStart } from "./start.js";
 import { runStatus } from "./status.js";
@@ -123,6 +126,21 @@ export function registerCommands(pi: ExtensionAPI, deps: FactoryDeps): Registere
           case "status":
             ctx.ui.notify(await runStatus(parsed, deps), "info");
             return;
+          case "landed": {
+            const entry = await runLanded(parsed, deps);
+            ctx.ui.notify(`${entry.ref} landed (${entry.landedAs ?? "clean"})`, "info");
+            return;
+          }
+          case "closed": {
+            const entry = await runClosed(parsed, deps);
+            ctx.ui.notify(`${entry.ref} closed`, "info");
+            return;
+          }
+          case "reconcile": {
+            const updated = await runReconcile(parsed, deps);
+            ctx.ui.notify(`/factory reconcile: ${updated.length} published entry(ies)`, "info");
+            return;
+          }
         }
       } catch (error) {
         ctx.ui.notify(`/factory ${parsed.verb}: ${String(error)}`, "error");

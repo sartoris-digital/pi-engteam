@@ -3,7 +3,16 @@ import { parseFactoryArgs, SUBCOMMANDS } from "../../../src/commands/router.js";
 
 describe("parseFactoryArgs", () => {
   it("lists the v0 watch-less subcommands", () => {
-    expect([...SUBCOMMANDS]).toEqual(["setup", "enqueue", "start", "approve", "status"]);
+    expect([...SUBCOMMANDS]).toEqual([
+      "setup",
+      "enqueue",
+      "start",
+      "approve",
+      "status",
+      "landed",
+      "closed",
+      "reconcile",
+    ]);
   });
 
   it("parses enqueue with quoted --task and string flags", () => {
