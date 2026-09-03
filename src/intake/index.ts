@@ -40,3 +40,5 @@ export { computeConfidence, computeTier } from "./confidence.js";
 export type { ConfidenceOpts, ConfidenceResult } from "./confidence.js";
 export { evaluateDoR, stripTemplateBoilerplate } from "./dor.js";
 export type { DorFail, DorFailure, DorOk, DorOpts, DorResult } from "./dor.js";
+export { runIntakeAnalysis } from "./analyze.js";
+export type { AnalystPort, AnalystSlot, IntakeAnalysis, RunIntakeOptions } from "./analyze.js";
