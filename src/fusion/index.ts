@@ -13,3 +13,9 @@ export { mergeFuse } from "./fuse.js";
 export { mergeAdversarial } from "./adversarial.js";
 export { mergeVeto } from "./veto.js";
 export { mergeDebate } from "./debate.js";
+export {
+  fusionRequestFromStage,
+  mergeForMode,
+  runFusion,
+  type RunFusionOptions,
+} from "./run.js";

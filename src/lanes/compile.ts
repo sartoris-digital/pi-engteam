@@ -71,6 +71,7 @@ function assertCatalog(lane: string, def: StageDef, catalog: Catalog): void {
 
 function toStep(def: StageDef, hooks: StageHooks, timeout: number, lane: string, catalog: Catalog): Step {
   assertCatalog(lane, def, catalog);
+  // Fusion fans out inside the agent hook; compile still emits one Step per YAML stage (no dependsOn).
   const kind = stageKind(def);
   const run =
     kind === "agent" ? hooks.agentStep(def, def.name) : kind === "host" ? hooks.hostStep(def, def.name) : hooks.humanStep(def, def.name);

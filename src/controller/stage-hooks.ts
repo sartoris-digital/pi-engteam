@@ -10,6 +10,7 @@ import { publish } from "../git/publish.js";
 import type { PrClient } from "../git/pr.js";
 import type { StageHooks } from "../lanes/hooks.js";
 import type { StageDef } from "../lanes/schema.js";
+import { fusionRequestFromStage, mergeForMode, runFusion, type FusionSlot } from "../fusion/index.js";
 import { writeStepPrompt } from "../runtime/prompt.js";
 import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import { makeSteerStep, type SteerHooks } from "../steer/stage.js";
@@ -57,6 +58,13 @@ export function pinWorkspaceArtifacts(state: RunState, ws: Workspace): void {
   if (ws.remoteUrl !== undefined) state.artifacts[ART_REMOTE_URL] = ws.remoteUrl;
 }
 
+export interface FusionHookConfig {
+  off: boolean;
+  stack: FusionSlot[];
+  synthesizer?: string;
+  slotTimeoutSeconds: number;
+}
+
 export interface StageHookDeps {
   executor: WorkerExecutor;
   agents: AgentDef[];
@@ -71,6 +79,7 @@ export interface StageHookDeps {
   runsDir?: string;
   rules?: RuleRecord[];
   home?: string;
+  fusion?: FusionHookConfig;
 }
 
 async function resolveRules(ctx: StepContext, deps: StageHookDeps): Promise<RuleRecord[]> {
@@ -174,6 +183,22 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     piBinary: deps.piBinary,
     tools: agent.tools,
   };
+  if (stage.fusion) {
+    const fusionReq = fusionRequestFromStage(stage, deps.fusion?.stack ?? []);
+    if (fusionReq === null) return { verdict: "FAIL", issues: ["invalid fusion config"] };
+    if (deps.fusion?.synthesizer && fusionReq.synthesizer === undefined) {
+      fusionReq.synthesizer = deps.fusion.synthesizer;
+    }
+    return runFusion({
+      req: fusionReq,
+      executor: deps.executor,
+      base: req,
+      merge: mergeForMode(fusionReq.mode),
+      slotTimeoutMs: (deps.fusion?.slotTimeoutSeconds ?? 300) * 1000,
+      off: deps.fusion?.off ?? false,
+      emit: ctx.emit,
+    });
+  }
   const worker = await deps.executor.run(req);
   const timedOut = worker.timedOut;
   const verdict = worker.verdict;
