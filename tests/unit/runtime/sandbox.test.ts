@@ -197,4 +197,23 @@ describe("sandbox", () => {
       expect(args).toContain(`--tmpfs ${linuxKeyring}`);
     });
   });
+
+  describe("networkAllow", () => {
+    it("is omitted on the default worker profile and network stays allow", () => {
+      const p = profileForRequest(makeWorkerRequest({ cwd: join(root, "nope") }), { home: root, tmpDir: root });
+      expect(p.network).toBe("allow");
+      expect(p.networkAllow).toBeUndefined();
+      expect(Object.hasOwn(p, "networkAllow")).toBe(false);
+    });
+
+    it("round-trips on the profile object and is recorded in the seatbelt text", () => {
+      const withAllow: SandboxProfile = { ...profile, networkAllow: ["api.github.com", "registry.npmjs.org"] };
+      expect(withAllow.networkAllow).toEqual(["api.github.com", "registry.npmjs.org"]);
+      expect(withAllow.network).toBe("allow");
+      const text = renderSeatbeltProfile(withAllow, "run-sb");
+      expect(text).toContain("api.github.com");
+      expect(text).toContain("registry.npmjs.org");
+      expect(text).not.toContain("(deny network*)");
+    });
+  });
 });

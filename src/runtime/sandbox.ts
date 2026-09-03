@@ -18,6 +18,8 @@ export interface SandboxProfile {
   denyRead: string[];
   denyUnixSockets: string[];
   network: "allow" | "deny";
+  /** Host allowlist for v1.5/v2 workers; unused by the v1 wrap (no CONNECT proxy). */
+  networkAllow?: string[];
 }
 
 export interface SandboxProbe {
@@ -103,6 +105,9 @@ export function renderSeatbeltProfile(profile: SandboxProfile, runId: string): s
     lines.push(`(deny network-outbound (literal ${sbString(canonical(s))}))`);
   }
   if (profile.network === "deny") lines.push("(deny network*)");
+  if (profile.networkAllow !== undefined && profile.networkAllow.length > 0) {
+    lines.push(`;; networkAllow ${profile.networkAllow.join(" ")}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
