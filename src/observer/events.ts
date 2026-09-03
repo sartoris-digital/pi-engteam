@@ -1,6 +1,5 @@
-import { appendFile, mkdir, readdir, readFile, rename, stat, unlink } from "node:fs/promises";
-import { join } from "node:path";
-import { generatedMarker } from "../home.js";
+import { appendFile, mkdir, readdir, readFile, rename, rmdir, stat, unlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 export const EVENT_CATEGORIES = [
   "lifecycle",
@@ -57,6 +56,10 @@ export const DEFAULT_MAX_ROTATED = 10;
 export const DEFAULT_MAX_DATA_BYTES = 2048;
 
 const ROTATED_RE = /^events\.(\d+)\.jsonl$/;
+const LOCK_NAME = ".events.lock";
+
+/** Per canonical events path: serialize append/rotation across Observer instances. */
+const appendTails = new Map<string, Promise<void>>();
 
 export interface ObserverOptions {
   rotationBytes?: number;
@@ -64,15 +67,54 @@ export interface ObserverOptions {
   maxDataBytes?: number;
 }
 
-/** Spec §9.3: tool args and results are recorded clipped to 2 KB. */
+function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, "utf8");
+  if (buf.byteLength <= maxBytes) return text;
+  let n = Math.max(0, maxBytes);
+  while (n > 0 && n < buf.byteLength && (buf[n]! & 0xc0) === 0x80) n--;
+  return buf.subarray(0, n).toString("utf8");
+}
+
+/**
+ * Spec §9.3: tool args and results are recorded clipped to 2 KB.
+ * The cap is the UTF-8 byte length of `preview`, truncated on a code-point
+ * boundary. The `{clipped, bytes, preview}` wrapper may itself exceed `maxBytes`.
+ */
 export function clipData(data: unknown, maxBytes: number = DEFAULT_MAX_DATA_BYTES): unknown {
   const json = JSON.stringify(data);
   if (json === undefined) return data;
   const bytes = Buffer.byteLength(json, "utf8");
   if (bytes <= maxBytes) return data;
-  return { clipped: true, bytes, preview: json.slice(0, maxBytes) };
+  return { clipped: true, bytes, preview: truncateUtf8Bytes(json, maxBytes) };
 }
 
+async function withDirLock(lockDir: string, fn: () => Promise<void>): Promise<void> {
+  const started = Date.now();
+  for (;;) {
+    try {
+      await mkdir(lockDir);
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") throw err;
+      if (Date.now() - started > 5_000) throw new Error("observer: events write lock timed out");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+  try {
+    await fn();
+  } finally {
+    await rmdir(lockDir).catch(() => undefined);
+  }
+}
+
+/**
+ * Host-owned JSONL audit log for one run directory.
+ *
+ * v0 contract: construct at most one Observer per canonical runDir (the
+ * lane-runner holds `Map<runId, Observer>`). Same-process duplicates share a
+ * write queue and a mkdir lock so rotation cannot drop events.
+ */
 export class Observer {
   readonly runDir: string;
   readonly runId: string;
@@ -84,15 +126,15 @@ export class Observer {
   private lastError: Error | null = null;
 
   constructor(runDir: string, runId: string, opts: ObserverOptions = {}) {
-    this.runDir = runDir;
+    this.runDir = resolve(runDir);
     this.runId = runId;
-    this.path = join(runDir, EVENTS_FILE);
+    this.path = join(this.runDir, EVENTS_FILE);
     this.rotationBytes = opts.rotationBytes ?? DEFAULT_ROTATION_BYTES;
     this.maxRotated = opts.maxRotated ?? DEFAULT_MAX_ROTATED;
     this.maxDataBytes = opts.maxDataBytes ?? DEFAULT_MAX_DATA_BYTES;
   }
 
-  /** Validate synchronously, then append through a serial queue (fire-and-forget). */
+  /** Validate synchronously, then append through a path-scoped serial queue (fire-and-forget). */
   emit(event: FactoryEventInput): void {
     if (!isEventCategory(event.category)) {
       throw new TypeError(`observer: unknown event category ${JSON.stringify(event.category)}`);
@@ -114,16 +156,17 @@ export class Observer {
     if (event.agent !== undefined) full.agent = event.agent;
     if (event.data !== undefined) full.data = clipData(event.data, this.maxDataBytes) as Record<string, unknown>;
     const line = JSON.stringify(full) + "\n";
-    this.queue = this.queue
-      .then(() => this.append(line))
-      .catch((err: unknown) => {
-        this.lastError = err instanceof Error ? err : new Error(String(err));
-      });
+    const prev = appendTails.get(this.path) ?? Promise.resolve();
+    const run = prev.then(() => this.append(line));
+    appendTails.set(this.path, run.then(() => undefined, () => undefined));
+    this.queue = run.catch((err: unknown) => {
+      this.lastError = err instanceof Error ? err : new Error(String(err));
+    });
   }
 
-  /** Wait for every queued append; rethrow the most recent write failure once. */
+  /** Wait for every queued append on this run's events path; rethrow the most recent write failure once. */
   async flush(): Promise<void> {
-    await this.queue;
+    await (appendTails.get(this.path) ?? this.queue);
     if (this.lastError !== null) {
       const err = this.lastError;
       this.lastError = null;
@@ -133,12 +176,21 @@ export class Observer {
 
   private async append(line: string): Promise<void> {
     await mkdir(this.runDir, { recursive: true });
-    await this.rotateIfNeeded();
-    const exists = await stat(this.path).then(() => true, () => false);
-    if (!exists) {
-      await appendFile(this.path, generatedMarker(this.runId) + "\n", { encoding: "utf8", mode: 0o600 });
-    }
-    await appendFile(this.path, line, "utf8");
+    await withDirLock(join(this.runDir, LOCK_NAME), async () => {
+      await this.rotateIfNeeded();
+      const exists = await stat(this.path).then(() => true, () => false);
+      if (!exists) {
+        const open: FactoryEvent = {
+          ts: new Date().toISOString(),
+          runId: this.runId,
+          category: "lifecycle",
+          type: "observer.open",
+          data: { generated: true },
+        };
+        await appendFile(this.path, JSON.stringify(open) + "\n", { encoding: "utf8", mode: 0o600 });
+      }
+      await appendFile(this.path, line, "utf8");
+    });
   }
 
   private async rotateIfNeeded(): Promise<void> {
@@ -162,12 +214,18 @@ export class Observer {
   }
 }
 
-/** Parse one events file, skipping the marker line and blanks. Missing file → []. */
+/** Parse one events file. Missing file → []. Every other filesystem error propagates. */
 export async function readEvents(runDir: string, file: string = EVENTS_FILE): Promise<FactoryEvent[]> {
-  const text = await readFile(join(runDir, file), "utf8").catch(() => "");
+  let text: string;
+  try {
+    text = await readFile(join(runDir, file), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
   const events: FactoryEvent[] = [];
   for (const line of text.split("\n")) {
-    if (line === "" || line.startsWith("<!--")) continue;
+    if (line === "") continue;
     events.push(JSON.parse(line) as FactoryEvent);
   }
   return events;
