@@ -9,3 +9,10 @@ export {
   type BuildWorkerEnvOptions,
   type ScrubDirs,
 } from "./env.js";
+export {
+  parseVerdict,
+  readVerdictFileOnce,
+  waitForVerdictFile,
+  type ParseVerdictResult,
+  type WaitForVerdictOptions,
+} from "./verdict.js";
