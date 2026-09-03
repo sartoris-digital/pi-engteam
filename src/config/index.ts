@@ -10,3 +10,14 @@ export {
 } from "./defaults.js";
 export { mergeLayers, type ConfigLayer, type MergeOptions, type MergeResult } from "./merge.js";
 export { migrateConfig, migrateRepoFile, validateConfigValue } from "./migrate.js";
+export {
+  committedConfigPath,
+  expandHome,
+  findRepoEntry,
+  globalConfigPath,
+  localConfigPath,
+  readCommitted,
+  readGlobal,
+  readLocal,
+  readRepoOverrides,
+} from "./layers.js";
