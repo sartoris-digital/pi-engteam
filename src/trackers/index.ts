@@ -12,3 +12,7 @@ export type {
 } from "./adapter.js";
 export { LOCAL_TICKET_STATUSES, LocalAdapter, deriveTitle, localTicketsDir } from "./local.js";
 export type { LocalAdapterOptions, LocalTicketRecord, LocalTicketStatus } from "./local.js";
+export { sanitizeTicketText, stripTrackerPrior } from "./sanitize.js";
+export type { TrackerPrior } from "./sanitize.js";
+export { screenText } from "./screen.js";
+export type { ScreenFlags } from "./screen.js";
