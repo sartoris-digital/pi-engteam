@@ -10,3 +10,8 @@ export {
   writeQueue,
 } from "./queue.js";
 export type { BriefConfidence, LandedAs, QueueEntry, QueueFile, QueueState, QueueWorkspace } from "./queue.js";
+export { acquireDaemonLease, leasePath } from "./lease.js";
+export type { AcquireLeaseOptions, DaemonLease } from "./lease.js";
+export { drainInbox, enqueueInbox, inboxDir } from "./inbox.js";
+export { appendLedger, ledgerPath, readLedger } from "./ledger.js";
+export type { LedgerEvent } from "./ledger.js";
