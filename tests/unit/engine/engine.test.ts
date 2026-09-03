@@ -159,6 +159,24 @@ describe("Engine.executeRun", () => {
     expect(final.escalation?.code).toBe("needs-decision");
   });
 
+  it("propagates escalate from the verifier hook", async () => {
+    const runsDir = await tmpRunsDir();
+    const steps = [
+      makeStep({ name: "implement", kind: "agent", agent: "implementer", verify: true, onFail: "fix-round" }),
+      makeStep({ name: "escalate", host: "escalate" }),
+    ];
+    const engine = new Engine({
+      runsDir,
+      evalWhen: evalWhenStub,
+      verify: async () => ({ verdict: "FAIL", issues: ["skip marker added"], escalate: "test-tampering" }),
+    });
+    const run = await engine.startRun(startParams(makeWorkflow("ver", steps, { fixRounds: 2, fixTarget: "implement" })));
+    const final = await engine.executeRun(run.runId);
+    expect(final.status).toBe("failed");
+    expect(final.steps[0]?.verdict).toBe("FAIL");
+    expect(final.escalation?.code).toBe("test-tampering");
+  });
+
   it("a step's `escalate` runs the terminal escalate step (budget-exempt) and ends failed", async () => {
     const runsDir = await tmpRunsDir();
     const log: string[] = [];

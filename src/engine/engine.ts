@@ -396,9 +396,20 @@ export class Engine {
         resumeDecision === undefined ? ctx : { ...ctx, state: { ...state, resumeDecision: structuredClone(resumeDecision) } };
       let result = await this.invoke(step, stepCtx, controller);
       if (result.verdict === "PASS" && step.verify) {
+        // Checkpoint first so verify_git_clean sees the post-commit tree (generated docs remain).
+        if (result.commit) {
+          const sha = await this.checkpoint(stepCtx, result.commit.message);
+          if (sha) state.hostCommits.push(sha);
+          delete result.commit;
+        }
         const verified = await this.verify(step, stepCtx, result);
         if (verified.verdict !== "PASS") {
-          result = { ...result, verdict: verified.verdict, issues: [...(result.issues ?? []), ...(verified.issues ?? [])] };
+          result = {
+            ...result,
+            verdict: verified.verdict,
+            issues: [...(result.issues ?? []), ...(verified.issues ?? [])],
+            ...(verified.escalate !== undefined ? { escalate: verified.escalate } : {}),
+          };
         }
       }
       return { result, skipped: false, ctx: stepCtx };
