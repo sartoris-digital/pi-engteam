@@ -11,21 +11,31 @@ import {
 import { readAnswersFile, runGlobalInterview, runRepoInterview, type SetupUi } from "../setup/interview.js";
 import { writeGlobalConfig, writeRepoConfig } from "../setup/writers.js";
 import { runApprove } from "./approve.js";
+import { runCancel } from "./cancel.js";
+import { runClassify } from "./classify.js";
 import { runClosed } from "./closed.js";
 import { runDoctor } from "./doctor.js";
 import { completeFactoryArgs, type AutocompleteItem, type CompletionDeps } from "./completions.js";
+import { runDrop } from "./drop.js";
 import { readQueue, runEnqueue } from "./enqueue.js";
 import { runForget } from "./forget.js";
+import { runGc } from "./gc.js";
 import { runGrant } from "./grant.js";
 import { runGrill } from "./grill.js";
 import { runLanded } from "./landed.js";
 import { runReconcile } from "./reconcile.js";
 import { runRemember } from "./remember.js";
+import { runReplan } from "./replan.js";
+import { runRescan } from "./rescan.js";
+import { runResume } from "./resume.js";
+import { runRetry } from "./retry.js";
 import { parseFactoryArgs, type FactoryVerb } from "./router.js";
 import { runRules } from "./rules.js";
 import { runSecret } from "./secret.js";
 import { runStart } from "./start.js";
 import { runStatus } from "./status.js";
+import { runStop } from "./stop.js";
+import { runWatch } from "./watch.js";
 
 export interface RegisteredCommands {
   /** Re-reads the queue into the synchronous completion snapshot. */
@@ -223,19 +233,45 @@ async function dispatchFactoryVerb(
       const text = await runDoctor(deps, parsed);
       return info(typeof text === "string" ? text : JSON.stringify(text));
     }
+    case "resume": {
+      const state = await runResume(parsed, deps);
+      return info(`${state.runId} resumed → ${state.status}`);
+    }
+    case "cancel": {
+      const out = await runCancel(parsed, deps);
+      return info(`${"runId" in out ? out.runId : out.ref} cancelled`);
+    }
+    case "drop": {
+      const out = await runDrop(parsed, deps);
+      return info(`${out.ref} dropped${out.removed ? " (worktree removed)" : ""}`);
+    }
+    case "retry": {
+      const entry = await runRetry(parsed, deps);
+      return info(`${entry.ref} requeued`);
+    }
+    case "rescan": {
+      const out = await runRescan(parsed, deps);
+      return info(`/factory rescan: claimed ${out.claimed}, skipped ${out.skipped}`);
+    }
+    case "gc": {
+      const out = await runGc(parsed, deps);
+      return info(`/factory gc: removed ${out.removed} worktree(s)`);
+    }
+    case "classify": {
+      const entry = await runClassify(parsed, deps);
+      return info(`${entry.ref} classified as ${entry.kind}`);
+    }
+    case "replan": {
+      const state = await runReplan(parsed, deps);
+      return info(`${state.runId} replan → ${state.status}`);
+    }
+    case "stop":
+      return info(await runStop(parsed, deps));
+    case "watch":
+      return info(await runWatch(parsed, deps));
     case "config":
     case "lanes":
-    case "watch":
     case "interrupt":
-    case "stop":
-    case "classify":
-    case "resume":
-    case "replan":
-    case "cancel":
-    case "drop":
-    case "retry":
-    case "rescan":
-    case "gc":
     case "rebase":
       return notImplemented(verb);
   }
@@ -248,4 +284,14 @@ export { runGrill } from "./grill.js";
 export { runGrant } from "./grant.js";
 export { runSecret } from "./secret.js";
 export { runDoctor } from "./doctor.js";
+export { runResume } from "./resume.js";
+export { runCancel } from "./cancel.js";
+export { runDrop } from "./drop.js";
+export { runRetry } from "./retry.js";
+export { runRescan } from "./rescan.js";
+export { runGc } from "./gc.js";
+export { runClassify } from "./classify.js";
+export { runReplan } from "./replan.js";
+export { runStop } from "./stop.js";
+export { runWatch } from "./watch.js";
 

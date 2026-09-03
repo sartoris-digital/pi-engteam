@@ -69,6 +69,6 @@ describe("scaffold", () => {
     await withTmpHome(async () => {
       await mod.default(pi as never);
     });
-    expect(touched).toEqual(["registerCommand", "on", "on"]);
+    expect(touched).toEqual(["registerCommand", "on", "on", "on"]);
   });
 });

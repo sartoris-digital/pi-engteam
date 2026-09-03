@@ -8,6 +8,7 @@ import type { ParsedFactoryArgs } from "./router.js";
 export { queueStateFor } from "../scheduler/queue.js";
 
 export async function runStart(parsed: ParsedFactoryArgs, deps: FactoryDeps): Promise<RunState[]> {
+  await deps.scheduler?.start();
   const repoFilter = typeof parsed.flags.repo === "string" ? parsed.flags.repo : undefined;
   const started: RunState[] = [];
   for (;;) {
