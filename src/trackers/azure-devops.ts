@@ -19,6 +19,8 @@ const QUAL_REF = /^(?:azure-devops:|ado:)([^/]+)\/([^#]+)#(\d+)$/i;
 const ID_REF = /^(?:azure-devops:)?(\d+)$/;
 
 const CLAIM_DROP = new Set(["factory:ready", "factory:needs-triage", "factory:blocked", "factory:closed"]);
+const COMMENTS_API = "7.1-preview.4";
+const IDK_MARKER = /<!--\s*factory-idk:([^ ]+)\s*-->/;
 
 export interface AzureDevOpsAdapterOptions {
   org: string;
@@ -115,6 +117,7 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
   private readonly transitionOnClaim: boolean;
   private readonly claimState: string;
   private readonly assignOnClaim: boolean;
+  private readonly posted = new Map<string, CommentId>();
   private detectMemo: { at: number; value: { available: boolean; reason?: string } } | undefined;
 
   constructor(opts: AzureDevOpsAdapterOptions) {
@@ -199,8 +202,36 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
     return out;
   }
 
-  async getComments(_ref: TicketRef, _since?: Date): Promise<Comment[]> {
-    return [];
+  async getComments(ref: TicketRef, since?: Date): Promise<Comment[]> {
+    const id = this.requireId(ref);
+    const result = await this.az(["rest", "--method", "GET", "--uri", this.commentsUri(id)]);
+    const rec = asRecord(this.parseJson(result.stdout));
+    const rows = Array.isArray(rec?.comments) ? rec.comments : Array.isArray(this.parseJson(result.stdout)) ? (this.parseJson(result.stdout) as unknown[]) : [];
+    const sinceMs = since?.getTime();
+    const out: Comment[] = [];
+    for (const row of rows) {
+      const item = asRecord(row);
+      if (item === null) continue;
+      const author = uniqueNameOf(item.createdBy ?? item.author);
+      if (this.dropAuthor(author)) continue;
+      const createdAt =
+        typeof item.createdDate === "string"
+          ? item.createdDate
+          : typeof item.created_date === "string"
+            ? item.created_date
+            : "";
+      if (sinceMs !== undefined && createdAt.length > 0) {
+        const t = Date.parse(createdAt);
+        if (Number.isFinite(t) && t < sinceMs) continue;
+      }
+      out.push({
+        id: String(item.id ?? ""),
+        author,
+        body: typeof item.text === "string" ? item.text : typeof item.body === "string" ? item.body : "",
+        createdAt,
+      });
+    }
+    return out;
   }
 
   async labelerOf(ref: TicketRef, _label: string): Promise<{ login: string; role: string } | null> {
@@ -226,11 +257,73 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
     void this.assignOnClaim;
   }
 
-  async comment(_ref: TicketRef, _body: string, _opts: { idempotencyKey: string }): Promise<CommentId | null> {
-    return null;
+  async comment(ref: TicketRef, body: string, opts: { idempotencyKey: string }): Promise<CommentId | null> {
+    const key = `${ref.id}:${opts.idempotencyKey}`;
+    const cached = this.posted.get(key);
+    if (cached !== undefined) return cached;
+    const existing = await this.findIdempotentComment(ref, opts.idempotencyKey);
+    if (existing !== null) {
+      this.posted.set(key, existing);
+      return existing;
+    }
+    const id = this.requireId(ref);
+    const text = `<!-- factory-idk:${opts.idempotencyKey} -->\n${body}`;
+    const result = await this.az([
+      "rest",
+      "--method",
+      "POST",
+      "--uri",
+      this.commentsUri(id),
+      "--body",
+      JSON.stringify({ text }),
+    ]);
+    const rec = asRecord(this.parseJson(result.stdout));
+    const commentId = rec?.id !== undefined ? String(rec.id) : key;
+    this.posted.set(key, commentId);
+    return commentId;
   }
 
-  async editComment(_ref: TicketRef, _id: CommentId, _body: string): Promise<void> {}
+  async editComment(ref: TicketRef, id: CommentId, body: string): Promise<void> {
+    const workItem = this.requireId(ref);
+    await this.az([
+      "rest",
+      "--method",
+      "PATCH",
+      "--uri",
+      this.commentsUri(workItem, id),
+      "--body",
+      JSON.stringify({ text: body }),
+    ]);
+  }
+
+  async createPr(opts: {
+    source: string;
+    target: string;
+    title: string;
+    body: string;
+    draft?: boolean;
+  }): Promise<{ url: string; number: string }> {
+    const args = [
+      "repos",
+      "pr",
+      "create",
+      "--source-branch",
+      opts.source,
+      "--target-branch",
+      opts.target,
+      "--title",
+      opts.title,
+      "--description",
+      opts.body,
+    ];
+    if (opts.draft === true) args.push("--draft");
+    args.push("-o", "json");
+    const result = await this.az(args);
+    const rec = asRecord(this.parseJson(result.stdout)) ?? {};
+    const number = rec.pullRequestId !== undefined ? String(rec.pullRequestId) : "";
+    const url = typeof rec.url === "string" ? rec.url : "";
+    return { url, number };
+  }
 
   async addLabel(ref: TicketRef, label: string): Promise<void> {
     const tags = await this.readTags(ref);
@@ -256,7 +349,33 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
     await this.az(["boards", "work-item", "update", "--id", String(id), "--assigned-to", user, "-o", "json"]);
   }
 
-  async linkPR(_ref: TicketRef, _pr: PRRef): Promise<void> {}
+  async linkPR(ref: TicketRef, pr: PRRef): Promise<void> {
+    const workItem = this.requireId(ref);
+    const prId = String(pr.number);
+    await this.az(["repos", "pr", "work-item", "add", "--id", prId, "--work-items", String(workItem)]);
+  }
+
+  private commentsUri(workItemId: number, commentId?: string): string {
+    const base = `${this.orgUrl}/${this.project}/_apis/wit/workItems/${workItemId}/comments`;
+    const path = commentId === undefined ? base : `${base}/${commentId}`;
+    return `${path}?api-version=${COMMENTS_API}`;
+  }
+
+  private dropAuthor(login: string): boolean {
+    if (login.endsWith("[bot]")) return true;
+    return this.ignoreAuthors.some((a) => authorsMatch(login, a));
+  }
+
+  private async findIdempotentComment(ref: TicketRef, idempotencyKey: string): Promise<CommentId | null> {
+    try {
+      const comments = await this.getComments(ref);
+      const marker = `<!-- factory-idk:${idempotencyKey} -->`;
+      const hit = comments.find((c) => c.body.includes(marker) || IDK_MARKER.exec(c.body)?.[1] === idempotencyKey);
+      return hit === undefined ? null : hit.id;
+    } catch {
+      return null;
+    }
+  }
 
   private async readTags(ref: TicketRef): Promise<string[]> {
     const ticket = await this.fetch(ref);
