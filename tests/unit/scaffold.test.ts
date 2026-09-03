@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
+import { withTmpHome } from "../helpers/tmp-home.js";
 
 describe("scaffold", () => {
   it("package.json declares the pi extension entry and only typebox + yaml at runtime", async () => {
@@ -47,7 +48,7 @@ describe("scaffold", () => {
     }
   });
 
-  it("src/index.ts default export is a function that registers nothing yet", async () => {
+  it("src/index.ts default export registers /factory in controller mode", async () => {
     const mod = await import("../../src/index.js");
     expect(typeof mod.default).toBe("function");
     const touched: string[] = [];
@@ -60,7 +61,9 @@ describe("scaffold", () => {
         },
       },
     );
-    await mod.default(pi as never);
-    expect(touched).toEqual([]);
+    await withTmpHome(async () => {
+      await mod.default(pi as never);
+    });
+    expect(touched).toEqual(["registerCommand", "on"]);
   });
 });
