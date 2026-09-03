@@ -104,16 +104,78 @@ export function checkInvariants(lane: NamedLane, catalog: Catalog): InvariantErr
   return [...classErrors, ...checkCatalogInvariants(lane, catalog)];
 }
 
-export function matchesOverlap(_a: LaneMatch, _b: LaneMatch): boolean {
-  return false; // Task 5.9 replaces this
+function listOverlap(a?: string[], b?: string[]): boolean {
+  if (!a || a.length === 0 || !b || b.length === 0) return true;
+  return a.some((x) => b.includes(x));
+}
+
+export function matchesOverlap(a: LaneMatch, b: LaneMatch): boolean {
+  const same = (x?: string, y?: string): boolean => x === undefined || y === undefined || x === y;
+  return (
+    same(a.kind, b.kind) &&
+    same(a.tier, b.tier) &&
+    same(a.size, b.size) &&
+    listOverlap(a.labels, b.labels) &&
+    listOverlap(a.flags, b.flags) &&
+    listOverlap(a.trigger, b.trigger)
+  );
+}
+
+function isAlways(when?: string): boolean {
+  return when === undefined || when.trim() === "" || when.trim() === "true";
 }
 
 export function checkOverrideInvariants(
-  _builtins: Record<string, LaneDef>,
-  _effective: Record<string, LaneDef>,
+  builtins: Record<string, LaneDef>,
+  effective: Record<string, LaneDef>,
   _catalog: Catalog,
 ): InvariantError[] {
-  return []; // Task 5.9 replaces this
+  const out: InvariantError[] = [];
+  for (const [name, base] of Object.entries(builtins)) {
+    const next = effective[name];
+    if (!next) continue;
+    const locked = base.stages.filter((s) => s.locked === true);
+    const lockedNames = locked.map((s) => s.name);
+    const positions = lockedNames.map((n) => next.stages.findIndex((s) => s.name === n));
+    lockedNames.forEach((stage, i) => {
+      if ((positions[i] ?? -1) < 0) out.push(err(name, "locked-removed", stage));
+    });
+    const present = positions.filter((p) => p >= 0);
+    if (present.some((p, i) => i > 0 && p < (present[i - 1] ?? 0))) {
+      out.push(err(name, "locked-reordered"));
+    }
+    for (const stage of base.stages) {
+      const got = next.stages.find((s) => s.name === stage.name);
+      if (!got) continue;
+      const need = new Set(stage.gates ?? []);
+      const have = new Set(got.gates ?? []);
+      for (const g of need) {
+        if (!have.has(g)) out.push(err(name, "gates-removed", stage.name, g));
+      }
+    }
+    const b = base.budget;
+    const e = next.budget;
+    if (e.fixRounds > b.fixRounds || e.maxWallSeconds > b.maxWallSeconds || e.maxCostUsd > b.maxCostUsd) {
+      out.push(err(name, "budget-loosened"));
+    }
+    const baseByName = new Map(base.stages.map((s) => [s.name, s]));
+    for (const stage of next.stages) {
+      const prev = baseByName.get(stage.name);
+      if (!prev) continue;
+      if (isAlways(prev.when) && !isAlways(stage.when)) out.push(err(name, "when-loosened", stage.name));
+    }
+  }
+  const names = Object.keys(effective);
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const a = effective[names[i]!]!;
+      const b = effective[names[j]!]!;
+      if (a.priority === b.priority && matchesOverlap(a.match, b.match)) {
+        out.push(err(names[i]!, "match-overlap", undefined, names[j]));
+      }
+    }
+  }
+  return out;
 }
 
 export function checkAllInvariants(
