@@ -17,6 +17,36 @@ describe("scaffold", () => {
     expect(Object.keys(pkg.dependencies).sort()).toEqual(["typebox", "yaml"]);
   });
 
+  it("locks the 0.84 peer range, NodeNext toolchain and no-bundler contract", async () => {
+    const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as {
+      packageManager: string;
+      scripts: Record<string, string>;
+      peerDependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+      dependencies: Record<string, string>;
+    };
+    const ts = JSON.parse(await readFile(new URL("../../tsconfig.json", import.meta.url), "utf8")) as {
+      compilerOptions: Record<string, unknown>;
+    };
+    expect(pkg.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.84.4");
+    expect(pkg.devDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.84.4");
+    expect(pkg.packageManager.startsWith("pnpm@")).toBe(true);
+    expect(pkg.scripts).toEqual({
+      test: "vitest run",
+      "test:watch": "vitest",
+      typecheck: "tsc --noEmit -p tsconfig.json",
+    });
+    expect(ts.compilerOptions.module).toBe("NodeNext");
+    expect(ts.compilerOptions.moduleResolution).toBe("NodeNext");
+    expect(ts.compilerOptions.target).toBe("ES2022");
+    expect(ts.compilerOptions.strict).toBe(true);
+    expect(ts.compilerOptions.noUncheckedIndexedAccess).toBe(true);
+    for (const bundler of ["esbuild", "tsup", "webpack", "rollup", "vite", "parcel"]) {
+      expect(pkg.dependencies[bundler], bundler).toBeUndefined();
+      expect(pkg.devDependencies[bundler], bundler).toBeUndefined();
+    }
+  });
+
   it("src/index.ts default export is a function that registers nothing yet", async () => {
     const mod = await import("../../src/index.js");
     expect(typeof mod.default).toBe("function");

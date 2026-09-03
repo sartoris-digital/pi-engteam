@@ -12,17 +12,24 @@ export interface TmpHome {
 export async function makeTmpHome(): Promise<TmpHome> {
   const home = await realpath(await mkdtemp(join(tmpdir(), "pi-sdlc-home-")));
   const previous = process.env[FACTORY_HOME_ENV];
-  process.env[FACTORY_HOME_ENV] = home;
-  await ensureDirs(home);
+  try {
+    process.env[FACTORY_HOME_ENV] = home;
+    await ensureDirs(home);
+  } catch (err) {
+    if (previous === undefined) delete process.env[FACTORY_HOME_ENV];
+    else process.env[FACTORY_HOME_ENV] = previous;
+    await rm(home, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
+  }
   let cleaned = false;
   return {
     home,
     cleanup: async () => {
       if (cleaned) return;
-      cleaned = true;
       if (previous === undefined) delete process.env[FACTORY_HOME_ENV];
       else process.env[FACTORY_HOME_ENV] = previous;
       await rm(home, { recursive: true, force: true });
+      cleaned = true;
     },
   };
 }

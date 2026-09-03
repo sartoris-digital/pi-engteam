@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -135,5 +135,20 @@ describe("tmp-home helper", () => {
     await t.cleanup();
     await t.cleanup();
     await expect(stat(t.home)).rejects.toThrow();
+  });
+
+  it("makeTmpHome restores PI_SDLC_HOME even if the tree is already gone", async () => {
+    const before = process.env[FACTORY_HOME_ENV];
+    process.env[FACTORY_HOME_ENV] = "/previous/value";
+    try {
+      const t = await makeTmpHome();
+      await rm(t.home, { recursive: true, force: true });
+      await t.cleanup();
+      expect(process.env[FACTORY_HOME_ENV]).toBe("/previous/value");
+      await t.cleanup();
+    } finally {
+      if (before === undefined) delete process.env[FACTORY_HOME_ENV];
+      else process.env[FACTORY_HOME_ENV] = before;
+    }
   });
 });

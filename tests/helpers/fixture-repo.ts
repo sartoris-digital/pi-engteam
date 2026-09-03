@@ -20,6 +20,8 @@ export interface FixtureRepo {
   repo: string;
   /** Bare remote. */
   bare: string;
+  /** Fixture-owned HOME/XDG/TMPDIR for child git and checks. */
+  isolatedHome: string;
   defaultBranch: "main";
   /** Sha of the single initial commit (== origin/main). */
   baseSha: string;
@@ -52,26 +54,36 @@ export const FIXTURE_GIT_ARGS: readonly string[] = [
   "-c", "init.defaultBranch=main",
 ];
 
-/** Copy of `base` without the parent vitest/vite environment, plus quiet git settings. */
-export function fixtureEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(base)) {
-    if (value === undefined) continue;
-    if (/^(VITEST|VITE_)/.test(key) || key === "NODE_OPTIONS") continue;
-    env[key] = value;
-  }
-  env.GIT_CONFIG_NOSYSTEM = "1";
-  env.GIT_TERMINAL_PROMPT = "0";
-  env.LC_ALL = "C";
+/**
+ * Allowlisted child environment: PATH from the parent, HOME/XDG/TMPDIR under
+ * `opts.home`, and git forced off the operator's config. Secrets and GIT_*
+ * redirection variables are not copied.
+ */
+export function fixtureEnv(base: NodeJS.ProcessEnv = process.env, opts: { home: string }): NodeJS.ProcessEnv {
+  const home = opts.home;
+  const env: NodeJS.ProcessEnv = {
+    PATH: base.PATH ?? "",
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    TMPDIR: join(home, "tmp"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+    LC_ALL: "C",
+  };
   return env;
 }
 
-function execIn(cmd: string, args: string[], cwd: string, timeoutMs: number): Promise<ExecResult> {
+function execIn(cmd: string, args: string[], cwd: string, timeoutMs: number, isolatedHome: string): Promise<ExecResult> {
   return new Promise((resolvePromise) => {
     execFile(
       cmd,
       args,
-      { cwd, env: fixtureEnv(), timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
+      { cwd, env: fixtureEnv(process.env, { home: isolatedHome }), timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout, stderr) => {
         if (!error) {
           resolvePromise({ stdout, stderr, code: 0 });
@@ -86,8 +98,8 @@ function execIn(cmd: string, args: string[], cwd: string, timeoutMs: number): Pr
   });
 }
 
-export function gitIn(cwd: string, args: string[]): Promise<ExecResult> {
-  return execIn("git", [...FIXTURE_GIT_ARGS, ...args], cwd, 60_000);
+export function gitIn(cwd: string, args: string[], isolatedHome: string): Promise<ExecResult> {
+  return execIn("git", [...FIXTURE_GIT_ARGS, ...args], cwd, 60_000, isolatedHome);
 }
 
 function mustOk(r: ExecResult, what: string): ExecResult {
@@ -156,50 +168,60 @@ export async function makeFixtureRepo(): Promise<FixtureRepo> {
     throw new Error(`vitest not installed at ${VITEST_MJS}; run pnpm install`);
   });
   const root = await realpath(await mkdtemp(join(tmpdir(), "pi-sdlc-fixture-")));
-  const repo = join(root, "repo");
-  const bare = join(root, "remote.git");
-  await mkdir(repo, { recursive: true });
-  const git = (args: string[], opts?: { cwd?: string }) => gitIn(opts?.cwd ?? repo, args);
+  try {
+    const repo = join(root, "repo");
+    const bare = join(root, "remote.git");
+    const isolatedHome = join(root, ".home");
+    await mkdir(repo, { recursive: true });
+    await mkdir(join(isolatedHome, "tmp"), { recursive: true });
+    await mkdir(join(isolatedHome, ".config"), { recursive: true });
+    const git = (args: string[], opts?: { cwd?: string }) => gitIn(opts?.cwd ?? repo, args, isolatedHome);
 
-  mustOk(await git(["init", "-q", "-b", "main"]), "init");
-  for (const [rel, content] of Object.entries(FIXTURE_FILES)) {
-    const abs = join(repo, rel);
-    await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, content, "utf8");
+    mustOk(await git(["init", "-q", "-b", "main"]), "init");
+    for (const [rel, content] of Object.entries(FIXTURE_FILES)) {
+      const abs = join(repo, rel);
+      await mkdir(dirname(abs), { recursive: true });
+      await writeFile(abs, content, "utf8");
+    }
+    await mkdir(join(repo, ".pi"), { recursive: true });
+    await writeFile(join(repo, ".pi", "factory.json"), JSON.stringify(fixtureFactoryJson(), null, 2) + "\n", "utf8");
+    mustOk(await git(["add", "-A"]), "add");
+    mustOk(await git(["commit", "-q", "-m", "chore: initial fixture"]), "commit");
+    const baseSha = mustOk(await git(["rev-parse", "HEAD"]), "rev-parse").stdout.trim();
+
+    mustOk(await gitIn(root, ["init", "-q", "--bare", "-b", "main", bare], isolatedHome), "init --bare");
+    mustOk(await git(["remote", "add", "origin", bare]), "remote add");
+    mustOk(await git(["push", "-q", "-u", "origin", "main"]), "push");
+    mustOk(await git(["remote", "set-head", "origin", "main"]), "remote set-head");
+
+    let cleaned = false;
+    return {
+      root,
+      repo,
+      bare,
+      isolatedHome,
+      defaultBranch: "main",
+      baseSha,
+      git,
+      cleanup: async () => {
+        if (cleaned) return;
+        await rm(root, { recursive: true, force: true });
+        cleaned = true;
+      },
+    };
+  } catch (err) {
+    await rm(root, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
   }
-  await mkdir(join(repo, ".pi"), { recursive: true });
-  await writeFile(join(repo, ".pi", "factory.json"), JSON.stringify(fixtureFactoryJson(), null, 2) + "\n", "utf8");
-  mustOk(await git(["add", "-A"]), "add");
-  mustOk(await git(["commit", "-q", "-m", "chore: initial fixture"]), "commit");
-  const baseSha = mustOk(await git(["rev-parse", "HEAD"]), "rev-parse").stdout.trim();
-
-  mustOk(await gitIn(root, ["init", "-q", "--bare", "-b", "main", bare]), "init --bare");
-  mustOk(await git(["remote", "add", "origin", bare]), "remote add");
-  mustOk(await git(["push", "-q", "-u", "origin", "main"]), "push");
-  mustOk(await git(["remote", "set-head", "origin", "main"]), "remote set-head");
-
-  let cleaned = false;
-  return {
-    root,
-    repo,
-    bare,
-    defaultBranch: "main",
-    baseSha,
-    git,
-    cleanup: async () => {
-      if (cleaned) return;
-      cleaned = true;
-      await rm(root, { recursive: true, force: true });
-    },
-  };
 }
 
 /** Run one `checks[]` entry the way the host will: execFile, no shell, scrubbed env. */
 export async function runFixtureCheck(
   cwd: string,
   check: { argv: string[]; timeoutSeconds: number },
+  opts: { home: string },
 ): Promise<ExecResult> {
   const [cmd, ...args] = check.argv;
   if (cmd === undefined) throw new Error("check.argv is empty");
-  return execIn(cmd, args, cwd, check.timeoutSeconds * 1000);
+  return execIn(cmd, args, cwd, check.timeoutSeconds * 1000, opts.home);
 }

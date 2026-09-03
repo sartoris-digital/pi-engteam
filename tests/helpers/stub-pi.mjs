@@ -1,20 +1,44 @@
 #!/usr/bin/env node
 // tests/helpers/stub-pi.mjs — scenario-driven fake `pi` for factory tests.
 //
-// Reads PI_SDLC_STUB_SCENARIO (path to JSON: { "<stage>": { verdict, files?, runDirFiles?,
-// issues?, commit_message?, sleepMs?, noVerdict? } }), picks the entry for PI_SDLC_STEP,
-// writes `files` under PI_SDLC_WORKSPACE_DIR, `runDirFiles` under
-// <PI_SDLC_RUNS_DIR>/<PI_SDLC_RUN_ID>, and the verdict JSON to PI_SDLC_VERDICT_FILE
-// (tmp + rename). The prompt path is taken from argv: a token ending in `.prompt.md`
+// Reads PI_SDLC_STUB_SCENARIO (path to JSON object keyed by stage). Each entry:
+//   {
+//     "verdict": "PASS"|"FAIL"|"NEEDS_MORE",   // required; no default
+//     "files"?: { "<relpath>": "<content>" },  // under PI_SDLC_WORKSPACE_DIR
+//     "runDirFiles"?: { "<relpath>": "<content>" },  // under $RUNS_DIR/$RUN_ID (D13)
+//     "issues"?: string[],
+//     "artifacts"?: string[],
+//     "commit_message"?: string,
+//     "sleepMs"?: number,
+//     "noVerdict"?: boolean
+//   }
+// Unknown fields are rejected. `verdict` is validated before any writes.
+// Relative paths must stay inside their root: no `..`, no absolute keys, no
+// symlink escapes. PI_SDLC_VERDICT_FILE and PI_SDLC_STUB_LOG must resolve
+// inside the workspace, the run dir, or the scenario file's directory.
+//
+// The prompt path is taken from argv: a token ending in `.prompt.md`
 // (leading `@` stripped) or an absolute `*.prompt.md` path inside a longer token.
 // All pi flags are ignored. Never loads the extension, never touches the network.
 //
 // Exit codes: 0 ok (also for noVerdict) · 2 no/unreadable prompt path · 3 no scenario
-// entry for PI_SDLC_STEP · 4 PI_SDLC_STUB_SCENARIO / PI_SDLC_VERDICT_FILE missing, or
-// runDirFiles without PI_SDLC_RUNS_DIR / PI_SDLC_RUN_ID.
-// Optional PI_SDLC_STUB_LOG=<path> appends one JSON line per invocation.
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+// entry for PI_SDLC_STEP · 4 missing env / unreadable or malformed scenario /
+// invalid run id · 5 path containment violation.
+import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+
+const VERDICTS = new Set(["PASS", "FAIL", "NEEDS_MORE"]);
+const ENTRY_FIELDS = new Set([
+  "verdict",
+  "files",
+  "runDirFiles",
+  "issues",
+  "artifacts",
+  "commit_message",
+  "sleepMs",
+  "noVerdict",
+]);
+const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function fail(code, message) {
   process.stderr.write(`stub-pi: ${message}\n`);
@@ -31,6 +55,105 @@ function findPromptPath(argv) {
   return null;
 }
 
+function isInside(root, p) {
+  const rel = relative(root, p);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function assertSafeRel(rel, label) {
+  if (typeof rel !== "string" || rel === "") fail(5, `${label} must be a non-empty relative path`);
+  if (isAbsolute(rel)) fail(5, `${label} must be relative, not absolute: ${rel}`);
+  const parts = rel.split(/[/\\]/);
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    fail(5, `${label} rejects empty, '.', and '..' segments: ${rel}`);
+  }
+}
+
+function realizeExisting(absPath) {
+  let current = resolve(absPath);
+  const missing = [];
+  for (;;) {
+    try {
+      const real = realpathSync(current);
+      return missing.length === 0 ? real : join(real, ...missing);
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolve(absPath);
+      missing.unshift(current.slice(parent.length + 1) || current.slice(parent.length));
+      current = parent;
+    }
+  }
+}
+
+function resolveUnder(root, rel, label) {
+  assertSafeRel(rel, label);
+  let rootReal;
+  try {
+    rootReal = realpathSync(root);
+  } catch (err) {
+    fail(5, `${label} root unreadable (${root}): ${err.message}`);
+  }
+  const parts = rel.split(/[/\\]/);
+  let current = rootReal;
+  for (let i = 0; i < parts.length; i++) {
+    const next = join(current, parts[i]);
+    let st;
+    try {
+      st = lstatSync(next);
+    } catch {
+      const rest = join(current, ...parts.slice(i));
+      if (!isInside(rootReal, rest)) fail(5, `${label} escapes ${root}: ${rel}`);
+      return rest;
+    }
+    if (st.isSymbolicLink()) {
+      let real;
+      try {
+        real = realpathSync(next);
+      } catch (err) {
+        fail(5, `${label} dangling symlink: ${rel} (${err.message})`);
+      }
+      if (!(real === rootReal || isInside(rootReal, real))) {
+        fail(5, `${label} symlink escapes ${root}: ${rel}`);
+      }
+      current = real;
+    } else {
+      current = next;
+    }
+  }
+  if (!(current === rootReal || isInside(rootReal, current))) {
+    fail(5, `${label} escapes ${root}: ${rel}`);
+  }
+  return current;
+}
+
+function assertDestInside(absPath, roots, label) {
+  if (typeof absPath !== "string" || absPath.trim() === "") fail(4, `${label} missing`);
+  const realized = realizeExisting(absPath);
+  for (const root of roots) {
+    if (!root) continue;
+    try {
+      const rootReal = realpathSync(root);
+      if (isInside(rootReal, realized)) return resolve(absPath);
+    } catch {
+      // skip unreadable allowed roots
+    }
+  }
+  fail(5, `${label} must be under the workspace, run dir, or scenario dir: ${absPath}`);
+}
+
+function stringMap(value, label) {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    fail(4, `${label} must be an object of relative path → string`);
+  }
+  const out = {};
+  for (const [rel, content] of Object.entries(value)) {
+    if (typeof content !== "string") fail(4, `${label}[${JSON.stringify(rel)}] must be a string`);
+    out[rel] = content;
+  }
+  return out;
+}
+
 const argv = process.argv.slice(2);
 const env = process.env;
 const step = env.PI_SDLC_STEP ?? "";
@@ -43,6 +166,9 @@ try {
 } catch (err) {
   fail(4, `cannot read scenario ${scenarioPath}: ${err.message}`);
 }
+if (scenario === null || typeof scenario !== "object" || Array.isArray(scenario)) {
+  fail(4, "scenario must be a JSON object keyed by stage");
+}
 
 const promptPath = findPromptPath(argv);
 if (!promptPath) fail(2, `no *.prompt.md path in argv ${JSON.stringify(argv)}`);
@@ -53,7 +179,86 @@ try {
   fail(2, `cannot read prompt ${promptPath}: ${err.message}`);
 }
 
-if (env.PI_SDLC_STUB_LOG) {
+const entry = scenario[step];
+if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+  fail(3, `no scenario entry for step ${JSON.stringify(step)} (scenario has: ${Object.keys(scenario).join(", ") || "none"})`);
+}
+
+for (const key of Object.keys(entry)) {
+  if (!ENTRY_FIELDS.has(key)) fail(4, `unknown scenario field ${JSON.stringify(key)}`);
+}
+
+if (!VERDICTS.has(entry.verdict)) {
+  fail(4, `invalid verdict ${JSON.stringify(entry.verdict)} (expected PASS|FAIL|NEEDS_MORE)`);
+}
+if (entry.issues !== undefined && !Array.isArray(entry.issues)) fail(4, "issues must be an array");
+if (entry.artifacts !== undefined && !Array.isArray(entry.artifacts)) fail(4, "artifacts must be an array");
+if (entry.commit_message !== undefined && typeof entry.commit_message !== "string") {
+  fail(4, "commit_message must be a string");
+}
+if (entry.noVerdict !== undefined && typeof entry.noVerdict !== "boolean") fail(4, "noVerdict must be a boolean");
+const sleepMs = entry.sleepMs ?? 0;
+if (typeof sleepMs !== "number" || !Number.isFinite(sleepMs) || sleepMs < 0) {
+  fail(4, "sleepMs must be a finite number >= 0");
+}
+
+const workspace = env.PI_SDLC_WORKSPACE_DIR;
+if (!workspace) fail(4, "PI_SDLC_WORKSPACE_DIR not set");
+let workspaceReal;
+try {
+  workspaceReal = realpathSync(workspace);
+  if (!lstatSync(workspaceReal).isDirectory()) fail(4, "PI_SDLC_WORKSPACE_DIR is not a directory");
+} catch (err) {
+  fail(4, `PI_SDLC_WORKSPACE_DIR unreadable: ${err.message}`);
+}
+
+const runId = env.PI_SDLC_RUN_ID ?? "";
+const runsDir = env.PI_SDLC_RUNS_DIR ?? "";
+if (!runId || !RUN_ID_RE.test(runId)) {
+  fail(4, `invalid PI_SDLC_RUN_ID ${JSON.stringify(runId)}`);
+}
+if (!runsDir) fail(4, "PI_SDLC_RUNS_DIR not set");
+const runDir = join(runsDir, runId);
+mkdirSync(runDir, { recursive: true });
+let runDirReal;
+try {
+  runDirReal = realpathSync(runDir);
+} catch (err) {
+  fail(4, `run dir unreadable: ${err.message}`);
+}
+
+let scenarioDir;
+try {
+  scenarioDir = dirname(realpathSync(scenarioPath));
+} catch {
+  scenarioDir = dirname(resolve(scenarioPath));
+}
+
+const allowedDestRoots = [workspaceReal, runDirReal, scenarioDir];
+const files = stringMap(entry.files, "files");
+const runDirFiles = stringMap(entry.runDirFiles, "runDirFiles");
+
+const fileWrites = [];
+for (const [rel, content] of Object.entries(files)) {
+  fileWrites.push({ abs: resolveUnder(workspaceReal, rel, "files"), content });
+}
+const runDirWrites = [];
+for (const [rel, content] of Object.entries(runDirFiles)) {
+  runDirWrites.push({ abs: resolveUnder(runDirReal, rel, "runDirFiles"), content });
+}
+
+const logPath = env.PI_SDLC_STUB_LOG
+  ? assertDestInside(env.PI_SDLC_STUB_LOG, allowedDestRoots, "PI_SDLC_STUB_LOG")
+  : null;
+const verdictFile = entry.noVerdict === true
+  ? null
+  : (() => {
+      const path = env.PI_SDLC_VERDICT_FILE;
+      if (!path) fail(4, "PI_SDLC_VERDICT_FILE not set");
+      return assertDestInside(path, allowedDestRoots, "PI_SDLC_VERDICT_FILE");
+    })();
+
+if (logPath) {
   const record = {
     at: new Date().toISOString(),
     pid: process.pid,
@@ -64,47 +269,26 @@ if (env.PI_SDLC_STUB_LOG) {
     step,
     env: Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith("PI_SDLC_"))),
   };
-  mkdirSync(dirname(env.PI_SDLC_STUB_LOG), { recursive: true });
-  appendFileSync(env.PI_SDLC_STUB_LOG, JSON.stringify(record) + "\n", "utf8");
+  mkdirSync(dirname(logPath), { recursive: true });
+  appendFileSync(logPath, JSON.stringify(record) + "\n", "utf8");
 }
 
-const entry = scenario[step];
-if (!entry || typeof entry !== "object") {
-  fail(3, `no scenario entry for step ${JSON.stringify(step)} (scenario has: ${Object.keys(scenario).join(", ") || "none"})`);
-}
-
-const workspace = env.PI_SDLC_WORKSPACE_DIR || process.cwd();
-const files = entry.files && typeof entry.files === "object" ? entry.files : {};
-for (const [rel, content] of Object.entries(files)) {
-  const abs = join(workspace, rel);
+for (const { abs, content } of fileWrites) {
   mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, String(content), "utf8");
+  writeFileSync(abs, content, "utf8");
+}
+for (const { abs, content } of runDirWrites) {
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, content, "utf8");
 }
 
-const runDirFiles = entry.runDirFiles && typeof entry.runDirFiles === "object" ? entry.runDirFiles : {};
-if (Object.keys(runDirFiles).length > 0) {
-  if (!env.PI_SDLC_RUNS_DIR || !env.PI_SDLC_RUN_ID) {
-    fail(4, "runDirFiles needs PI_SDLC_RUNS_DIR and PI_SDLC_RUN_ID");
-  }
-  const runDir = join(env.PI_SDLC_RUNS_DIR, env.PI_SDLC_RUN_ID);
-  for (const [rel, content] of Object.entries(runDirFiles)) {
-    const abs = join(runDir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, String(content), "utf8");
-  }
-}
+if (sleepMs > 0) await new Promise((resolveSleep) => setTimeout(resolveSleep, sleepMs));
 
-const sleepMs = Number(entry.sleepMs ?? 0);
-if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
-
-if (entry.noVerdict === true) process.exit(0);
-
-const verdictFile = env.PI_SDLC_VERDICT_FILE;
-if (!verdictFile) fail(4, "PI_SDLC_VERDICT_FILE not set");
+if (entry.noVerdict === true || verdictFile === null) process.exit(0);
 
 const payload = {
   step,
-  verdict: entry.verdict ?? "PASS",
+  verdict: entry.verdict,
   issues: Array.isArray(entry.issues) ? entry.issues : [],
   artifacts: Array.isArray(entry.artifacts) ? entry.artifacts : [],
   changedFiles: Object.keys(files),

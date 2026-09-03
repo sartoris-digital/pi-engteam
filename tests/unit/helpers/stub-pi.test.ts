@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,6 +203,142 @@ describe("stub-pi", () => {
       expect(rec.step).toBe("implement");
       expect(Object.keys(rec.env).every((k) => k.startsWith("PI_SDLC_"))).toBe(true);
       expect(rec.env.PI_SDLC_RUN_ID).toBe("r1");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("fails closed on a missing, typoed, or unknown verdict and writes nothing", async () => {
+    const cases: { name: string; entry: Record<string, unknown>; stderr: RegExp }[] = [
+      { name: "missing", entry: { files: { "a.txt": "nope" } }, stderr: /invalid verdict|missing verdict/ },
+      { name: "typo key", entry: { verdct: "FAIL", files: { "a.txt": "nope" } }, stderr: /unknown scenario field "verdct"|invalid verdict|missing verdict/ },
+      { name: "typo value", entry: { verdict: "PASSS", files: { "a.txt": "nope" } }, stderr: /invalid verdict/ },
+      { name: "unknown field", entry: { verdict: "FAIL", extra: true }, stderr: /unknown scenario field "extra"/ },
+    ];
+    for (const c of cases) {
+      const h = await harness({ implement: c.entry });
+      try {
+        const r = await runStub(["-p", h.promptPath], h.env, h.workspace);
+        expect(r.code, `${c.name}: ${r.stderr}`).toBe(4);
+        expect(r.stderr, c.name).toMatch(c.stderr);
+        await expect(stat(join(h.workspace, "a.txt")), c.name).rejects.toThrow();
+        await expect(stat(h.verdictFile), c.name).rejects.toThrow();
+      } finally {
+        await h.cleanup();
+      }
+    }
+  });
+
+  it("rejects absolute and parent-traversing files/runDirFiles and leaves outside sentinels untouched", async () => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "pi-sdlc-stub-outside-")));
+    const sentinel = join(outside, "sentinel.txt");
+    try {
+      await writeFile(sentinel, "SAFE\n");
+
+      const parentEscape = await harness({
+        implement: { verdict: "FAIL", files: { "../OUTSIDE_SENTINEL": "pwned\n" } },
+      });
+      try {
+        await writeFile(join(parentEscape.root, "OUTSIDE_SENTINEL"), "SAFE\n");
+        const r = await runStub(["-p", parentEscape.promptPath], parentEscape.env, parentEscape.workspace);
+        expect(r.code, r.stderr).toBe(5);
+        expect(r.stderr).toMatch(/escapes|parent|relative|\.\./);
+        expect(await readFile(join(parentEscape.root, "OUTSIDE_SENTINEL"), "utf8")).toBe("SAFE\n");
+        await expect(stat(parentEscape.verdictFile)).rejects.toThrow();
+      } finally {
+        await parentEscape.cleanup();
+      }
+
+      const absFiles = await harness({
+        implement: { verdict: "FAIL", files: { [sentinel]: "pwned\n" } },
+      });
+      try {
+        const r = await runStub(["-p", absFiles.promptPath], absFiles.env, absFiles.workspace);
+        expect(r.code, r.stderr).toBe(5);
+        expect(await readFile(sentinel, "utf8")).toBe("SAFE\n");
+      } finally {
+        await absFiles.cleanup();
+      }
+
+      const runDirEscape = await harness({
+        implement: { verdict: "FAIL", runDirFiles: { "../../OUTSIDE_SENTINEL": "pwned\n" } },
+      });
+      try {
+        await writeFile(join(runDirEscape.root, "OUTSIDE_SENTINEL"), "SAFE\n");
+        const r = await runStub(["-p", runDirEscape.promptPath], runDirEscape.env, runDirEscape.workspace);
+        expect(r.code, r.stderr).toBe(5);
+        expect(await readFile(join(runDirEscape.root, "OUTSIDE_SENTINEL"), "utf8")).toBe("SAFE\n");
+      } finally {
+        await runDirEscape.cleanup();
+      }
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects verdict/log destinations outside the run dir or test-temp root", async () => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "pi-sdlc-stub-dest-")));
+    const sentinel = join(outside, "sentinel.txt");
+    await writeFile(sentinel, "SAFE\n");
+    const h = await harness({ implement: { verdict: "PASS", files: { "a.txt": "x" } } });
+    try {
+      const badVerdict = await runStub(
+        ["-p", h.promptPath],
+        { ...h.env, PI_SDLC_VERDICT_FILE: sentinel },
+        h.workspace,
+      );
+      expect(badVerdict.code, badVerdict.stderr).toBe(5);
+      expect(await readFile(sentinel, "utf8")).toBe("SAFE\n");
+      await expect(stat(join(h.workspace, "a.txt"))).rejects.toThrow();
+
+      const badLog = join(outside, "stub.jsonl");
+      const logEscape = await runStub(
+        ["-p", h.promptPath],
+        { ...h.env, PI_SDLC_STUB_LOG: badLog },
+        h.workspace,
+      );
+      expect(logEscape.code, logEscape.stderr).toBe(5);
+      await expect(stat(badLog)).rejects.toThrow();
+      await expect(stat(join(h.workspace, "a.txt"))).rejects.toThrow();
+    } finally {
+      await h.cleanup();
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a workspace symlink that would escape the workspace root", async () => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "pi-sdlc-stub-link-")));
+    const sentinel = join(outside, "sentinel.txt");
+    await writeFile(sentinel, "SAFE\n");
+    const h = await harness({
+      implement: { verdict: "FAIL", files: { "escape/sentinel.txt": "pwned\n" } },
+    });
+    try {
+      await symlink(outside, join(h.workspace, "escape"));
+      const r = await runStub(["-p", h.promptPath], h.env, h.workspace);
+      expect(r.code, r.stderr).toBe(5);
+      expect(r.stderr).toMatch(/symlink|escapes/);
+      expect(await readFile(sentinel, "utf8")).toBe("SAFE\n");
+      await expect(stat(h.verdictFile)).rejects.toThrow();
+    } finally {
+      await h.cleanup();
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an invalid run id before writing runDirFiles", async () => {
+    const h = await harness({
+      implement: { verdict: "FAIL", runDirFiles: { "human-input/x.md": "nope\n" } },
+    });
+    try {
+      const r = await runStub(
+        ["-p", h.promptPath],
+        { ...h.env, PI_SDLC_RUN_ID: "../x" },
+        h.workspace,
+      );
+      expect(r.code, r.stderr).toBe(4);
+      expect(r.stderr).toMatch(/run id|runId|PI_SDLC_RUN_ID/i);
+      await expect(stat(join(h.runDir, "human-input", "x.md"))).rejects.toThrow();
     } finally {
       await h.cleanup();
     }
