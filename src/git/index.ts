@@ -6,3 +6,5 @@ export {
 export type { CheckpointTrailers, CheckpointOptions } from "./checkpoint.js";
 export { publishPreflight } from "./preflight.js";
 export type { PreflightResult, PreflightFailureCode, PreflightDeps } from "./preflight.js";
+export { publish } from "./publish.js";
+export type { PublishResult, PublishOptions } from "./publish.js";
