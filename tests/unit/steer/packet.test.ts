@@ -201,6 +201,23 @@ describe("composeSteerPacket", () => {
     const packet = await composeSteerPacket(makeRunState({ runId: "run-0001" }), runDir, makeRepoConfig());
     expect(packet.json.acceptanceCriteria).toEqual([{ id: "AC1", text: "it is done", source: "quoted" }]);
   });
+
+  it("includes an exact-hit dry-run patch on the packet", async () => {
+    const patch = "diff --git a/package.json b/package.json\n";
+    const packet = await composeSteerPacket(makeRunState({ runId: "run-0001" }), runDir, makeRepoConfig(), {
+      now: () => new Date("2026-09-02T10:00:00Z"),
+      codifiedDryRun: { name: "bump-package-version", version: 1, class: "stage-tool", patch },
+    });
+    expect(packet.json.codifiedDryRun).toEqual({
+      name: "bump-package-version",
+      version: 1,
+      class: "stage-tool",
+      patch,
+    });
+    expect(packet.markdown).toContain("## Codified dry-run");
+    expect(packet.markdown).toContain("bump-package-version@1");
+    expect(packet.markdown).toContain(patch.trim());
+  });
 });
 
 describe("section helpers", () => {

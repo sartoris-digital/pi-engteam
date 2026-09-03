@@ -10,6 +10,14 @@ export interface SteerAcceptanceCriterion {
   source: "quoted" | "derived" | "inferred";
 }
 
+export interface CodifiedDryRun {
+  name: string;
+  version: number;
+  class: "stage-tool" | "task-tool" | "verifier-script" | "rule-predicate";
+  patch?: string;
+  effectPlan?: unknown;
+}
+
 export interface SteerPacketJson {
   generated: string;
   runId: string;
@@ -30,6 +38,7 @@ export interface SteerPacketJson {
     steering: EffectiveRepoConfig["steering"];
   };
   openQuestions: string[];
+  codifiedDryRun?: CodifiedDryRun;
 }
 
 export interface SteerPacket {
@@ -200,6 +209,18 @@ async function readLatestGateEvidence(runDir: string): Promise<GateEvidence | nu
   return { round: best.round, artifacts, redNote };
 }
 
+function renderCodifiedDryRun(dry: CodifiedDryRun): string[] {
+  const lines = ["## Codified dry-run", `${dry.name}@${dry.version} (${dry.class})`];
+  if (dry.patch !== undefined && dry.patch.length > 0) {
+    lines.push("", "```diff", dry.patch.trimEnd(), "```");
+  }
+  if (dry.effectPlan !== undefined) {
+    lines.push("", "```json", JSON.stringify(dry.effectPlan, null, 2), "```");
+  }
+  lines.push("");
+  return lines;
+}
+
 function renderMarkdown(json: SteerPacketJson, extra: { jsonPath: string; gate: GateEvidence | null }): string {
   const c = json.classification;
   const b = json.budget;
@@ -257,6 +278,7 @@ function renderMarkdown(json: SteerPacketJson, extra: { jsonPath: string; gate: 
     "## Open questions",
     ...questionLines,
     "",
+    ...(json.codifiedDryRun ? renderCodifiedDryRun(json.codifiedDryRun) : []),
   ].join("\n");
 }
 
@@ -269,7 +291,7 @@ export async function composeSteerPacket(
   state: RunState,
   runDir: string,
   cfg: EffectiveRepoConfig,
-  opts: { now?: () => Date } = {},
+  opts: { now?: () => Date; codifiedDryRun?: CodifiedDryRun } = {},
 ): Promise<SteerPacket> {
   const now = opts.now ?? (() => new Date());
   const { markdownPath, jsonPath } = steerPacketPaths(runDir);
@@ -312,6 +334,7 @@ export async function composeSteerPacket(
     },
     openQuestions,
   };
+  if (opts.codifiedDryRun) json.codifiedDryRun = opts.codifiedDryRun;
   const markdown = renderMarkdown(json, { jsonPath, gate });
 
   await mkdir(runDir, { recursive: true });
