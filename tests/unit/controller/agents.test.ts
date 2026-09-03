@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadAgentDefs, packageRoot } from "../../../src/controller/agents.js";
+import { loadAgentDefs, packageRoot, V1_AGENTS } from "../../../src/controller/agents.js";
 import { AGENTS } from "../../../src/lanes/catalog.js";
 
 describe("packageRoot", () => {
@@ -65,5 +65,59 @@ describe("loadAgentDefs", () => {
     const body = await readFile(join(packageRoot(), "agents", "issue-analyst.md"), "utf8");
     expect(body).toContain("brief");
     expect(body).toContain("fenced");
+  });
+
+  it("V1_AGENTS is the catalog minus codifier", () => {
+    expect([...V1_AGENTS]).toEqual(AGENTS.filter((name) => name !== "codifier"));
+    expect(V1_AGENTS).toHaveLength(12);
+    expect(V1_AGENTS).not.toContain("codifier");
+  });
+
+  it("issue-analyst is read-only without bash; implementer is a writer", async () => {
+    const loaded = await loadAgentDefs({
+      root: packageRoot(),
+      models: {},
+      defaultModel: "slot-a",
+      required: ["issue-analyst", "implementer"],
+    });
+    const analyst = loaded.find((a) => a.name === "issue-analyst");
+    expect(analyst?.stageClass).toBe("read-only");
+    expect(analyst?.tools).not.toContain("bash");
+    expect(analyst?.tools).toEqual(["read", "grep", "find"]);
+    const impl = loaded.find((a) => a.name === "implementer");
+    expect(impl?.stageClass).toBe("writer");
+    expect(impl?.tools).toContain("bash");
+  });
+
+  it("loads V1_AGENTS as read-only by default except implementer and tester", async () => {
+    const loaded = await loadAgentDefs({
+      root: packageRoot(),
+      models: {},
+      defaultModel: "slot-a",
+      required: V1_AGENTS,
+    });
+    expect(loaded.map((a) => a.name)).toEqual([...V1_AGENTS]);
+    expect(loaded.find((a) => a.name === "codifier")).toBeUndefined();
+    for (const def of loaded) {
+      if (def.name === "implementer" || def.name === "tester") {
+        expect(def.stageClass, def.name).toBe("writer");
+        expect(def.tools, def.name).toContain("bash");
+      } else {
+        expect(def.stageClass, def.name).toBe("read-only");
+        expect(def.tools, def.name).not.toContain("bash");
+        expect(def.tools, def.name).not.toContain("write");
+      }
+    }
+  });
+
+  it("codifier remains loadable on demand as a writer", async () => {
+    const loaded = await loadAgentDefs({
+      root: packageRoot(),
+      models: {},
+      defaultModel: "slot-a",
+      required: ["codifier"],
+    });
+    expect(loaded[0]?.stageClass).toBe("writer");
+    expect(loaded[0]?.tools).toContain("bash");
   });
 });

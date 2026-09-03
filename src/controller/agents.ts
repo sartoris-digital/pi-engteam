@@ -1,9 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { AGENTS } from "../lanes/catalog.js";
 import type { AgentDef } from "../runtime/types.js";
 
 const WRITERS = new Set(["implementer", "tester", "codifier"]);
+
+/** Catalog minus `codifier`, which stays loadable on demand. */
+export const V1_AGENTS = AGENTS.filter((name) => name !== "codifier");
 
 export function packageRoot(fromMeta: string = import.meta.url): string {
   return join(dirname(fileURLToPath(fromMeta)), "..", "..");

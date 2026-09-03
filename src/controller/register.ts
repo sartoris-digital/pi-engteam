@@ -13,12 +13,11 @@ import type { FactoryEvent } from "../observer/events.js";
 import { HeadlessExecutor } from "../runtime/headless.js";
 import { LocalAdapter } from "../trackers/local.js";
 import { GitWorktreeProvider } from "../workspace/git-provider.js";
-import { loadAgentDefs, packageRoot } from "./agents.js";
+import { loadAgentDefs, packageRoot, V1_AGENTS } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
 import { rehydrateOpenWorkflows, runObservers, sandboxProfileForRun, type FactoryDeps } from "./lane-runner.js";
 import { workspaceFromState } from "./stage-hooks.js";
 
-const CHORE_LANE_AGENTS = ["planner", "implementer", "reviewer", "judge"] as const;
 const FACTORY_CO_AUTHOR = "Claude Fable 5.1 <noreply@anthropic.com>";
 
 export function makeEngine(runs: string, opts: { coAuthoredBy: boolean }): Engine {
@@ -76,7 +75,7 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     root,
     models: {},
     defaultModel: process.env["PI_SDLC_DEFAULT_MODEL"] ?? "slot-a",
-    required: [...CHORE_LANE_AGENTS],
+    required: [...V1_AGENTS],
   });
   return {
     home,
