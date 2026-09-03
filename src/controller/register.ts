@@ -15,7 +15,7 @@ import { LocalAdapter } from "../trackers/local.js";
 import { GitWorktreeProvider } from "../workspace/git-provider.js";
 import { loadAgentDefs, packageRoot } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
-import { runObservers, runSandboxModes, type FactoryDeps } from "./lane-runner.js";
+import { rehydrateOpenWorkflows, runObservers, runSandboxModes, type FactoryDeps } from "./lane-runner.js";
 import { workspaceFromState } from "./stage-hooks.js";
 
 const CHORE_LANE_AGENTS = ["planner", "implementer", "reviewer", "judge"] as const;
@@ -124,6 +124,7 @@ export async function registerController(pi: ExtensionAPI): Promise<void> {
   const commands = registerCommands(pi, deps);
   pi.on("session_start", async () => {
     await recoverRunningRuns(deps.runsDir);
+    await rehydrateOpenWorkflows(deps);
     await commands.refresh();
   });
 }

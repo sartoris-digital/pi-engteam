@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Observer } from "../observer/events.js";
-import { runObservers } from "../controller/lane-runner.js";
+import { attachRunWorkflow, runObservers } from "../controller/lane-runner.js";
 import type { FactoryDeps } from "../controller/lane-runner.js";
 import type { RunState } from "../engine/types.js";
 import { writeSteerDecision } from "../steer/stage.js";
@@ -32,6 +32,7 @@ export async function runApprove(parsed: ParsedFactoryArgs, deps: FactoryDeps): 
     { action: "approve", ...(notes === undefined ? {} : { notes }), ...(waive === undefined ? {} : { waive }) },
     "command",
   );
+  await attachRunWorkflow(deps, await deps.engine.getRun(entry.runId));
   await deps.engine.resumeRun(entry.runId);
   const state = await deps.engine.executeRun(entry.runId);
   const obs = runObservers.get(entry.runId);

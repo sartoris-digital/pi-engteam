@@ -34,6 +34,9 @@ describe("runApprove", () => {
       runsDir: runs,
       projectRootDefault: "/pkg",
       engine: {
+        registerWorkflow: () => {
+          order.push("register");
+        },
         resumeRun: async (id: string) => {
           order.push("resume");
           expect(id).toBe("r1");

@@ -37,19 +37,26 @@ export async function runStart(parsed: ParsedFactoryArgs, deps: FactoryDeps): Pr
     await writeQueue(deps.runsDir, queue);
 
     const ref: TicketRef = { tracker: entry.tracker, id: entry.ref };
-    await deps.tracker.setStatus(ref, "running").catch(() => undefined);
-    const ticket = await deps.tracker.fetch(ref);
-    const state = await runTicket(ticket, entry.repo, deps, entry.lane === undefined ? undefined : { lane: entry.lane });
-    entry.state = queueStateFor(state.status);
-    entry.runId = state.runId;
-    entry.updatedAt = new Date().toISOString();
-    await writeQueue(deps.runsDir, queue);
-    if (state.status === "succeeded") await deps.tracker.setStatus(ref, "done").catch(() => undefined);
-    if (state.status === "failed" || state.status === "cancelled") {
-      await deps.tracker.setStatus(ref, "failed").catch(() => undefined);
+    try {
+      await deps.tracker.setStatus(ref, "running").catch(() => undefined);
+      const ticket = await deps.tracker.fetch(ref);
+      const state = await runTicket(ticket, entry.repo, deps, entry.lane === undefined ? undefined : { lane: entry.lane });
+      entry.state = queueStateFor(state.status);
+      entry.runId = state.runId;
+      entry.updatedAt = new Date().toISOString();
+      if (state.status === "succeeded") await deps.tracker.setStatus(ref, "done").catch(() => undefined);
+      if (state.status === "failed" || state.status === "cancelled") {
+        await deps.tracker.setStatus(ref, "failed").catch(() => undefined);
+      }
+      started.push(state);
+      if (entry.state === "waiting_user") break;
+    } catch (err) {
+      entry.state = "failed";
+      entry.updatedAt = new Date().toISOString();
+      throw err;
+    } finally {
+      await writeQueue(deps.runsDir, queue);
     }
-    started.push(state);
-    if (entry.state === "waiting_user") break;
   }
   return started;
 }

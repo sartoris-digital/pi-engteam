@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadEffectiveConfig } from "../config/effective.js";
 import type { EffectiveConfig, EffectiveRepoConfig } from "../config/schema.js";
 import { Engine } from "../engine/engine.js";
 import { writeEvidence } from "../engine/evidence.js";
-import { readRunSecret, saveRunState, writeGeneratedJson } from "../engine/state.js";
+import { loadRunState, readRunSecret, saveRunState, writeGeneratedJson } from "../engine/state.js";
 import type { RunState } from "../engine/types.js";
 import { Observer } from "../observer/events.js";
 import { CATALOG, compileLane, BUILTIN_POLICY_PATH } from "../lanes/index.js";
@@ -14,11 +14,11 @@ import type { AgentDef, WorkerExecutor } from "../runtime/types.js";
 import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
 import { LocalAdapter } from "../trackers/local.js";
-import { runSetupCommand } from "../workspace/setup.js";
+import { EnvSetupFailedError, runSetupCommand } from "../workspace/setup.js";
 import { sanitizeSlug } from "../workspace/git-provider.js";
 import type { WorkspaceProvider } from "../workspace/types.js";
 import { writeTicketMarkdown } from "./artifacts.js";
-import { makeStageHooks, pinWorkspaceArtifacts, policyShaOf } from "./stage-hooks.js";
+import { makeStageHooks, pinWorkspaceArtifacts, policyShaOf, type StageHookDeps } from "./stage-hooks.js";
 
 export interface FactoryDeps {
   home: string;
@@ -72,6 +72,62 @@ export function renderBranch(cfg: EffectiveConfig, ticket: Ticket): string {
   return out;
 }
 
+async function stageHookDeps(deps: FactoryDeps): Promise<StageHookDeps> {
+  const policyBytes = await readFile(BUILTIN_POLICY_PATH);
+  return {
+    executor: deps.executor,
+    agents: deps.agents,
+    piBinary: deps.piBinary,
+    projectRootDefault: deps.projectRootDefault,
+    policyFile: BUILTIN_POLICY_PATH,
+    policySha: policyShaOf(policyBytes),
+    writeEvidence: async (dir, rec) => writeEvidence(dir, rec, await readRunSecret(dir)),
+  };
+}
+
+/** Recompile the lane from saved state and attach it to the in-process Engine. */
+export async function attachRunWorkflow(deps: FactoryDeps, state: RunState): Promise<void> {
+  const lane = deps.lanes[state.lane];
+  if (lane === undefined) return;
+  const named: NamedLane = { ...lane, name: state.lane };
+  const workflow = compileLane(named, CATALOG, makeStageHooks(await stageHookDeps(deps)));
+  const cfg = await loadEffectiveConfig(state.mainCheckout, { home: deps.home });
+  deps.engine.registerWorkflow(state.runId, workflow, cfg.repo);
+}
+
+const REHYDRATE_STATUSES = new Set(["waiting_user", "paused", "failed", "running"]);
+
+export async function rehydrateOpenWorkflows(deps: FactoryDeps): Promise<string[]> {
+  let entries: { name: string; isDirectory(): boolean }[] = [];
+  try {
+    entries = await readdir(deps.runsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const attached: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === "_factory") continue;
+    const state = await loadRunState(deps.runsDir, entry.name);
+    if (state === null || !REHYDRATE_STATUSES.has(state.status)) continue;
+    await attachRunWorkflow(deps, state);
+    attached.push(state.runId);
+  }
+  return attached;
+}
+
+async function failEnvSetup(state: RunState, runsDir: string, detail: string): Promise<RunState> {
+  state.status = "failed";
+  state.escalation = {
+    code: "env-setup-failed",
+    detail,
+    at: new Date().toISOString(),
+    step: state.currentStep,
+  };
+  await writeGeneratedJson(join(runsDir, state.runId, "escalation.json"), state.runId, state.escalation);
+  await saveRunState(runsDir, state);
+  return state;
+}
+
 function resolveLaneName(ticket: Ticket, lanes: Record<string, LaneDef>, requested?: string): string {
   if (requested !== undefined && requested in lanes) return requested;
   const kind = ticket.kind ?? "chore";
@@ -104,20 +160,7 @@ export async function runTicket(
     remote: cfg.repo.remote,
   });
 
-  if (cfg.repo.setupCommand !== undefined && cfg.repo.setupCommand.length > 0) {
-    await runSetupCommand(ws, cfg.repo, { timeoutMs: cfg.repo.setupTimeoutSeconds * 1000 });
-  }
-
-  const policyBytes = await readFile(BUILTIN_POLICY_PATH);
-  const hooks = makeStageHooks({
-    executor: deps.executor,
-    agents: deps.agents,
-    piBinary: deps.piBinary,
-    projectRootDefault: deps.projectRootDefault,
-    policyFile: BUILTIN_POLICY_PATH,
-    policySha: policyShaOf(policyBytes),
-    writeEvidence: async (dir, rec) => writeEvidence(dir, rec, await readRunSecret(dir)),
-  });
+  const hooks = makeStageHooks(await stageHookDeps(deps));
   const workflow = compileLane(named, CATALOG, hooks);
 
   const state = await deps.engine.startRun({
@@ -146,19 +189,18 @@ export async function runTicket(
   const dir = join(deps.runsDir, state.runId);
   await writeTicketMarkdown(dir, ticket.body, state.nonce);
 
-  const sandbox = await prepareRunSandbox(state.runId, cfg.repo);
-  if (!sandbox.ok) {
-    state.status = "failed";
-    state.escalation = {
-      code: "env-setup-failed",
-      detail: sandbox.detail,
-      at: new Date().toISOString(),
-      step: state.currentStep,
-    };
-    await writeGeneratedJson(join(dir, "escalation.json"), state.runId, state.escalation);
-    await saveRunState(deps.runsDir, state);
-    return state;
+  if (cfg.repo.setupCommand !== undefined && cfg.repo.setupCommand.length > 0) {
+    try {
+      await runSetupCommand(ws, cfg.repo, { timeoutMs: cfg.repo.setupTimeoutSeconds * 1000 });
+    } catch (err) {
+      const detail =
+        err instanceof EnvSetupFailedError ? err.detail : err instanceof Error ? err.message : String(err);
+      return failEnvSetup(state, deps.runsDir, detail);
+    }
   }
+
+  const sandbox = await prepareRunSandbox(state.runId, cfg.repo);
+  if (!sandbox.ok) return failEnvSetup(state, deps.runsDir, sandbox.detail);
 
   runObservers.set(state.runId, new Observer(dir, state.runId));
   try {
