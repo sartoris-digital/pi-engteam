@@ -128,6 +128,15 @@ async function workspaceOnMainCheckout(repo: string, configSha: string, remote?:
   };
 }
 
+/**
+ * Slot names the operator actually configured. Passed to `compileLane` so a stage naming a slot
+ * that is not in the stack fails at load instead of silently degrading to a single-model step.
+ * An empty stack means "unknown at compile time" and leaves slot resolution to the runner.
+ */
+function fusionSlotNames(fusion?: OperatorConfig["fusion"]): readonly string[] {
+  return (fusion?.stack ?? []).map((slot) => slot.name);
+}
+
 async function stageHookDeps(deps: FactoryDeps, fusion?: OperatorConfig["fusion"]): Promise<StageHookDeps> {
   const policyBytes = await readFile(BUILTIN_POLICY_PATH);
   return {
@@ -162,7 +171,9 @@ export async function attachRunWorkflow(deps: FactoryDeps, state: RunState): Pro
   if (lane === undefined) return;
   const named: NamedLane = { ...lane, name: state.lane };
   const cfg = await loadEffectiveConfig(state.mainCheckout, { home: deps.home });
-  const workflow = compileLane(named, CATALOG, makeStageHooks(await stageHookDeps(deps, cfg.operator.fusion)));
+  const workflow = compileLane(named, CATALOG, makeStageHooks(await stageHookDeps(deps, cfg.operator.fusion)), {
+    fusionSlots: fusionSlotNames(cfg.operator.fusion),
+  });
   deps.engine.registerWorkflow(state.runId, workflow, cfg.repo);
 }
 
@@ -254,7 +265,7 @@ export async function runTicket(
       });
 
   const hooks = makeStageHooks(await stageHookDeps(deps, cfg.operator.fusion));
-  const workflow = compileLane(named, CATALOG, hooks);
+  const workflow = compileLane(named, CATALOG, hooks, { fusionSlots: fusionSlotNames(cfg.operator.fusion) });
 
   const state = await deps.engine.startRun({
     workflow,

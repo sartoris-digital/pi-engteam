@@ -11,8 +11,9 @@ import {
   mostRecentImplementStage,
   type Catalog,
 } from "./catalog.js";
+import { FUSION_MODES, isFusionMode, type FusionMode } from "../fusion/types.js";
 import type { StageHooks } from "./hooks.js";
-import type { NamedLane, StageDef } from "./schema.js";
+import type { NamedLane, StageDef, StageFusionSlot } from "./schema.js";
 
 export const DEFAULT_STAGE_TIMEOUT_SECONDS = 1800;
 
@@ -29,6 +30,12 @@ export class CompileError extends Error {
 
 export interface CompileOptions {
   timeoutSeconds?: number;
+  /**
+   * Slot names from the operator's configured fusion stack (`operator.fusion.stack`). When it is
+   * non-empty, a stage may only name slots that exist in it. Omitted or empty means the stack is
+   * unknown at compile time and slot names are left to the runner to resolve.
+   */
+  fusionSlots?: readonly string[];
 }
 
 const DIGEST_KEYS = ["name", "class", "match", "priority", "budget", "stages", "publish", "gateless", "onExhausted"] as const;
@@ -64,13 +71,77 @@ function assertCatalog(lane: string, def: StageDef, catalog: Catalog): void {
   for (const gate of def.gates ?? []) {
     if (!isPredicate(gate)) throw new CompileError(`unknown predicate ${gate}`, lane, def.name);
   }
-  if (def.fusion && (isImplementClassStage(def.name) || Boolean(def.host))) {
+}
+
+/** Modes that compare slots against each other; running them with a single slot is a silent no-op. */
+const MULTI_SLOT_FUSION_MODES: ReadonlySet<FusionMode> = new Set<FusionMode>([
+  "fuse",
+  "debate",
+  "adversarial",
+  "veto",
+  "collaborate",
+]);
+
+function slotName(entry: StageFusionSlot): string {
+  return typeof entry === "string" ? entry : entry.name;
+}
+
+/** An entry without its own `model` is looked up in the configured stack by `parseSlots`. */
+function resolvesFromStack(entry: StageFusionSlot): boolean {
+  return typeof entry === "string" || entry.model === undefined;
+}
+
+function assertFusion(lane: string, def: StageDef, fusionSlots: readonly string[] | undefined): void {
+  const fusion = def.fusion;
+  if (fusion === undefined) return;
+  if (isImplementClassStage(def.name) || Boolean(def.host)) {
     throw new CompileError(`fusion is not allowed on implement-class or host stages`, lane, def.name);
+  }
+  // Defence in depth: lanes built in code bypass the YAML schema, and a bad mode would otherwise
+  // degrade to a silent single-model step inside fusionRequestFromStage.
+  if (!isFusionMode(fusion.mode)) {
+    throw new CompileError(
+      `unknown fusion mode ${String(fusion.mode)} (expected one of ${FUSION_MODES.join(", ")})`,
+      lane,
+      def.name,
+    );
+  }
+  if (fusion.rounds !== undefined && fusion.mode !== "debate") {
+    throw new CompileError(`fusion rounds is only valid for mode debate, not ${fusion.mode}`, lane, def.name);
+  }
+  const slots = fusion.slots;
+  if (slots === undefined) return; // omitted slots means "the whole configured stack"
+  const min = MULTI_SLOT_FUSION_MODES.has(fusion.mode) ? 2 : 1;
+  if (slots.length < min) {
+    throw new CompileError(
+      `fusion mode ${fusion.mode} needs at least ${min} slot${min === 1 ? "" : "s"}, got ${slots.length}`,
+      lane,
+      def.name,
+    );
+  }
+  if (fusionSlots === undefined || fusionSlots.length === 0) return;
+  for (const entry of slots) {
+    const name = slotName(entry);
+    if (resolvesFromStack(entry) && !fusionSlots.includes(name)) {
+      throw new CompileError(
+        `unknown fusion slot ${name} (stack: ${fusionSlots.join(", ")})`,
+        lane,
+        def.name,
+      );
+    }
   }
 }
 
-function toStep(def: StageDef, hooks: StageHooks, timeout: number, lane: string, catalog: Catalog): Step {
+function toStep(
+  def: StageDef,
+  hooks: StageHooks,
+  timeout: number,
+  lane: string,
+  catalog: Catalog,
+  fusionSlots?: readonly string[],
+): Step {
   assertCatalog(lane, def, catalog);
+  assertFusion(lane, def, fusionSlots);
   // Fusion fans out inside the agent hook; compile still emits one Step per YAML stage (no dependsOn).
   const kind = stageKind(def);
   const run =
@@ -117,10 +188,10 @@ function generateTransitions(steps: Step[]): Transition[] {
 
 export function compileLane(lane: NamedLane, catalog: Catalog, hooks: StageHooks, opts: CompileOptions = {}): Workflow {
   const timeout = opts.timeoutSeconds ?? DEFAULT_STAGE_TIMEOUT_SECONDS;
-  const yamlSteps = lane.stages.map((s) => toStep(s, hooks, timeout, lane.name, catalog));
+  const yamlSteps = lane.stages.map((s) => toStep(s, hooks, timeout, lane.name, catalog, opts.fusionSlots));
   if (!yamlSteps.some((s) => s.kind === "host" && s.host === "escalate")) {
     yamlSteps.push(
-      toStep({ name: "escalate", host: "escalate" }, hooks, timeout, lane.name, catalog),
+      toStep({ name: "escalate", host: "escalate" }, hooks, timeout, lane.name, catalog, opts.fusionSlots),
     );
   }
   const transitions = generateTransitions(yamlSteps);

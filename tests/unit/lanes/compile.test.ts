@@ -178,3 +178,64 @@ describe("compileLane", () => {
     ).toThrow(/fusion/);
   });
 });
+
+describe("compileLane fusion validation", () => {
+  function fused(fusion: unknown, over: Partial<StageDef> = {}): ReturnType<typeof lane> {
+    return lane({ stages: [{ name: "review", agent: "reviewer", ...over, fusion } as StageDef] });
+  }
+
+  it("compiles a valid debate block into a single step", () => {
+    const wf = compileLane(fused({ mode: "debate", slots: ["A", "B"], rounds: 2 }), CATALOG, hooks, {
+      fusionSlots: ["A", "B", "C"],
+    });
+    const review = wf.steps.filter((s) => s.name === "review");
+    expect(review).toHaveLength(1);
+    expect(review[0]).toMatchObject({ kind: "agent", agent: "reviewer" });
+  });
+
+  it("rejects an unknown fusion mode instead of silently degrading to one model", () => {
+    expect(() => compileLane(fused({ mode: "debat", slots: ["A", "B"] }), CATALOG, hooks)).toThrow(CompileError);
+    expect(() => compileLane(fused({ mode: "debat", slots: ["A", "B"] }), CATALOG, hooks)).toThrow(
+      /unknown fusion mode debat/,
+    );
+    expect(() => compileLane(fused({ mode: 2 }), CATALOG, hooks)).toThrow(/unknown fusion mode/);
+  });
+
+  it("rejects rounds on any mode other than debate", () => {
+    expect(() => compileLane(fused({ mode: "veto", slots: ["A", "B"], rounds: 2 }), CATALOG, hooks)).toThrow(
+      /rounds is only valid for mode debate/,
+    );
+    expect(() => compileLane(fused({ mode: "debate", slots: ["A", "B"], rounds: 2 }), CATALOG, hooks)).not.toThrow();
+  });
+
+  it("rejects a slot name that is not in the configured stack, and accepts inline slots that carry a model", () => {
+    const stack = { fusionSlots: ["A", "B"] };
+    expect(() => compileLane(fused({ mode: "veto", slots: ["A", "Z"] }), CATALOG, hooks, stack)).toThrow(
+      /unknown fusion slot Z/,
+    );
+    expect(() => compileLane(fused({ mode: "veto", slots: ["A", { name: "Z" }] }), CATALOG, hooks, stack)).toThrow(
+      /unknown fusion slot Z/,
+    );
+    expect(() =>
+      compileLane(fused({ mode: "veto", slots: ["A", { name: "Z", model: "gpt-x" }] }), CATALOG, hooks, stack),
+    ).not.toThrow();
+    // Stack unknown at compile time: slot names are left to the runner.
+    expect(() => compileLane(fused({ mode: "veto", slots: ["A", "Z"] }), CATALOG, hooks)).not.toThrow();
+    expect(() => compileLane(fused({ mode: "veto", slots: ["A", "Z"] }), CATALOG, hooks, { fusionSlots: [] })).not.toThrow();
+  });
+
+  it("rejects fewer than two slots for the comparison modes and allows one for sample/opinion", () => {
+    for (const mode of ["fuse", "debate", "adversarial", "veto", "collaborate"]) {
+      expect(() => compileLane(fused({ mode, slots: ["A"] }), CATALOG, hooks)).toThrow(
+        new RegExp(`fusion mode ${mode} needs at least 2 slots`),
+      );
+      expect(() => compileLane(fused({ mode, slots: [] }), CATALOG, hooks)).toThrow(CompileError);
+      // Omitted slots still means "the whole configured stack".
+      expect(() => compileLane(fused({ mode }), CATALOG, hooks)).not.toThrow();
+    }
+    for (const mode of ["sample", "opinion"]) {
+      expect(() => compileLane(fused({ mode, slots: ["A"] }), CATALOG, hooks)).not.toThrow();
+      expect(() => compileLane(fused({ mode, slots: [] }), CATALOG, hooks)).toThrow(/needs at least 1 slot/);
+    }
+  });
+});

@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
+import { FUSION_MODES } from "../../../src/fusion/types.js";
 import {
+  FusionModeSchema,
   LaneDefSchema,
   LaneFileSchema,
   LaneLayerFileSchema,
   SCHEMA_VERSION,
   StageDefSchema,
+  StageFusionSchema,
   assertLaneDef,
   assertLaneFile,
   assertLaneLayerFile,
@@ -76,6 +79,43 @@ describe("lane schemas", () => {
       expect(err).toBeInstanceOf(LaneSchemaError);
       expect((err as LaneSchemaError).path).toContain("lanes.chore");
     }
+  });
+
+  it("builds the stage fusion mode union from FUSION_MODES so the two lists cannot drift", () => {
+    const literals = (FusionModeSchema.anyOf as { const: string }[]).map((m) => m.const);
+    expect(literals).toEqual([...FUSION_MODES]);
+    for (const mode of FUSION_MODES) expect(Value.Check(FusionModeSchema, mode)).toBe(true);
+    expect(Value.Check(FusionModeSchema, "debat")).toBe(false);
+  });
+
+  it("accepts every documented stage fusion shape", () => {
+    expect(Value.Check(StageFusionSchema, { mode: "veto" })).toBe(true);
+    expect(Value.Check(StageFusionSchema, { mode: "adversarial", slots: ["A", "B"] })).toBe(true);
+    expect(
+      Value.Check(StageFusionSchema, {
+        mode: "debate",
+        slots: ["A", { name: "B" }, { name: "C", model: "gpt-x", thinking: "high" }],
+        rounds: 3,
+        synthesizer: "A",
+        syncBack: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a misspelled mode, unknown keys, bad rounds and malformed slots on stage fusion", () => {
+    expect(Value.Check(StageFusionSchema, {})).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "debat" })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", slot: ["A", "B"] })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "debate", rounds: 0 })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "debate", rounds: 4 })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "debate", rounds: 1.5 })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", slots: "A" })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", slots: [""] })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", slots: [{ model: "gpt-x" }] })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", slots: [{ name: "A", role: "x" }] })).toBe(false);
+    expect(Value.Check(StageFusionSchema, { mode: "veto", syncBack: "yes" })).toBe(false);
+    expect(Value.Check(StageDefSchema, { name: "review", agent: "reviewer", fusion: { mode: "debat" } })).toBe(false);
+    expect(Value.Check(StageDefSchema, { name: "review", agent: "reviewer", fusion: { mode: "debate" } })).toBe(true);
   });
 
   it("assertLaneDef requires exactly one of agent|host|human:true; remove patches may omit the kind", () => {

@@ -9,6 +9,8 @@ export type {
   LanePublish,
   OnFail,
   StageDef,
+  StageFusion,
+  StageFusionSlot,
   NamedLane,
 } from "./schema.js";
 export {

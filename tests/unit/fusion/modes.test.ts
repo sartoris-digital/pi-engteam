@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { mergeAdversarial } from "../../../src/fusion/adversarial.js";
-import { mergeDebate } from "../../../src/fusion/debate.js";
+import {
+  debatePacket,
+  debateRoundsArtifact,
+  mergeDebate,
+  mergeDebateRounds,
+  positionsChanged,
+} from "../../../src/fusion/debate.js";
 import { mergeFuse } from "../../../src/fusion/fuse.js";
 import { mergeOpinion } from "../../../src/fusion/opinion.js";
 import { mergeSample } from "../../../src/fusion/sample.js";
@@ -195,5 +201,74 @@ describe("mergeDebate", () => {
     expect(artifact).toMatch(/Disagreement/i);
     expect(artifact).toContain("Auth is fine.");
     expect(artifact).toContain("Auth is broken.");
+  });
+
+  it("attributes each disagreement to the slots holding it", () => {
+    const artifact =
+      mergeDebate([
+        slot({ name: "A", text: "Auth is fine." }),
+        slot({ name: "B", text: "Auth is broken." }),
+        slot({ name: "C", text: "Auth is broken." }),
+      ]).artifacts?.debate ?? "";
+    expect(artifact).toContain("[B][C] Auth is broken.");
+    expect(artifact).toContain("[A] Auth is fine.");
+  });
+});
+
+describe("debatePacket", () => {
+  const prior = [
+    slot({ name: "A", text: "keep the cache", verdict: "PASS", fenced: "<<<FENCED-A>>>" }),
+    slot({ name: "B", text: "drop the cache", verdict: "PASS" }),
+    slot({ name: "C", text: "", error: "provider down" }),
+  ];
+
+  it("labels every other slot and fences its opinion, excluding the reader's own", () => {
+    const packet = debatePacket("A", prior, "nonce-x");
+    expect(packet).not.toContain("[A]");
+    expect(packet).toContain("## [B] model-B — CONCRETE OPINION");
+    expect(packet).toContain("<<<UNTRUSTED_FUSION-B_nonce-x_BEGIN>>>");
+    expect(packet).toContain("drop the cache");
+  });
+
+  it("labels a failed participant instead of leaking its error text", () => {
+    const packet = debatePacket("B", prior, "nonce-x");
+    expect(packet).toContain("## [C] model-C — PARTICIPANT UNAVAILABLE");
+    expect(packet).not.toContain("provider down");
+    expect(packet).toContain("<<<FENCED-A>>>");
+  });
+});
+
+describe("positionsChanged", () => {
+  it("ignores whitespace and case, and reports a genuinely new position", () => {
+    const before = [slot({ name: "A", text: "The bug is in parse()." })];
+    expect(positionsChanged(before, [slot({ name: "A", text: "  the BUG   is in parse().  " })])).toBe(false);
+    expect(positionsChanged(before, [slot({ name: "A", text: "The bug is in lex()." })])).toBe(true);
+    expect(positionsChanged(before, [slot({ name: "Z", text: "new voice" })])).toBe(true);
+  });
+});
+
+describe("mergeDebateRounds", () => {
+  it("merges the final round and keeps the round-by-round progression", () => {
+    const result = mergeDebateRounds([
+      [slot({ name: "A", text: "Auth is fine.", verdict: "PASS" }), slot({ name: "B", text: "Auth is broken.", verdict: "PASS" })],
+      [slot({ name: "A", text: "Auth is broken.", verdict: "PASS" }), slot({ name: "B", text: "Auth is broken.", verdict: "PASS" })],
+    ]);
+    expect(result.verdict).toBe("PASS");
+    const artifact = result.artifacts?.debate ?? "";
+    expect(artifact).toContain("## Agreement");
+    expect(artifact).toContain("- Auth is broken.");
+    expect(artifact).not.toContain("Auth is fine.");
+    const progression = result.artifacts?.debateRounds ?? "";
+    expect(progression).toContain("## Round 1");
+    expect(progression).toContain("Auth is fine.");
+    expect(progression).toContain("## Round 2");
+  });
+
+  it("drops the final round's failed slots from the merge but keeps them in the transcript", () => {
+    const rounds = [
+      [slot({ name: "A", text: "keep it", verdict: "PASS" }), slot({ name: "B", text: "", error: "boom" })],
+    ];
+    expect(debateRoundsArtifact(rounds)).toContain("### [B] model-B — UNAVAILABLE");
+    expect(mergeDebateRounds(rounds).artifacts?.debate ?? "").toContain("keep it");
   });
 });

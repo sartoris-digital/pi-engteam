@@ -1,5 +1,6 @@
-import { Type, type Static, type TSchema } from "typebox";
+import { Type, type Static, type TLiteral, type TSchema } from "typebox";
 import { Value } from "typebox/value";
+import { FUSION_MODES } from "../fusion/types.js";
 
 export const SCHEMA_VERSION = 1 as const;
 
@@ -55,6 +56,44 @@ export const LanePublishSchema = Type.Object(
 );
 export type LanePublish = Static<typeof LanePublishSchema>;
 
+/** Built from `FUSION_MODES` so lane YAML and the fusion runner can never drift. */
+type LiteralTuple<T extends readonly string[]> = { -readonly [K in keyof T]: TLiteral<T[K] & string> };
+type FusionModeLiterals = LiteralTuple<typeof FUSION_MODES>;
+export const FusionModeSchema = Type.Union(
+  FUSION_MODES.map((mode) => Type.Literal(mode)) as unknown as FusionModeLiterals,
+);
+
+/**
+ * A slot entry is either a stack slot name ("A") or an inline slot object. An entry without
+ * `model` resolves against the operator's configured fusion stack, matching `parseSlots`.
+ */
+export const StageFusionSlotSchema = Type.Union([
+  Type.String({ minLength: 1 }),
+  Type.Object(
+    {
+      name: Type.String({ minLength: 1 }),
+      model: Type.Optional(Type.String({ minLength: 1 })),
+      thinking: Type.Optional(Type.String({ minLength: 1 })),
+    },
+    strict,
+  ),
+]);
+export type StageFusionSlot = Static<typeof StageFusionSlotSchema>;
+
+/** Stage-level `fusion:` block. Shapes accepted here are exactly what `fusionRequestFromStage` reads. */
+export const StageFusionSchema = Type.Object(
+  {
+    mode: FusionModeSchema,
+    slots: Type.Optional(Type.Array(StageFusionSlotSchema)),
+    /** Debate rounds; the runner caps at 3. */
+    rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+    synthesizer: Type.Optional(Type.String({ minLength: 1 })),
+    syncBack: Type.Optional(Type.Boolean()),
+  },
+  strict,
+);
+export type StageFusion = Static<typeof StageFusionSchema>;
+
 const stageFields = {
   name: Type.String({ minLength: 1 }),
   agent: Type.Optional(Type.String({ minLength: 1 })),
@@ -72,7 +111,7 @@ const stageFields = {
   timeoutSeconds: Type.Optional(PositiveInt),
   remove: Type.Optional(Type.Boolean()),
   insertAfter: Type.Optional(Type.String()),
-  fusion: Type.Optional(Type.Object({}, { additionalProperties: true })),
+  fusion: Type.Optional(StageFusionSchema),
   model: Type.Optional(Type.String()),
   packet: Type.Optional(Type.String()),
 };

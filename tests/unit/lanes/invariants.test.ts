@@ -242,7 +242,7 @@ describe("checkInvariants (meta locked + fusion + writers)", () => {
   });
 
   it("reports meta-fusion-scope when fusion is not on assess/review/security", () => {
-    const stages = metaStages.map((s) => (s.name === "generate" ? { ...s, fusion: { mode: "adversarial" } } : s));
+    const stages: StageDef[] = metaStages.map((s) => (s.name === "generate" ? { ...s, fusion: { mode: "adversarial" } } : s));
     expect(rules(meta({ stages }))).toContain("meta-fusion-scope");
   });
 });

@@ -12,9 +12,20 @@ export { mergeOpinion } from "./opinion.js";
 export { mergeFuse } from "./fuse.js";
 export { mergeAdversarial } from "./adversarial.js";
 export { mergeVeto } from "./veto.js";
-export { mergeDebate } from "./debate.js";
+export { mergeCollaborate } from "./collaborate.js";
 export {
+  debatePacket,
+  debateRoundsArtifact,
+  mergeDebate,
+  mergeDebateRounds,
+  normalizePosition,
+  positionsChanged,
+  withDebateRounds,
+} from "./debate.js";
+export {
+  debateRoundCount,
   fusionRequestFromStage,
+  MAX_DEBATE_ROUNDS,
   mergeForMode,
   runFusion,
   type RunFusionOptions,
