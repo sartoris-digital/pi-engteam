@@ -46,6 +46,16 @@ export {
   type LearnerGateOpts,
 } from "./learner.js";
 export {
+  auditTranscript,
+  hostTranscriptAudit,
+  shouldEscalateAudit,
+  type AuditEvent,
+  type AuditFinding,
+  type AuditInput,
+  type AuditRule,
+  type TranscriptAuditResult,
+} from "./transcript-audit.js";
+export {
   V3_EVENT_TYPES,
   collectV3DoctorLines,
   formatV3DoctorReport,

@@ -1,0 +1,18 @@
+{
+  "implementerTouched": ["tests/conftest.py"],
+  "testChanges": [],
+  "events": [
+    {
+      "category": "tool_call",
+      "agent": "implementer",
+      "type": "start",
+      "data": {
+        "tool": "write",
+        "args": {
+          "path": "tests/conftest.py",
+          "content": "import pytest\n\n@pytest.fixture\ndef client():\n    return object()\n"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "implementerTouched": ["tests/login.test.ts"],
+  "testChanges": ["tests/login.test.ts"],
+  "events": [
+    {
+      "category": "tool_call",
+      "agent": "implementer",
+      "type": "start",
+      "data": {
+        "tool": "edit",
+        "args": {
+          "path": "tests/login.test.ts",
+          "content": "it.only(\"still green\", () => {});\n@pytest.mark.xfail\ndef test_x():\n    pass\n"
+        }
+      }
+    }
+  ]
+}

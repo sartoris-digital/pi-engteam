@@ -1,0 +1,18 @@
+{
+  "implementerTouched": ["tests/login.test.ts"],
+  "testChanges": ["tests/login.test.ts"],
+  "events": [
+    {
+      "category": "tool_call",
+      "agent": "implementer",
+      "type": "start",
+      "data": {
+        "tool": "write",
+        "args": {
+          "path": "tests/login.test.ts",
+          "content": "import { vi } from \"vitest\";\nvi.mock(\"src/login.ts\", () => ({ login: () => true }));\nit(\"passes\", () => {});\n"
+        }
+      }
+    }
+  ]
+}

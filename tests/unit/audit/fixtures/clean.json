@@ -1,0 +1,18 @@
+{
+  "implementerTouched": ["src/login.ts"],
+  "testChanges": [],
+  "events": [
+    {
+      "category": "tool_call",
+      "agent": "implementer",
+      "type": "start",
+      "data": {
+        "tool": "write",
+        "args": {
+          "path": "src/login.ts",
+          "content": "export function login(user: string): boolean {\n  return user.length > 0;\n}\n"
+        }
+      }
+    }
+  ]
+}
