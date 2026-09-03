@@ -1,0 +1,58 @@
+schemaVersion: 1
+agents:
+  issue-analyst:
+    upsert: ["${RUN_DIR}/brief.*"]
+    delete: []
+    bash: none
+  planner:
+    upsert: ["${RUN_DIR}/plan.md"]
+    delete: []
+    bash: read-only
+  architect:
+    upsert: ["${RUN_DIR}/design.md"]
+    delete: []
+    bash: read-only
+  tester:
+    upsert: ["tests/", "${RUN_DIR}/notes/"]
+    delete: []
+    bash: full
+  implementer:
+    upsert: []
+    delete: []
+    bash: full
+  reviewer:
+    upsert: ["${RUN_DIR}/review.md"]
+    delete: []
+    bash: read-only
+  security-auditor:
+    upsert: []
+    delete: []
+    bash: read-only
+  judge:
+    upsert:
+      - "${RUN_DIR}/approvals/"
+      - "${RUN_DIR}/verdict.md"
+      - "${RUN_DIR}/dependency-approval.json"
+      - "${RUN_DIR}/evidence/judge-*.json"
+    delete: []
+    bash: read-only
+  verifier:
+    upsert: ["${RUN_DIR}"]
+    delete: []
+    bash: read-only
+  root-cause-debugger:
+    upsert: ["${RUN_DIR}/diagnosis.md"]
+    delete: []
+    bash: read-only
+  discoverer:
+    upsert: []
+    delete: []
+    bash: read-only
+  codebase-cartographer:
+    upsert: []
+    delete: []
+    bash: read-only
+  codifier:
+    upsert: ["codified/.staging/", "${RUN_DIR}/codify/"]
+    delete: []
+    bash: none

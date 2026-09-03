@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { LaneSchemaError, assertLaneLayerFile, type LaneDef, type LaneLayerFile, type LanePatch, type StageDef } from "./schema.js";
 
@@ -137,4 +138,15 @@ export function mergeLanes(files: LaneLayerFile[]): Record<string, LaneDef> {
 
   for (const name of patches.keys()) resolve(name);
   return Object.fromEntries(resolved);
+}
+
+export const BUILTIN_LANES_PATH = fileURLToPath(new URL("../assets/lanes.yaml", import.meta.url));
+export const BUILTIN_POLICY_PATH = fileURLToPath(new URL("../assets/policy.yaml", import.meta.url));
+
+/** Layer 1 alone: the shipped lanes, merged and schema-validated. */
+export async function loadBuiltinLanes(): Promise<Record<string, LaneDef>> {
+  const layers = await loadLaneLayers([BUILTIN_LANES_PATH]);
+  const builtin = layers[0];
+  if (builtin === undefined) throw new LaneLoadError(`built-in lane file missing: ${BUILTIN_LANES_PATH}`, BUILTIN_LANES_PATH);
+  return mergeLanes([builtin.file]);
 }

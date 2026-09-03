@@ -1,0 +1,72 @@
+schemaVersion: 1
+lanes:
+  chore:
+    class: build
+    match: { kind: chore }
+    priority: 100
+    gateless: true
+    budget: { fixRounds: 2, maxWallSeconds: 2700, maxCostUsd: 8 }
+    stages:
+      - { name: scope-check, host: scope-check, locked: true, gates: [scope-report] }
+      - { name: plan, agent: planner, mode: approach, gates: ["sections:plan.md:Files to touch,Steps,Verify"], onFail: "escalate:needs-decision" }
+      - { name: steer, human: true, packet: steer-packet, locked: true, onFail: "escalate:needs-decision" }
+      - { name: implement, agent: implementer, verify: true, maxVerifyLoops: 1, gates: [snapshot, manifest, stuck-detector], onFail: fix-round }
+      - { name: test, host: checks, locked: true, gates: [test-infra-restore, checks-green, flaky-rerun, finalize], onFail: fix-round }
+      - { name: review, agent: reviewer, gates: [citations, verdict-consistent, scope-report], onFail: fix-round, maxRounds: 1 }
+      - { name: security, agent: security-auditor, when: "tier == 'elevated' || diff.touches(securityPaths)", onFail: fix-round, maxRounds: 1 }
+      - { name: judge, agent: judge, safetyGating: true, locked: true, gates: [evidence-signed, no-synthesized, checklist, ac-spotcheck], onFail: fix-round }
+      - { name: publish, host: publish, locked: true, gates: [head-is-judged-sha, preflight, no-generated-docs], onFail: "escalate:publish-refused" }
+    onExhausted: escalate
+
+  bug:
+    class: build
+    match: { kind: bug }
+    priority: 100
+    budget: { fixRounds: 3, maxWallSeconds: 5400, maxCostUsd: 20 }
+    stages:
+      - { name: diagnose, agent: root-cause-debugger, when: "brief.reproSteps == 'absent'", gates: ["sections:diagnosis.md:Hypothesis,Reproduction,Suspect files"] }
+      - { name: plan, agent: planner, mode: approach, gates: ["sections:plan.md:Files to touch,Steps,Verify"], onFail: "escalate:needs-decision" }
+      - { name: gate, agent: tester, mode: gate-writer, locked: true, gates: [red-baseline, "snapshot:testDir", manifest-record], onFail: "escalate:gate-invalid" }
+      - { name: steer, human: true, packet: steer-packet, locked: true, onFail: "escalate:needs-decision" }
+      - { name: implement, agent: implementer, verify: true, maxVerifyLoops: 2, gates: [snapshot, manifest, junit-green, deps-approval, stuck-detector], onFail: fix-round }
+      - { name: test, host: checks, locked: true, gates: [test-infra-restore, checks-green, flaky-rerun, finalize], onFail: fix-round }
+      - { name: review, agent: reviewer, gates: [citations, verdict-consistent, scope-report], onFail: fix-round }
+      - { name: security, agent: security-auditor, when: "tier == 'elevated' || diff.touches(securityPaths)", onFail: fix-round, maxRounds: 1 }
+      - { name: judge, agent: judge, safetyGating: true, locked: true, gates: [evidence-signed, no-synthesized, checklist, ac-spotcheck], onFail: fix-round }
+      - { name: publish, host: publish, locked: true, gates: [head-is-judged-sha, preflight], onFail: "escalate:publish-refused" }
+    onExhausted: escalate
+
+  enhancement:
+    class: build
+    match: { kind: enhancement }
+    priority: 100
+    budget: { fixRounds: 3, maxWallSeconds: 7200, maxCostUsd: 30 }
+    stages:
+      - { name: plan, agent: planner, mode: approach, gates: ["sections:plan.md:Goal,Files to touch,Steps,Verify,Out of scope"], onFail: "escalate:needs-decision" }
+      - { name: gate, agent: tester, mode: gate-writer, locked: true, gates: [red-baseline, "snapshot:testDir", manifest-record], onFail: "escalate:gate-invalid" }
+      - { name: steer, human: true, packet: steer-packet, locked: true, onFail: "escalate:needs-decision" }
+      - { name: implement, agent: implementer, verify: true, maxVerifyLoops: 2, gates: [snapshot, manifest, junit-green, deps-approval, stuck-detector], onFail: fix-round }
+      - { name: test, host: checks, locked: true, gates: [test-infra-restore, checks-green, flaky-rerun, finalize], onFail: fix-round }
+      - { name: review, agent: reviewer, gates: [citations, verdict-consistent, scope-report], onFail: fix-round }
+      - { name: security, agent: security-auditor, when: "tier == 'elevated' || diff.touches(securityPaths)", onFail: fix-round, maxRounds: 1 }
+      - { name: judge, agent: judge, safetyGating: true, locked: true, gates: [evidence-signed, no-synthesized, checklist, ac-spotcheck], onFail: fix-round }
+      - { name: publish, host: publish, locked: true, gates: [head-is-judged-sha, preflight], onFail: "escalate:publish-refused" }
+    onExhausted: escalate
+
+  feature:
+    class: build
+    match: { kind: feature }
+    priority: 100
+    budget: { fixRounds: 4, maxWallSeconds: 14400, maxCostUsd: 60 }
+    stages:
+      - { name: design, agent: architect, when: "size == 'L' || flags.architecture", gates: ["sections:design.md:Components,Interfaces,Data changes,Risks"] }
+      - { name: plan, agent: planner, mode: approach, gates: ["sections:plan.md:Goal,Files to touch,Steps,Verify,Out of scope"], onFail: "escalate:needs-decision" }
+      - { name: gate, agent: tester, mode: gate-writer, locked: true, gates: [red-baseline, "snapshot:testDir", manifest-record], onFail: "escalate:gate-invalid" }
+      - { name: steer, human: true, packet: steer-packet, locked: true, onFail: "escalate:needs-decision" }
+      - { name: implement, agent: implementer, verify: true, maxVerifyLoops: 3, gates: [snapshot, manifest, junit-green, deps-approval, stuck-detector], onFail: fix-round }
+      - { name: test, host: checks, locked: true, gates: [test-infra-restore, checks-green, flaky-rerun, finalize], onFail: fix-round }
+      - { name: review, agent: reviewer, gates: [citations, verdict-consistent, scope-report], onFail: fix-round }
+      - { name: security, agent: security-auditor, when: "tier == 'elevated' || diff.touches(securityPaths)", onFail: fix-round, maxRounds: 1 }
+      - { name: judge, agent: judge, safetyGating: true, locked: true, gates: [evidence-signed, no-synthesized, checklist, ac-spotcheck], onFail: fix-round }
+      - { name: publish, host: publish, locked: true, gates: [head-is-judged-sha, preflight], onFail: "escalate:publish-refused" }
+    onExhausted: escalate
