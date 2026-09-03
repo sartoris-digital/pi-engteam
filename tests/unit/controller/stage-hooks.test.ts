@@ -54,6 +54,48 @@ describe("agentStep", () => {
     );
   });
 
+  it("injects OPERATOR RULES above the ticket and still starts with the generated marker", async () => {
+    const hooks = makeStageHooks({
+      executor: executor({
+        verdict: { step: "plan", verdict: "PASS" },
+        exitCode: 0,
+        timedOut: false,
+        stderrTail: "",
+        durationMs: 1,
+      }),
+      agents: [{ name: "planner", model: "stub", promptPath: "/dev/null", tools: ["read"], stageClass: "read-only" }],
+      piBinary: "pi",
+      projectRootDefault: "/",
+      policyFile: "/dev/null",
+      policySha: "0".repeat(64),
+      writeEvidence: async () => join(runDir, "evidence", "x.json"),
+      rules: [
+        {
+          id: "r-impl-constraint",
+          text: "Always add a changelog entry.",
+          scope: { repo: "*", lane: "*", stage: ["plan", "implement"], kind: "*", paths: [] },
+          class: "constraint",
+          enforce: ["prompt"],
+          createdAt: "2026-09-02T00:00:00.000Z",
+          author: "operator",
+          status: "active",
+        },
+      ],
+    });
+    const run = hooks.agentStep(stage({ name: "plan", agent: "planner" }), "plan");
+    const ctx = makeStepContext(runDir, { state: { runId: "run-1", steps: [] } });
+    await mkdir(ctx.workspaceDir, { recursive: true });
+    await run(ctx);
+    const text = await readFile(join(runDir, "steps", "plan-r0.prompt.md"), "utf8");
+    expect(text.startsWith("<!-- pi-sdlc-factory generated")).toBe(true);
+    const rulesAt = text.indexOf("## OPERATOR RULES (binding)");
+    const stageAt = text.indexOf("Stage: plan");
+    expect(rulesAt).toBeGreaterThanOrEqual(0);
+    expect(stageAt).toBeGreaterThan(rulesAt);
+    expect(text).toContain("r-impl-constraint");
+    expect(text).not.toContain("(none in v0)");
+  });
+
   it("sets extraUpsert from writeRoots for implementer and denies testDir plus generated docs", async () => {
     let seen: WorkerRequest | undefined;
     const hooks = makeStageHooks({

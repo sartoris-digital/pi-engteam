@@ -16,7 +16,11 @@ import { makeSteerStep, type SteerHooks } from "../steer/stage.js";
 import type { RunState } from "../engine/types.js";
 import type { Workspace } from "../workspace/types.js";
 import { isImplementClassStage } from "../lanes/catalog.js";
+import { loadEffectiveRules } from "../rules/load.js";
+import { operatorRulesBlock } from "../rules/prompt.js";
+import type { RuleRecord } from "../rules/schema.js";
 import { ensureGeneratedMarker } from "./artifacts.js";
+
 import {
   applyGateOutcomes,
   captureManifest,
@@ -65,6 +69,18 @@ export interface StageHookDeps {
   /** Injected PR client. Absent → push-only publish (v0). */
   pr?: PrClient | null;
   runsDir?: string;
+  rules?: RuleRecord[];
+  home?: string;
+}
+
+async function resolveRules(ctx: StepContext, deps: StageHookDeps): Promise<RuleRecord[]> {
+  if (deps.rules !== undefined) return deps.rules;
+  if (deps.home === undefined || deps.home.length === 0) return [];
+  try {
+    return (await loadEffectiveRules({ home: deps.home, repoPath: ctx.state.mainCheckout })).rules;
+  } catch {
+    return [];
+  }
 }
 
 function ws(ctx: StepContext): Workspace {
@@ -124,10 +140,12 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
   } catch {
     /* optional */
   }
+  const rules = await resolveRules(ctx, deps);
+  const rulesBlock = operatorRulesBlock(rules, stage.name, ctx.state.kind);
   const body = [
     "## OPERATOR RULES (binding)",
     "",
-    "(none in v0)",
+    rulesBlock.length > 0 ? rulesBlock : "(none)",
     "",
     `Stage: ${stage.name}  Agent: ${agent.name}`,
     "",

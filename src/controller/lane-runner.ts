@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadEffectiveConfig } from "../config/effective.js";
-import type { EffectiveConfig, EffectiveRepoConfig } from "../config/schema.js";
+import type { EffectiveConfig, EffectiveRepoConfig, OperatorConfig } from "../config/schema.js";
 import { Engine } from "../engine/engine.js";
 import { writeEvidence } from "../engine/evidence.js";
 import { loadRunState, readRunSecret, saveRunState, writeGeneratedJson } from "../engine/state.js";
@@ -77,7 +77,7 @@ export function renderBranch(cfg: EffectiveConfig, ticket: Ticket): string {
   return out;
 }
 
-async function stageHookDeps(deps: FactoryDeps): Promise<StageHookDeps> {
+async function stageHookDeps(deps: FactoryDeps, fusion?: OperatorConfig["fusion"]): Promise<StageHookDeps> {
   const policyBytes = await readFile(BUILTIN_POLICY_PATH);
   return {
     executor: deps.executor,
@@ -88,6 +88,17 @@ async function stageHookDeps(deps: FactoryDeps): Promise<StageHookDeps> {
     policySha: policyShaOf(policyBytes),
     writeEvidence: async (dir, rec) => writeEvidence(dir, rec, await readRunSecret(dir)),
     runsDir: deps.runsDir,
+    home: deps.home,
+    ...(fusion
+      ? {
+          fusion: {
+            off: fusion.off,
+            stack: fusion.stack,
+            ...(fusion.synthesizer === undefined ? {} : { synthesizer: fusion.synthesizer }),
+            slotTimeoutSeconds: fusion.slotTimeoutSeconds,
+          },
+        }
+      : {}),
   };
 }
 
@@ -96,8 +107,8 @@ export async function attachRunWorkflow(deps: FactoryDeps, state: RunState): Pro
   const lane = deps.lanes[state.lane];
   if (lane === undefined) return;
   const named: NamedLane = { ...lane, name: state.lane };
-  const workflow = compileLane(named, CATALOG, makeStageHooks(await stageHookDeps(deps)));
   const cfg = await loadEffectiveConfig(state.mainCheckout, { home: deps.home });
+  const workflow = compileLane(named, CATALOG, makeStageHooks(await stageHookDeps(deps, cfg.operator.fusion)));
   deps.engine.registerWorkflow(state.runId, workflow, cfg.repo);
 }
 
@@ -166,7 +177,7 @@ export async function runTicket(
     remote: cfg.repo.remote,
   });
 
-  const hooks = makeStageHooks(await stageHookDeps(deps));
+  const hooks = makeStageHooks(await stageHookDeps(deps, cfg.operator.fusion));
   const workflow = compileLane(named, CATALOG, hooks);
 
   const state = await deps.engine.startRun({

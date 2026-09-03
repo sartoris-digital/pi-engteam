@@ -29,3 +29,4 @@ export {
   addRule,
   ensureLocalRulesExcluded,
 } from "./remember.js";
+export { operatorRulesBlock, ruleSpecificity } from "./prompt.js";
