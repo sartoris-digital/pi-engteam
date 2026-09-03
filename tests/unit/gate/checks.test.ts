@@ -140,12 +140,21 @@ process.exitCode = 1;`,
 import { join } from "node:path";
 const dir = process.argv[2];
 const mine = join(dir, "run-" + process.pid);
-writeFileSync(mine, "");
-const running = readdirSync(dir).filter((f) => f.startsWith("run-")).length;
 const maxFile = join(dir, "max");
-const prev = existsSync(maxFile) ? Number(readFileSync(maxFile, "utf8")) : 0;
-if (running > prev) writeFileSync(maxFile, String(running));
-setTimeout(() => { unlinkSync(mine); }, 400);`,
+writeFileSync(mine, "");
+const deadline = Date.now() + 1500;
+let peak = 0;
+while (Date.now() < deadline) {
+  const running = readdirSync(dir).filter((f) => f.startsWith("run-")).length;
+  if (running > peak) {
+    peak = running;
+    const prev = existsSync(maxFile) ? Number(readFileSync(maxFile, "utf8")) : 0;
+    if (peak > prev) writeFileSync(maxFile, String(peak));
+  }
+  if (peak >= 2) break;
+  await new Promise((r) => setTimeout(r, 20));
+}
+unlinkSync(mine);`,
     );
     const checks = [
       { name: "one", argv: [node, probe, dir], reporter: "none" as const, timeoutSeconds: 30 },
