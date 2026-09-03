@@ -98,7 +98,7 @@ describe("checkInvariants (catalog + other classes)", () => {
   it("reports unknown agent, host, mode and predicate", () => {
     const stages = [
       { name: "scope-check", host: "scope-check" },
-      { name: "plan", agent: "wizard", mode: "grill", gates: ["not-a-gate"] },
+      { name: "plan", agent: "wizard", mode: "not-a-mode", gates: ["not-a-gate"] },
       { name: "steer", human: true },
       { name: "implement", agent: "implementer" },
       { name: "judge", agent: "judge", safetyGating: true },

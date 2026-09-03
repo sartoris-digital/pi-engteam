@@ -22,7 +22,16 @@ export const PREDICATES = [
 
 export const PARAMETERISED_PREDICATES = ["sections:", "snapshot:"] as const;
 
-export const MODES = ["approach", "validate", "gate-writer", "gate-triage", "codified-diff"] as const;
+export const MODES = [
+  "approach",
+  "validate",
+  "gate-writer",
+  "gate-triage",
+  "codified-diff",
+  "refute",
+  "fuse-synthesize",
+  "grill",
+] as const;
 
 export interface Catalog {
   agents: readonly string[];

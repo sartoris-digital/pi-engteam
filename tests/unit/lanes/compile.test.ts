@@ -161,7 +161,7 @@ describe("compileLane", () => {
       compileLane(lane({ stages: [{ name: "plan", agent: "not-an-agent" }] }), CATALOG, hooks),
     ).toThrow(CompileError);
     expect(() =>
-      compileLane(lane({ stages: [{ name: "plan", agent: "planner", mode: "grill" }] }), CATALOG, hooks),
+      compileLane(lane({ stages: [{ name: "plan", agent: "planner", mode: "not-a-mode" }] }), CATALOG, hooks),
     ).toThrow(CompileError);
     expect(() =>
       compileLane(lane({ stages: [{ name: "plan", agent: "planner", gates: ["not-a-gate"] }] }), CATALOG, hooks),

@@ -34,10 +34,13 @@ describe("catalog", () => {
     expect(isHostAction("deps")).toBe(false);
   });
 
-  it("lists v0 modes and implement-class stage names", () => {
-    expect([...MODES]).toEqual(["approach", "validate", "gate-writer", "gate-triage", "codified-diff"]);
+  it("lists v0 modes plus refute, fuse-synthesize, grill and implement-class stage names", () => {
+    expect([...MODES]).toEqual([
+      "approach", "validate", "gate-writer", "gate-triage", "codified-diff", "refute", "fuse-synthesize", "grill",
+    ]);
     expect(isMode("approach")).toBe(true);
-    expect(isMode("grill")).toBe(false);
+    expect(isMode("grill")).toBe(true);
+    expect(isMode("codified-diff")).toBe(true);
     expect([...IMPLEMENT_CLASS_STAGES]).toEqual(["implement", "fix"]);
     expect(isImplementClassStage("implement")).toBe(true);
     expect(isImplementClassStage("plan")).toBe(false);
