@@ -10,13 +10,14 @@ import { publish } from "../git/publish.js";
 import type { PrClient } from "../git/pr.js";
 import type { StageHooks } from "../lanes/hooks.js";
 import type { StageDef } from "../lanes/schema.js";
-import { fusionRequestFromStage, mergeForMode, runFusion, type FusionSlot } from "../fusion/index.js";
+import { fusionRequestFromStage, mergeForMode, resolvePinnedModel, runFusion, type FusionSlot } from "../fusion/index.js";
 import { writeStepPrompt } from "../runtime/prompt.js";
 import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import { makeSteerStep, type SteerHooks } from "../steer/stage.js";
 import type { RunState } from "../engine/types.js";
 import type { Workspace } from "../workspace/types.js";
 import { isImplementClassStage } from "../lanes/catalog.js";
+import { appendHandoffLedger, isHandoffAction, type HandoffAction } from "./grill.js";
 import { loadEffectiveRules } from "../rules/load.js";
 import { operatorRulesBlock } from "../rules/prompt.js";
 import type { RuleRecord } from "../rules/schema.js";
@@ -80,6 +81,7 @@ export interface StageHookDeps {
   rules?: RuleRecord[];
   home?: string;
   fusion?: FusionHookConfig;
+  ask?: (prompt: string) => Promise<string>;
 }
 
 async function resolveRules(ctx: StepContext, deps: StageHookDeps): Promise<RuleRecord[]> {
@@ -139,8 +141,22 @@ export function makeStageHooks(deps: StageHookDeps): StageHooks {
 }
 
 async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {
-  const agent = deps.agents.find((a) => a.name === stage.agent);
-  if (!agent) throw new Error(`no agent definition for "${stage.agent ?? ""}"`);
+  const found = deps.agents.find((a) => a.name === stage.agent);
+  if (!found) throw new Error(`no agent definition for "${stage.agent ?? ""}"`);
+  let agent = found;
+  if (stage.model && !stage.fusion) {
+    const resolved = resolvePinnedModel(stage.model, deps.fusion?.stack ?? [], found.model);
+    if (resolved.degraded) {
+      ctx.emit({
+        category: "lifecycle",
+        type: "factory.fusion.degraded",
+        runId: ctx.state.runId,
+        step: stage.name,
+        data: { requested: [stage.model], ran: [resolved.model] },
+      });
+    }
+    agent = { ...found, model: resolved.model };
+  }
   await prepareWriteBoundary(ctx, stage);
   const round = ctx.state.steps.filter((s) => s.name === stage.name).length;
   let ticket = "";
@@ -353,6 +369,9 @@ async function runPublish(ctx: StepContext, stage: StageDef, deps: StageHookDeps
 }
 
 async function runHuman(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {
+  if (stage.name === "handoff" || stage.packet === "handoff") {
+    return runHandoff(ctx, deps);
+  }
   if (stage.name !== "steer") {
     return { verdict: "FAIL", escalate: "needs-decision", issues: [`unknown human stage ${stage.name}`] };
   }
@@ -361,6 +380,38 @@ async function runHuman(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     rehash: deps.rehash ?? (async () => ({ ok: true, note: "v0: no gate stage" })),
   });
   return step.run(ctx);
+}
+
+async function runHandoff(ctx: StepContext, deps: StageHookDeps): Promise<StepResult> {
+  const packetPath = join(ctx.runDir, "handoff.md");
+  const recorded = ctx.state.artifacts["handoff-action"];
+  let action: HandoffAction | undefined = isHandoffAction(recorded ?? "") ? recorded : undefined;
+  if (action === undefined && deps.ask !== undefined) {
+    const raw = (await deps.ask("handoff: enqueue | file-ticket | save | another-round | drop")).trim();
+    if (isHandoffAction(raw)) action = raw;
+  }
+  if (action === undefined) {
+    return {
+      verdict: "PASS",
+      artifacts: { handoff: packetPath },
+      pauseForUser: { reason: "handoff", packetPath },
+    };
+  }
+  ctx.state.artifacts["handoff-action"] = action;
+  const runsDir = deps.runsDir ?? join(ctx.runDir, "..");
+  await appendHandoffLedger(runsDir, {
+    type: "grill.handoff",
+    runId: ctx.state.runId,
+    action,
+    ts: new Date().toISOString(),
+  });
+  if (action === "drop") {
+    return { verdict: "FAIL", issues: ["dropped at grill handoff"], escalate: "needs-decision", artifacts: { handoff: packetPath } };
+  }
+  if (action === "another-round") {
+    return { verdict: "NEEDS_MORE", issues: ["another-round"], artifacts: { handoff: packetPath } };
+  }
+  return { verdict: "PASS", artifacts: { handoff: packetPath } };
 }
 
 export function policyShaOf(bytes: Buffer | string): string {
