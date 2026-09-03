@@ -158,6 +158,7 @@ export async function runFusion(opts: RunFusionOptions): Promise<StepResult> {
   const { remaining, discarded, failClosed } = degradeSlots(opts.req.mode, results);
   if (discarded.length > 0) {
     opts.emit?.({
+      ts: new Date().toISOString(),
       category: "lifecycle",
       type: "factory.fusion.degraded",
       runId: opts.base.runId,

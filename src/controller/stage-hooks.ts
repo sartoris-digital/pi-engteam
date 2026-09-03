@@ -148,6 +148,7 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     const resolved = resolvePinnedModel(stage.model, deps.fusion?.stack ?? [], found.model);
     if (resolved.degraded) {
       ctx.emit({
+        ts: new Date().toISOString(),
         category: "lifecycle",
         type: "factory.fusion.degraded",
         runId: ctx.state.runId,
@@ -384,8 +385,8 @@ async function runHuman(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
 
 async function runHandoff(ctx: StepContext, deps: StageHookDeps): Promise<StepResult> {
   const packetPath = join(ctx.runDir, "handoff.md");
-  const recorded = ctx.state.artifacts["handoff-action"];
-  let action: HandoffAction | undefined = isHandoffAction(recorded ?? "") ? recorded : undefined;
+  const recorded = ctx.state.artifacts["handoff-action"] ?? "";
+  let action: HandoffAction | undefined = isHandoffAction(recorded) ? recorded : undefined;
   if (action === undefined && deps.ask !== undefined) {
     const raw = (await deps.ask("handoff: enqueue | file-ticket | save | another-round | drop")).trim();
     if (isHandoffAction(raw)) action = raw;
