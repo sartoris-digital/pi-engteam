@@ -280,6 +280,18 @@ export class Engine {
     return this.executeRun(runId);
   }
 
+  async cancelRun(runId: string): Promise<RunState> {
+    const live = this.active.get(runId);
+    if (live) {
+      live.state.phase = "cancelling";
+      live.cancel.abort();
+      return live.state; // executeRun finalises `cancelled` at the next boundary
+    }
+    const state = await this.getRun(runId);
+    if (state.status === "succeeded" || state.status === "failed" || state.status === "cancelled") return state;
+    return this.finish(state, "cancelled");
+  }
+
   // ---- private ------------------------------------------------------------
 
   private iso(): string {
@@ -367,9 +379,36 @@ export class Engine {
     }
   }
 
-  /** Runs the step body. Task 3.8 replaces this with the timeout/throw-hardened version. */
-  private async invoke(step: Step, ctx: StepContext, _controller: AbortController): Promise<StepResult> {
-    return step.run(ctx);
+  /** Runs the step body under its timeout; never returns PASS after the deadline, never throws. */
+  private async invoke(step: Step, ctx: StepContext, controller: AbortController): Promise<StepResult> {
+    const timeoutMs = step.timeoutSeconds !== undefined && step.timeoutSeconds > 0 ? step.timeoutSeconds * 1000 : undefined;
+    const timeoutResult: StepResult = {
+      verdict: "FAIL",
+      issues: [`step '${step.name}' timed out after ${step.timeoutSeconds ?? 0}s`],
+      evidence: { timedOut: true },
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const deadline = new Promise<StepResult>((resolve) => {
+      if (timeoutMs === undefined) return; // no deadline: this promise never settles
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        resolve(timeoutResult);
+      }, timeoutMs);
+    });
+    try {
+      const result = await Promise.race([step.run(ctx), deadline]);
+      if (timedOut) return { ...timeoutResult, evidence: { ...(result.evidence ?? {}), timedOut: true } };
+      return result;
+    } catch (err) {
+      if (timedOut) return timeoutResult;
+      const message = err instanceof Error ? err.message : String(err);
+      if (controller.signal.aborted) return { verdict: "FAIL", issues: [`step '${step.name}' aborted: ${message}`] };
+      return { verdict: "FAIL", issues: [`step '${step.name}' threw: ${message}`], escalate: "worker-crash" };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private async finishStep(
