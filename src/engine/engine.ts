@@ -248,6 +248,38 @@ export class Engine {
     }
   }
 
+  async resumeRun(runId: string, opts: ResumeOptions = {}): Promise<RunState> {
+    const reg = this.registry.get(runId);
+    if (!reg) throw new EngineError(`no workflow registered for run ${runId}; call registerWorkflow first`);
+    if (this.active.has(runId)) throw new EngineError(`run ${runId} is already executing`);
+    const state = await this.getRun(runId);
+    if (state.status === "running" || state.status === "succeeded" || state.status === "cancelled") {
+      throw new EngineError(`run ${runId} cannot resume from status ${state.status}`);
+    }
+    if (state.status === "failed" && opts.fromStep === undefined) {
+      throw new EngineError(`run ${runId} failed (${state.escalation?.code ?? "no code"}); pass fromStep to resume`);
+    }
+    if (opts.fromStep !== undefined) {
+      if (!reg.workflow.steps.some((s) => s.name === opts.fromStep)) {
+        throw new EngineError(`run ${runId} cannot resume from unknown step '${opts.fromStep}'`);
+      }
+      state.currentStep = opts.fromStep;
+      delete state.escalation;
+    }
+    for (const stage of opts.resetRounds ?? []) {
+      state.rounds[stage] = Math.max(0, (state.rounds[stage] ?? 0) - 1);
+    }
+    // Handed to the resumed step as ctx.state.resumeDecision and cleared once it runs.
+    // The engine persists no decision file — src/steer/stage.ts owns that.
+    if (opts.decision) state.resumeDecision = opts.decision;
+    else delete state.resumeDecision;
+    delete state.pauseForUser;
+    state.status = "paused";
+    await this.save(state);
+    this.emitRun(state, "run.resume", { step: state.currentStep, decision: opts.decision?.action });
+    return this.executeRun(runId);
+  }
+
   // ---- private ------------------------------------------------------------
 
   private iso(): string {
