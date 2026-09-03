@@ -9,8 +9,10 @@ import { generatedMarker, runDir } from "../../src/home.js";
 import { readGeneratedFile, readGeneratedJson } from "../../src/engine/state.js";
 import { verifyRecord } from "../../src/safety/evidence-sign.js";
 import { parseFactoryArgs } from "../../src/commands/router.js";
+import { runApprove } from "../../src/commands/approve.js";
 import { runEnqueue } from "../../src/commands/enqueue.js";
 import { runStart } from "../../src/commands/start.js";
+import { steerDecisionsDir, type SteerDecisionFile } from "../../src/steer/index.js";
 import {
   branchTree,
   buildTestDeps,
@@ -159,3 +161,93 @@ describe("chore lane end to end (unattended)", () => {
     }
   }, 180_000);
 });
+
+describe("chore lane end to end (steer gate)", () => {
+  it("pauses at steer and resumes to completion on /factory approve", async () => {
+    const fixture = await makeFixtureRepo();
+    try {
+      await withTmpHome(async (home) => {
+        await writeFactoryTestConfig(home, fixture.repo, { steering: "always", junitPath: JUNIT });
+        const scenarioPath = await writeScenario(home, UNATTENDED_SCENARIO);
+        const deps = await buildTestDeps({ home, repo: fixture.repo, scenarioPath });
+
+        const { ticket } = await runEnqueue(
+          parseFactoryArgs(`enqueue --task "add a greeting helper" --repo ${fixture.repo} --kind chore`),
+          deps,
+        );
+
+        const paused = await runStart(parseFactoryArgs("start"), deps);
+        expect(paused).toHaveLength(1);
+        const pausedState = paused[0];
+        if (pausedState === undefined) throw new Error("no run state");
+        expect(pausedState.status).toBe("waiting_user");
+        expect(pausedState.currentStep).toBe("steer");
+        expect(pausedState.pauseForUser?.reason).toBe("steer");
+
+        const dir = runDir(pausedState.runId);
+        const packetPath = pausedState.pauseForUser?.packetPath;
+        expect(packetPath).toBeTypeOf("string");
+        const packet = await readFile(packetPath ?? "", "utf8");
+        expect(packet.split("\n")[0]).toBe(generatedMarker(pausedState.runId));
+
+        await expect(remoteTip(fixture.bare, pausedState.branch)).rejects.toThrow();
+        const queueWhilePaused = JSON.parse(
+          await readFile(join(deps.runsDir, "_factory", "queue.json"), "utf8"),
+        ) as { entries: { ref: string; state: string }[] };
+        expect(queueWhilePaused.entries.find((e) => e.ref === ticket.ref.id)?.state).toBe("waiting_user");
+
+        const resumed = await runApprove(
+          parseFactoryArgs(`approve ${ticket.ref.id} looks right to me`),
+          deps,
+        );
+        expect(resumed.status).toBe("succeeded");
+        expect(resumed.runId).toBe(pausedState.runId);
+
+        const decision = JSON.parse(
+          await readFile(join(steerDecisionsDir(dir), "steer-1.json"), "utf8"),
+        ) as SteerDecisionFile;
+        expect(decision.schemaVersion).toBe(1);
+        expect(decision.action).toBe("approve");
+        expect(decision.notes).toBe("looks right to me");
+        expect(decision.by).toBe("command");
+
+        expect(resumed.judgedSha).toBeTypeOf("string");
+        await expect(remoteTip(fixture.bare, resumed.branch)).resolves.toBe(resumed.judgedSha);
+
+        const tree = await branchTree(fixture.bare, resumed.branch);
+        expect(tree).not.toContain("steer-packet.md");
+        expect(tree).not.toContain("plan.md");
+
+        const queueAfter = JSON.parse(
+          await readFile(join(deps.runsDir, "_factory", "queue.json"), "utf8"),
+        ) as { entries: { ref: string; state: string }[] };
+        expect(queueAfter.entries.find((e) => e.ref === ticket.ref.id)?.state).toBe("published");
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 180_000);
+
+  it("refuses approve for a run that is not waiting_user", async () => {
+    const fixture = await makeFixtureRepo();
+    try {
+      await withTmpHome(async (home) => {
+        await writeFactoryTestConfig(home, fixture.repo, { steering: "never", junitPath: JUNIT });
+        const scenarioPath = await writeScenario(home, UNATTENDED_SCENARIO);
+        const deps = await buildTestDeps({ home, repo: fixture.repo, scenarioPath });
+        const { ticket } = await runEnqueue(
+          parseFactoryArgs(`enqueue --task "add a greeting helper" --repo ${fixture.repo} --kind chore`),
+          deps,
+        );
+        await runStart(parseFactoryArgs("start"), deps);
+        const ref = ticket.ref.id;
+        await expect(runApprove(parseFactoryArgs(`approve ${ref}`), deps)).rejects.toThrow(
+          `approve: ${ref} is published, not waiting_user`,
+        );
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 180_000);
+});
+
