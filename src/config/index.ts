@@ -21,3 +21,12 @@ export {
   readLocal,
   readRepoOverrides,
 } from "./layers.js";
+export {
+  assertNarrowing,
+  NarrowingError,
+  narrowedKeysFor,
+  POLICY_RANK,
+  SANDBOX_RANK,
+  SAFETY_KEYS,
+  type SafetyKey,
+} from "./narrowing.js";
