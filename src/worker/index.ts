@@ -14,3 +14,4 @@ export {
   type RequestApprovalInput,
   type RequestApprovalOptions,
 } from "./request-approval.js";
+export { WORKER_REFUSED_EXIT_CODE, policyShaOf, registerWorker, type RegisterWorkerOptions } from "./register.js";
