@@ -1,6 +1,32 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
 export interface ScreenFlags {
   injectionSuspect: boolean;
   reasons: string[];
+}
+
+export interface UnauthorizedTrigger {
+  tracker: string;
+  ref: string;
+  login: string;
+  at?: string;
+}
+
+/** Append `{ type: "unauthorized-trigger", tracker, ref, login, at }` to runs/_factory/ledger.jsonl. */
+export async function recordUnauthorized(runsDir: string, event: UnauthorizedTrigger): Promise<void> {
+  const at = event.at ?? new Date().toISOString();
+  const path = join(runsDir, "_factory", "ledger.jsonl");
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const line = JSON.stringify({
+    type: "unauthorized-trigger",
+    tracker: event.tracker,
+    ref: event.ref,
+    login: event.login,
+    at,
+    ts: at,
+  });
+  await appendFile(path, `${line}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
 const URL_RE = /\bhttps?:\/\/[^\s)]+/i;

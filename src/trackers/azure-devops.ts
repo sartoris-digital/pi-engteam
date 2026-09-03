@@ -114,7 +114,9 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
   private readonly orgUrl: string;
   private readonly allowedAuthors: readonly string[];
   private readonly ignoreAuthors: readonly string[];
-  private readonly transitionOnClaim: boolean;
+  readonly transitionOnClaim: boolean;
+  readonly transitionOnMerge: boolean;
+  readonly mergeState: string | undefined;
   private readonly claimState: string;
   private readonly assignOnClaim: boolean;
   private readonly posted = new Map<string, CommentId>();
@@ -131,9 +133,10 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
     this.allowedAuthors = opts.allowedAuthors;
     this.ignoreAuthors = opts.ignoreAuthors ?? [];
     this.transitionOnClaim = opts.transitionOnClaim ?? DEFAULTS.trackerEntry.transitionOnClaim["azure-devops"];
+    this.transitionOnMerge = opts.transitionOnMerge ?? DEFAULTS.trackerEntry.transitionOnMerge;
     this.claimState = opts.transitions?.claim ?? "Active";
+    this.mergeState = opts.transitions?.merge;
     this.assignOnClaim = opts.assignOnClaim ?? DEFAULTS.trackerEntry.assignOnClaim;
-    void opts.transitionOnMerge;
   }
 
   parseRef(input: string): TicketRef | null {
@@ -234,18 +237,35 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
     return out;
   }
 
-  async labelerOf(ref: TicketRef, _label: string): Promise<{ login: string; role: string } | null> {
-    try {
-      const ticket = await this.fetch(ref);
-      if (ticket.author.length === 0) return null;
-      return { login: ticket.author, role: "allowlist" };
-    } catch {
-      return null;
+  async labelerOf(ref: TicketRef, label: string): Promise<{ login: string; role: string } | null> {
+    const id = this.requireId(ref);
+    const uri = `${this.orgUrl}/${this.project}/_apis/wit/workItems/${id}/updates?api-version=7.1`;
+    const result = await this.cli.exec(["az", "rest", "--method", "GET", "--uri", uri]);
+    if (result.code !== 0) return null;
+    const rec = asRecord(this.parseJson(result.stdout));
+    const rows = Array.isArray(rec?.value) ? rec.value : Array.isArray(this.parseJson(result.stdout)) ? (this.parseJson(result.stdout) as unknown[]) : [];
+    let login: string | undefined;
+    for (const row of rows) {
+      const item = asRecord(row);
+      if (item === null) continue;
+      const fields = asRecord(item.fields);
+      const tags = asRecord(fields?.["System.Tags"]);
+      const next = typeof tags?.newValue === "string" ? tags.newValue : "";
+      if (!splitTags(next).includes(label)) continue;
+      const actor = uniqueNameOf(item.revisedBy);
+      if (actor.length > 0) login = actor;
     }
+    if (login === undefined) return null;
+    return { login, role: "allowlist" };
   }
 
   async isAuthorized(login: string): Promise<boolean> {
-    return this.allowedAuthors.some((a) => authorsMatch(login, a));
+    if (!this.allowedAuthors.some((a) => authorsMatch(login, a))) return false;
+    try {
+      return await this.roleAllows(login);
+    } catch {
+      return false;
+    }
   }
 
   async acknowledge(ref: TicketRef): Promise<void> {
@@ -364,6 +384,24 @@ export class AzureDevOpsAdapter implements TrackerAdapter {
   private dropAuthor(login: string): boolean {
     if (login.endsWith("[bot]")) return true;
     return this.ignoreAuthors.some((a) => authorsMatch(login, a));
+  }
+
+  private async roleAllows(login: string): Promise<boolean> {
+    const uri = `${this.orgUrl}/${this.project}/_apis/security/permissions?api-version=7.1&subject=${encodeURIComponent(login)}`;
+    const result = await this.cli.exec(["az", "rest", "--method", "GET", "--uri", uri]);
+    if (result.code !== 0) return false;
+    const rec = asRecord(this.parseJson(result.stdout));
+    if (rec === null) return false;
+    if (rec.allow === true) return true;
+    if (rec.allow === false) return false;
+    const perms = asRecord(rec.permissions);
+    if (perms !== null) {
+      for (const value of Object.values(perms)) {
+        const row = asRecord(value);
+        if (row?.havePermission === true || row?.allow === true) return true;
+      }
+    }
+    return false;
   }
 
   private async findIdempotentComment(ref: TicketRef, idempotencyKey: string): Promise<CommentId | null> {

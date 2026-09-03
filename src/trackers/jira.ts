@@ -88,7 +88,9 @@ export class JiraAdapter implements TrackerAdapter {
   private readonly projectKey: string;
   private readonly allowedAuthors: readonly string[];
   private readonly ignoreAuthors: readonly string[];
-  private readonly transitionOnClaim: boolean;
+  readonly transitionOnClaim: boolean;
+  readonly transitionOnMerge: boolean;
+  readonly mergeState: string | undefined;
   private readonly claimState: string;
   private readonly commentMode: JiraCommentMode;
   private readonly posted = new Map<string, CommentId>();
@@ -104,10 +106,11 @@ export class JiraAdapter implements TrackerAdapter {
     this.allowedAuthors = opts.allowedAuthors;
     this.ignoreAuthors = opts.ignoreAuthors ?? [];
     this.transitionOnClaim = opts.transitionOnClaim ?? DEFAULTS.trackerEntry.transitionOnClaim.jira;
+    this.transitionOnMerge = opts.transitionOnMerge ?? DEFAULTS.trackerEntry.transitionOnMerge;
     this.claimState = opts.transitions?.claim ?? "In Progress";
+    this.mergeState = opts.transitions?.merge;
     this.commentMode = opts.commentMode ?? "cadence";
     void opts.site;
-    void opts.transitionOnMerge;
     void opts.assignOnClaim;
   }
 
@@ -196,7 +199,12 @@ export class JiraAdapter implements TrackerAdapter {
   }
 
   async isAuthorized(login: string): Promise<boolean> {
-    return this.allowedAuthors.some((a) => authorsMatch(login, a));
+    if (!this.allowedAuthors.some((a) => authorsMatch(login, a))) return false;
+    try {
+      return await this.roleAllows(login);
+    } catch {
+      return false;
+    }
   }
 
   async acknowledge(ref: TicketRef): Promise<void> {
@@ -246,6 +254,19 @@ export class JiraAdapter implements TrackerAdapter {
   async linkPR(ref: TicketRef, pr: PRRef): Promise<void> {
     const url = pr.url ?? "";
     await this.jira(["issue", "link", "remote", this.requireKey(ref), url, "PR"]);
+  }
+
+  private async roleAllows(login: string): Promise<boolean> {
+    const path = `/rest/api/3/mypermissions?projectKey=${encodeURIComponent(this.projectKey)}&permissions=EDIT_ISSUES,TRANSITION_ISSUES&accountId=${encodeURIComponent(login)}`;
+    const result = await this.cli.exec(["jira", "api", "GET", path]);
+    if (result.code !== 0) return false;
+    const rec = asRecord(this.parseJson(result.stdout));
+    if (rec === null) return false;
+    const perms = asRecord(rec.permissions);
+    if (perms === null) return rec.allow === true;
+    const edit = asRecord(perms.EDIT_ISSUES)?.havePermission === true;
+    const move = asRecord(perms.TRANSITION_ISSUES)?.havePermission === true;
+    return edit || move;
   }
 
   private ticketFromJson(raw: unknown): Ticket {

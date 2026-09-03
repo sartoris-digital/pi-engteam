@@ -14,8 +14,8 @@ export { LOCAL_TICKET_STATUSES, LocalAdapter, deriveTitle, localTicketsDir } fro
 export type { LocalAdapterOptions, LocalTicketRecord, LocalTicketStatus } from "./local.js";
 export { sanitizeTicketText, stripTrackerPrior } from "./sanitize.js";
 export type { TrackerPrior } from "./sanitize.js";
-export { screenText } from "./screen.js";
-export type { ScreenFlags } from "./screen.js";
+export { recordUnauthorized, screenText } from "./screen.js";
+export type { ScreenFlags, UnauthorizedTrigger } from "./screen.js";
 export { GhError, ensureRepoFlag, realGhExec } from "./gh.js";
 export type { GhExec, GhResult } from "./gh.js";
 export { GitHubAdapter, parseGitHubRef, splitGitHubId } from "./github.js";
