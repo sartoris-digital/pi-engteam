@@ -1,0 +1,130 @@
+import { isAgent, isHostAction, isImplementClassStage, isMode, isPredicate, type Catalog } from "./catalog.js";
+import type { LaneDef, LaneMatch, NamedLane, StageDef } from "./schema.js";
+
+export interface InvariantError {
+  lane: string;
+  stage?: string;
+  rule: string;
+  detail?: string;
+}
+
+export class LaneInvariantError extends Error {
+  readonly errors: InvariantError[];
+  constructor(errors: InvariantError[]) {
+    super(errors.map((e) => `[${e.lane}${e.stage ? `/${e.stage}` : ""}] ${e.rule}`).join("; "));
+    this.name = "LaneInvariantError";
+    this.errors = errors;
+  }
+}
+
+function err(lane: string, rule: string, stage?: string, detail?: string): InvariantError {
+  return { lane, rule, ...(stage ? { stage } : {}), ...(detail ? { detail } : {}) };
+}
+
+function indexOf(stages: StageDef[], pred: (s: StageDef) => boolean): number {
+  return stages.findIndex(pred);
+}
+
+export function checkCatalogInvariants(lane: NamedLane, catalog: Catalog): InvariantError[] {
+  const out: InvariantError[] = [];
+  for (const stage of lane.stages) {
+    if (stage.agent && !catalog.agents.includes(stage.agent) && !isAgent(stage.agent)) {
+      out.push(err(lane.name, "catalog-unknown-agent", stage.name, stage.agent));
+    }
+    if (stage.host && !catalog.hostActions.includes(stage.host) && !isHostAction(stage.host)) {
+      out.push(err(lane.name, "catalog-unknown-host", stage.name, stage.host));
+    }
+    if (stage.mode && !isMode(stage.mode)) out.push(err(lane.name, "catalog-unknown-mode", stage.name, stage.mode));
+    for (const gate of stage.gates ?? []) {
+      if (!isPredicate(gate)) out.push(err(lane.name, "catalog-unknown-predicate", stage.name, gate));
+    }
+  }
+  return out;
+}
+
+function checkBuild(lane: NamedLane): InvariantError[] {
+  const out: InvariantError[] = [];
+  const stages = lane.stages;
+  const firstImpl = indexOf(stages, (s) => isImplementClassStage(s.name));
+  const steer = indexOf(stages, (s) => s.name === "steer" && s.human === true);
+  if (steer < 0) out.push(err(lane.name, "steer-missing", "steer"));
+  else if (firstImpl >= 0 && steer > firstImpl) out.push(err(lane.name, "steer-after-implement", "steer"));
+  const judge = stages.find((s) => s.name === "judge");
+  if (!judge || judge.safetyGating !== true) out.push(err(lane.name, "judge-missing", "judge"));
+  const last = stages[stages.length - 1];
+  if (!last || last.host !== "publish") out.push(err(lane.name, "publish-not-last", last?.name));
+  const hasImplementer = stages.some((s) => s.agent === "implementer" || s.name === "implement");
+  const gateIdx = indexOf(stages, (s) => s.name === "gate");
+  if (hasImplementer && lane.gateless !== true) {
+    if (gateIdx < 0) out.push(err(lane.name, "gate-missing", "gate"));
+  }
+  if (gateIdx >= 0) {
+    const gate = stages[gateIdx]!;
+    const hasRed = (gate.gates ?? []).some((g) => g === "red-baseline" || g.startsWith("red-baseline:"));
+    if (!hasRed) out.push(err(lane.name, "red-baseline-missing", "gate"));
+    if (firstImpl >= 0 && gateIdx > firstImpl) out.push(err(lane.name, "gate-missing", "gate"));
+  }
+  if (lane.name === "chore" || lane.match.kind === "chore") {
+    const first = stages[0];
+    if (!first || first.host !== "scope-check") out.push(err(lane.name, "scope-check-first", first?.name ?? "scope-check"));
+  }
+  return out;
+}
+
+function checkPreBuild(lane: NamedLane): InvariantError[] {
+  const out: InvariantError[] = [];
+  if (lane.stages.some((s) => isImplementClassStage(s.name) || s.agent === "implementer")) {
+    out.push(err(lane.name, "prebuild-has-implement"));
+  }
+  if (lane.stages.some((s) => s.host === "publish")) out.push(err(lane.name, "prebuild-has-publish"));
+  const last = lane.stages[lane.stages.length - 1];
+  if (!last || last.human !== true) out.push(err(lane.name, "prebuild-handoff-last", last?.name));
+  return out;
+}
+
+function checkMeta(lane: NamedLane): InvariantError[] {
+  const out: InvariantError[] = [];
+  if (lane.stages.some((s) => s.human === true)) out.push(err(lane.name, "meta-has-human"));
+  if (lane.stages.some((s) => isImplementClassStage(s.name) || s.agent === "implementer")) out.push(err(lane.name, "meta-has-implement"));
+  if (lane.stages.some((s) => s.name === "gate")) out.push(err(lane.name, "meta-has-gate"));
+  if (lane.stages.some((s) => s.name === "steer")) out.push(err(lane.name, "meta-has-steer"));
+  const security = lane.stages.find((s) => s.name === "security");
+  if (!security || security.when !== "true") out.push(err(lane.name, "meta-security-when", "security"));
+  const judge = lane.stages.find((s) => s.name === "judge");
+  if (!judge || judge.safetyGating !== true) out.push(err(lane.name, "judge-missing", "judge"));
+  const last = lane.stages[lane.stages.length - 1];
+  if (!last || last.host !== "publish") out.push(err(lane.name, "publish-not-last", last?.name));
+  return out;
+}
+
+export function checkInvariants(lane: NamedLane, catalog: Catalog): InvariantError[] {
+  const cls = lane.class ?? "build";
+  const classErrors =
+    cls === "pre-build" ? checkPreBuild(lane) : cls === "meta" ? checkMeta(lane) : checkBuild(lane);
+  return [...classErrors, ...checkCatalogInvariants(lane, catalog)];
+}
+
+export function matchesOverlap(_a: LaneMatch, _b: LaneMatch): boolean {
+  return false; // Task 5.9 replaces this
+}
+
+export function checkOverrideInvariants(
+  _builtins: Record<string, LaneDef>,
+  _effective: Record<string, LaneDef>,
+  _catalog: Catalog,
+): InvariantError[] {
+  return []; // Task 5.9 replaces this
+}
+
+export function checkAllInvariants(
+  builtins: Record<string, LaneDef>,
+  effective: Record<string, LaneDef>,
+  catalog: Catalog,
+): InvariantError[] {
+  const out: InvariantError[] = [];
+  for (const [name, lane] of Object.entries(effective)) {
+    out.push(...checkInvariants({ ...lane, name }, catalog));
+  }
+  out.push(...checkOverrideInvariants(builtins, effective, catalog));
+  return out;
+}
