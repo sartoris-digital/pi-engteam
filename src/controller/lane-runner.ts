@@ -16,8 +16,11 @@ import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
 import type { TrackerRegistry } from "../trackers/discovery.js";
 import { LocalAdapter } from "../trackers/local.js";
+import { splitGitHubId } from "../trackers/github.js";
 import type { Vault } from "../vault/vault.js";
+import type { PrClient } from "../git/pr.js";
 import { hostGitOk } from "../git/host-git.js";
+import { queueKey, readQueue, writeQueue } from "../scheduler/queue.js";
 import { EnvSetupFailedError, runSetupCommand } from "../workspace/setup.js";
 import { sanitizeSlug } from "../workspace/git-provider.js";
 import type { Workspace, WorkspaceProvider } from "../workspace/types.js";
@@ -47,6 +50,8 @@ export interface FactoryDeps {
   scheduler?: FactoryScheduler;
   probeSandbox?: () => Promise<SandboxProbe>;
   analyst?: AnalystPort;
+  /** Injected PR client. Absent → push-only publish (v0). */
+  pr?: PrClient;
 }
 
 export const runObservers = new Map<string, Observer>();
@@ -75,11 +80,19 @@ export function sandboxProfileForRun(req: WorkerRequest, home: string): SandboxP
   return runSandboxModes.get(req.runId) === "off" ? null : profileForRequest(req, { home });
 }
 
+function branchTicketId(ticket: Ticket): string {
+  if (ticket.ref.tracker === "github") {
+    const parts = splitGitHubId(ticket.ref.id);
+    if (parts !== null) return String(parts.number);
+  }
+  return ticket.ref.id;
+}
+
 export function renderBranch(cfg: EffectiveConfig, ticket: Ticket): string {
   const slug = sanitizeSlug(ticket.title);
   const vars: Record<string, string> = {
     tracker: ticket.ref.tracker,
-    id: ticket.ref.id,
+    id: branchTicketId(ticket),
     slug,
     kind: ticket.kind ?? "chore",
     title: ticket.title,
@@ -121,6 +134,8 @@ async function stageHookDeps(deps: FactoryDeps, fusion?: OperatorConfig["fusion"
     runsDir: deps.runsDir,
     home: deps.home,
     ...(deps.vault === undefined ? {} : { vault: deps.vault }),
+    ...(deps.pr == null ? {} : { pr: deps.pr }),
+    ...(deps.adapters === undefined ? {} : { adapters: deps.adapters }),
     ...(fusion
       ? {
           fusion: {
@@ -175,6 +190,25 @@ async function failEnvSetup(state: RunState, runsDir: string, detail: string): P
   await writeGeneratedJson(join(runsDir, state.runId, "escalation.json"), state.runId, state.escalation);
   await saveRunState(runsDir, state);
   return state;
+}
+
+async function bindQueueRun(deps: FactoryDeps, ticket: Ticket, state: RunState, ws: Workspace): Promise<void> {
+  const queue = await readQueue(deps.runsDir);
+  const gh = ticket.ref.tracker === "github" ? splitGitHubId(ticket.ref.id) : null;
+  const key = gh !== null ? queueKey("github", gh.repo, String(gh.number)) : undefined;
+  const entry = queue.entries.find(
+    (e) =>
+      (key !== undefined && e.key === key) ||
+      e.ref === ticket.ref.id ||
+      e.ref === refToString(ticket.ref),
+  );
+  if (entry === undefined) return;
+  entry.runId = state.runId;
+  entry.workspace = { provider: ws.provider, path: ws.path, branch: ws.branch, lane: state.lane };
+  entry.baseSha = state.baseSha;
+  entry.configSha = state.configSha;
+  entry.updatedAt = new Date().toISOString();
+  await writeQueue(deps.runsDir, queue);
 }
 
 function resolveLaneName(ticket: Ticket, lanes: Record<string, LaneDef>, requested?: string): string {
@@ -237,6 +271,7 @@ export async function runTicket(
 
   pinWorkspaceArtifacts(state, ws);
   await saveRunState(deps.runsDir, state);
+  await bindQueueRun(deps, ticket, state, ws);
 
   const dir = join(deps.runsDir, state.runId);
   await writeTicketMarkdown(dir, ticket.body, state.nonce);

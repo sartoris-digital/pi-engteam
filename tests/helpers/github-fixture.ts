@@ -144,7 +144,8 @@ export async function makeGithubFactoryWorld(
       repos: [
         {
           path: fixture.repo,
-          remote: fixture.bare,
+          // git remote name; origin's URL is the fixture bare (makeFixtureRepo).
+          remote: "origin",
           tracker: "github",
           project: GITHUB_FIXTURE_REPO,
           label: "factory:ready",

@@ -8,6 +8,7 @@ import type { TrackerEntry } from "../config/schema.js";
 import { Engine } from "../engine/engine.js";
 import { defaultVerify } from "../engine/verify.js";
 import { checkpointCommit } from "../git/checkpoint.js";
+import { githubPrClient } from "../git/pr.js";
 import { ensureDirs, factoryHome, runsDir } from "../home.js";
 import { evalWhen as evalLaneExpr, type WhenContext } from "../lanes/expr.js";
 import { loadEffectiveLanes } from "../lanes/index.js";
@@ -172,12 +173,13 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
   });
   const tracker = new LocalAdapter(runs);
   const detected = overlay.remotes.map(detectTrackerFromRemote).find((hit) => hit !== null);
+  const ghExec = hostGhExec();
   const github: GitHubAdapterOptions | undefined = githubConfigured({
     trackers: overlay.trackers,
     remotes: overlay.remotes,
   })
     ? {
-        exec: hostGhExec(),
+        exec: ghExec,
         ...(detected === undefined ? {} : { repo: `${detected.owner}/${detected.repo}` }),
       }
     : undefined;
@@ -218,6 +220,7 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     piBinary: process.env["PI_SDLC_PI_BINARY"] ?? "pi",
     repos: overlay.repos,
     scheduler,
+    ...(github === undefined ? {} : { pr: githubPrClient(ghExec) }),
   };
 }
 

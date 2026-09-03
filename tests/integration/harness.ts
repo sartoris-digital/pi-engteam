@@ -11,8 +11,12 @@ import { LocalAdapter } from "../../src/trackers/local.js";
 import { GitWorktreeProvider } from "../../src/workspace/git-provider.js";
 import { loadAgentDefs, packageRoot } from "../../src/controller/agents.js";
 import { makeEngine } from "../../src/controller/register.js";
-import { sandboxProfileForRun, type FactoryDeps } from "../../src/controller/lane-runner.js";
+import { sandboxProfileForRun, type FactoryDeps, type FactoryScheduler } from "../../src/controller/lane-runner.js";
 import { writeGlobalConfig } from "../../src/setup/writers.js";
+import type { PrClient } from "../../src/git/pr.js";
+import type { AnalystPort } from "../../src/intake/analyze.js";
+import { Scheduler, makeOnTicket } from "../../src/scheduler/poller.js";
+import type { TrackerRegistry } from "../../src/trackers/discovery.js";
 
 const exec = promisify(execFile);
 const require_ = createRequire(import.meta.url);
@@ -133,6 +137,10 @@ export async function buildTestDeps(opts: {
   scenarioPath: string;
   /** When true, wrap stub-pi with the same sandbox callback production uses. */
   sandbox?: boolean;
+  adapters?: TrackerRegistry;
+  pr?: PrClient;
+  scheduler?: FactoryScheduler;
+  analyst?: AnalystPort;
 }): Promise<FactoryDeps> {
   const runs = runsDir();
   await mkdir(join(runs, "_factory"), { recursive: true, mode: 0o700 });
@@ -144,6 +152,29 @@ export async function buildTestDeps(opts: {
     defaultModel: "stub-model",
     required: ["planner", "implementer", "reviewer", "judge"],
   });
+  const tracker = new LocalAdapter(runs);
+  const adapters = opts.adapters;
+  const scheduler =
+    opts.scheduler ??
+    (adapters === undefined
+      ? undefined
+      : new Scheduler({
+          runsDir: runs,
+          adapters,
+          pollIntervalSeconds: 60,
+          onTicket: makeOnTicket({
+            runsDir: runs,
+            adapterFor: (id) => adapters.get(id),
+            analyst: opts.analyst,
+            authorized: async (ticket, id) => {
+              const adapter = adapters.get(id);
+              if (adapter === undefined) return false;
+              if (ticket.ref.tracker === "local") return true;
+              const labeler = await adapter.labelerOf(ticket.ref, "factory:ready");
+              return adapter.isAuthorized(labeler?.login ?? ticket.author);
+            },
+          }),
+        }));
   return {
     home: opts.home,
     runsDir: runs,
@@ -155,11 +186,15 @@ export async function buildTestDeps(opts: {
       pollMs: 50,
     }),
     provider: new GitWorktreeProvider({ home: opts.home }),
-    tracker: new LocalAdapter(runs),
+    tracker,
     agents,
     lanes,
     piBinary: stubPiPath(),
     repos: [opts.repo],
+    ...(adapters === undefined ? {} : { adapters }),
+    ...(opts.pr === undefined ? {} : { pr: opts.pr }),
+    ...(scheduler === undefined ? {} : { scheduler }),
+    ...(opts.analyst === undefined ? {} : { analyst: opts.analyst }),
   };
 }
 

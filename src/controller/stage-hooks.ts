@@ -4,10 +4,15 @@ import { isAbsolute, join } from "node:path";
 import type { StepContext, StepResult } from "../engine/types.js";
 import { runChecks } from "../gate/checks.js";
 import { finalize } from "../gate/finalize.js";
-import { readQueue, writeQueue } from "../commands/enqueue.js";
+import { queueKey, readQueue, writeQueue } from "../commands/enqueue.js";
 import { hostGit } from "../git/host-git.js";
 import { publish } from "../git/publish.js";
 import type { PrClient } from "../git/pr.js";
+import { upsertStickyComment } from "../git/sticky.js";
+import { splitGitHubId } from "../trackers/github.js";
+import type { TicketRef } from "../trackers/adapter.js";
+import type { TrackerRegistry } from "../trackers/discovery.js";
+import type { QueueEntry, QueueFile } from "../scheduler/queue.js";
 import type { StageHooks } from "../lanes/hooks.js";
 import type { StageDef } from "../lanes/schema.js";
 import { fusionRequestFromStage, mergeForMode, resolvePinnedModel, runFusion, type FusionSlot } from "../fusion/index.js";
@@ -81,11 +86,38 @@ export interface StageHookDeps {
   /** Injected PR client. Absent → push-only publish (v0). */
   pr?: PrClient | null;
   runsDir?: string;
+  adapters?: TrackerRegistry;
   rules?: RuleRecord[];
   home?: string;
   fusion?: FusionHookConfig;
   ask?: (prompt: string) => Promise<string>;
   vault?: Vault;
+}
+
+function ticketRefFromState(state: RunState): TicketRef {
+  const raw = state.ticket.ref;
+  if (state.ticket.tracker === "github") {
+    return { tracker: "github", id: raw.replace(/^github:/, "") };
+  }
+  return { tracker: state.ticket.tracker, id: raw };
+}
+
+function prRepoFromState(state: RunState): string {
+  if (state.ticket.tracker !== "github") return "local";
+  const id = state.ticket.ref.replace(/^github:/, "");
+  return splitGitHubId(id)?.repo ?? "local";
+}
+
+function findPublishEntry(queue: QueueFile, state: RunState): QueueEntry | undefined {
+  const byRun = queue.entries.find((e) => e.runId === state.runId);
+  if (byRun !== undefined) return byRun;
+  const id = state.ticket.ref.replace(/^github:/, "");
+  const gh = state.ticket.tracker === "github" ? splitGitHubId(id) : null;
+  if (gh !== null) {
+    const key = queueKey("github", gh.repo, String(gh.number));
+    return queue.entries.find((e) => e.key === key);
+  }
+  return queue.entries.find((e) => e.ref === state.ticket.ref || e.ref === id);
 }
 
 async function resolveRules(ctx: StepContext, deps: StageHookDeps): Promise<RuleRecord[]> {
@@ -377,7 +409,9 @@ async function runPublish(ctx: StepContext, stage: StageDef, deps: StageHookDeps
     };
   }
   const result = await publish(ctx.state, ctx.cfg, ws(ctx), {
-    ...(deps.pr == null ? {} : { pr: deps.pr, runDir: ctx.runDir }),
+    ...(deps.pr == null
+      ? {}
+      : { pr: deps.pr, runDir: ctx.runDir, prRepo: prRepoFromState(ctx.state) }),
   });
   if (!result.pushed) {
     return {
@@ -389,14 +423,26 @@ async function runPublish(ctx: StepContext, stage: StageDef, deps: StageHookDeps
   }
   if (deps.runsDir !== undefined) {
     const queue = await readQueue(deps.runsDir);
-    const entry = queue.entries.find((e) => e.runId === ctx.state.runId);
+    const entry = findPublishEntry(queue, ctx.state);
     if (entry !== undefined) {
       entry.state = "published";
       entry.updatedAt = new Date().toISOString();
       entry.judgedSha = result.sha;
+      entry.hostCommits = [...ctx.state.hostCommits];
       if (result.pr !== undefined) {
         entry.prUrl = result.pr.url;
         entry.prNumber = result.pr.number;
+      }
+      const adapter = deps.adapters?.get(ctx.state.ticket.tracker);
+      if (adapter !== undefined) {
+        await upsertStickyComment({
+          adapter,
+          ref: ticketRefFromState(ctx.state),
+          runId: ctx.state.runId,
+          body: result.pr !== undefined ? `published ${result.pr.url}` : `published ${result.sha}`,
+          milestone: "publish",
+          entry,
+        });
       }
       await writeQueue(deps.runsDir, queue);
     }

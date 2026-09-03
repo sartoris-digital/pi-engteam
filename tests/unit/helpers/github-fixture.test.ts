@@ -25,8 +25,9 @@ describe("makeGithubFactoryWorld", () => {
         operator?: { trackers?: Array<{ kind?: string }> };
       };
       expect(cfg.repos?.[0]?.tracker).toBe("github");
-      expect(cfg.repos?.[0]?.remote).toBe(world.fixture.bare);
+      expect(cfg.repos?.[0]?.remote).toBe("origin");
       expect(cfg.repos?.[0]?.path).toBe(world.fixture.repo);
+      expect((await world.fixture.git(["remote", "get-url", "origin"])).stdout.trim()).toBe(world.fixture.bare);
       expect(cfg.operator?.trackers?.some((t) => t.kind === "github")).toBe(true);
 
       const ticket = await world.adapter.fetch(world.issueRef);
