@@ -3,3 +3,4 @@ export { MemoryVaultStore } from "./memory-store.js";
 export { FakeKeyring } from "./fake-keyring.js";
 export { SqliteVaultStore } from "./sqlite-store.js";
 export { KEYRING_ACCOUNT, KEYRING_SERVICE, osKeyring } from "./keyring.js";
+export { assertSecretName, Vault, VaultUnavailableError, vaultPath } from "./vault.js";
