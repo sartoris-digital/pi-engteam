@@ -28,6 +28,8 @@ export const SUBCOMMANDS = [
   "closed",
   "gc",
   "rebase",
+  "codify",
+  "codified",
 ] as const;
 export type FactoryVerb = (typeof SUBCOMMANDS)[number];
 

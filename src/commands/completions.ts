@@ -1,4 +1,5 @@
 import { v3StatusCompletions } from "../v3/doctor.js";
+import { CODIFIED_VERBS } from "./codified.js";
 import { SUBCOMMANDS } from "./router.js";
 
 export interface AutocompleteItem {
@@ -21,6 +22,7 @@ export interface CompletionDeps {
   secretNames?: string[];
   unboundNames?: string[];
   ruleIds?: string[];
+  codifiedPromote?: string[];
 }
 
 const VERB_HELP: Record<(typeof SUBCOMMANDS)[number], string> = {
@@ -53,6 +55,8 @@ const VERB_HELP: Record<(typeof SUBCOMMANDS)[number], string> = {
   closed: "mark a published ticket closed (retain worktree)",
   gc: "remove old closed worktrees",
   rebase: "rebase a needs-rebase lane",
+  codify: "mine or repair a codify candidate",
+  codified: "list, explain, promote, or retire a codified tool",
 };
 
 const KINDS = ["feature", "enhancement", "bug", "chore"] as const;
@@ -164,6 +168,38 @@ export function completeFactoryArgs(argumentPrefix: string, deps: CompletionDeps
       const unbound = deps.unboundNames ?? [];
       return items(
         unbound.map((n) => ({ value: `secret bind ${n}`, label: n, description: n })),
+        trimmed,
+      );
+    }
+    return null;
+  }
+  if (trimmed.startsWith("codify")) {
+    const after = trimmed.slice("codify".length);
+    if (after === "" || after === " " || /^ -/.test(after) || /^ --[a-z]*$/.test(after)) {
+      return items(
+        [
+          { value: "codify --scan", label: "--scan", description: "scan inbox for candidates" },
+          { value: "codify --gaps", label: "--gaps", description: "scan verifier gaps" },
+          { value: "codify --repair", label: "--repair", description: "enqueue a repair run" },
+        ],
+        trimmed,
+      );
+    }
+    return null;
+  }
+  if (trimmed.startsWith("codified")) {
+    const after = trimmed.slice("codified".length);
+    if (after === "" || after === " " || /^ [a-z]*$/.test(after)) {
+      return items(
+        CODIFIED_VERBS.map((v) => ({ value: `codified ${v}`, label: v, description: v })),
+        trimmed,
+      );
+    }
+    const promote = /^ promote( |$)/.exec(after);
+    if (promote) {
+      const names = deps.codifiedPromote ?? [];
+      return items(
+        names.map((n) => ({ value: `codified promote ${n}`, label: n, description: n })),
         trimmed,
       );
     }

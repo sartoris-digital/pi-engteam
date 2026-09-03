@@ -69,4 +69,27 @@ describe("completeFactoryArgs", () => {
     expect(bind).toEqual(["secret bind secret:UNBOUND_1"]);
     expect(JSON.stringify(bind)).not.toMatch(/ghp_|sk-|tok-|value/i);
   });
+
+  it("completes codify/codified verbs and promote name@version, never secret values", () => {
+    expect(completeFactoryArgs("", deps)?.map((i) => i.value)).toEqual([...SUBCOMMANDS]);
+    expect(completeFactoryArgs("codi", deps)?.map((i) => i.value)).toEqual(["codify", "codified"]);
+    expect(completeFactoryArgs("codified ", deps)?.map((i) => i.value)).toEqual([
+      "codified list",
+      "codified explain",
+      "codified why",
+      "codified promote",
+      "codified demote",
+      "codified retire",
+      "codified retry",
+      "codified shadow",
+      "codified diff",
+    ]);
+    const promote =
+      completeFactoryArgs("codified promote ", {
+        ...deps,
+        codifiedPromote: ["bump-package-version@1"],
+      })?.map((i) => i.value) ?? [];
+    expect(promote).toEqual(["codified promote bump-package-version@1"]);
+    expect(JSON.stringify(promote)).not.toMatch(/ghp_|sk-|value/i);
+  });
 });

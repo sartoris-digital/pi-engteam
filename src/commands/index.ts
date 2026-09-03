@@ -16,6 +16,8 @@ import { runApprove } from "./approve.js";
 import { runCancel } from "./cancel.js";
 import { runClassify } from "./classify.js";
 import { runClosed } from "./closed.js";
+import { runCodified } from "./codified.js";
+import { runCodify } from "./codify.js";
 import { runDoctor } from "./doctor.js";
 import { completeFactoryArgs, type AutocompleteItem, type CompletionDeps } from "./completions.js";
 import { runDrop } from "./drop.js";
@@ -305,6 +307,10 @@ async function dispatchFactoryVerb(
       const entry = await runRebase(parsed, deps);
       return info(`${entry.ref} rebased → ${entry.workspace?.branch ?? entry.state}`);
     }
+    case "codify":
+      return info(await runCodify(parsed, deps));
+    case "codified":
+      return info(await runCodified(parsed, deps, ctx));
     case "config":
     case "lanes":
     case "interrupt":
@@ -330,4 +336,6 @@ export { runRebase } from "./rebase.js";
 export { runReplan } from "./replan.js";
 export { runStop } from "./stop.js";
 export { runWatch } from "./watch.js";
+export { runCodify } from "./codify.js";
+export { runCodified } from "./codified.js";
 

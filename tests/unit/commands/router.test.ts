@@ -31,13 +31,16 @@ export const V1_SUBCOMMANDS = [
   "closed",
   "gc",
   "rebase",
+  "codify",
+  "codified",
 ] as const;
 
 describe("parseFactoryArgs", () => {
-  it("lists the v1 subcommand tree without codify", () => {
+  it("lists the v1.5 subcommand tree including codify and codified", () => {
     expect([...SUBCOMMANDS]).toEqual([...V1_SUBCOMMANDS]);
-    expect(SUBCOMMANDS).not.toContain("codify");
-    expect(SUBCOMMANDS).not.toContain("codified");
+    expect(SUBCOMMANDS).toContain("codify");
+    expect(SUBCOMMANDS).toContain("codified");
+    expect(SUBCOMMANDS).toContain("rebase");
   });
 
   it("parses enqueue with quoted --task and string flags", () => {
@@ -65,13 +68,15 @@ describe("parseFactoryArgs", () => {
     expect(parseFactoryArgs("setup /repo").args).toEqual(["/repo"]);
   });
 
-  it("accepts v1 verbs including watch and rejects unknown verbs with the v1 set", () => {
+  it("accepts v1.5 verbs including codify/codified and rejects unknown verbs", () => {
     expect(parseFactoryArgs("watch local-1").verb).toBe("watch");
     expect(parseFactoryArgs("grant r1").verb).toBe("grant");
     expect(parseFactoryArgs("remember --global always add a changelog").verb).toBe("remember");
-    const parsed = parseFactoryArgs("codify");
+    expect(parseFactoryArgs("codify --scan").verb).toBe("codify");
+    expect(parseFactoryArgs("codified list").verb).toBe("codified");
+    const parsed = parseFactoryArgs("not-a-verb");
     expect(parsed.verb).toBeNull();
-    expect(parsed.error).toMatch(/unknown subcommand codify/);
+    expect(parsed.error).toMatch(/unknown subcommand not-a-verb/);
     expect(parsed.error).toContain(V1_SUBCOMMANDS.join("|"));
     expect(parsed.error).not.toMatch(/setup\|enqueue\|start\|approve\|status\|landed\|closed\|reconcile$/);
     expect(parseFactoryArgs("").verb).toBeNull();
