@@ -18,3 +18,14 @@ export {
   localRulesPath,
   rulesSha,
 } from "./load.js";
+export { normaliseRuleText } from "./normalise.js";
+export { tokenSetSimilarity } from "./dedupe.js";
+export type { ScreenFlags } from "./remember.js";
+export {
+  LOCAL_RULES_EXCLUDE,
+  RuleDuplicateError,
+  RuleSafetyError,
+  RuleScreenError,
+  addRule,
+  ensureLocalRulesExcluded,
+} from "./remember.js";
