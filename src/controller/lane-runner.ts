@@ -120,6 +120,7 @@ async function stageHookDeps(deps: FactoryDeps, fusion?: OperatorConfig["fusion"
     writeEvidence: async (dir, rec) => writeEvidence(dir, rec, await readRunSecret(dir)),
     runsDir: deps.runsDir,
     home: deps.home,
+    ...(deps.vault === undefined ? {} : { vault: deps.vault }),
     ...(fusion
       ? {
           fusion: {

@@ -22,6 +22,9 @@ import { loadEffectiveRules } from "../rules/load.js";
 import { operatorRulesBlock } from "../rules/prompt.js";
 import type { RuleRecord } from "../rules/schema.js";
 import { ensureGeneratedMarker } from "./artifacts.js";
+import { isSeedWriterAgent, listScriptFiles, seedAfterWriterStage } from "../codify/seeds.js";
+import { appendLedger } from "../scheduler/ledger.js";
+import type { Vault } from "../vault/vault.js";
 
 import {
   applyGateOutcomes,
@@ -82,6 +85,7 @@ export interface StageHookDeps {
   home?: string;
   fusion?: FusionHookConfig;
   ask?: (prompt: string) => Promise<string>;
+  vault?: Vault;
 }
 
 async function resolveRules(ctx: StepContext, deps: StageHookDeps): Promise<RuleRecord[]> {
@@ -247,6 +251,45 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     result.commit = {
       message: verdict.commit_message ?? `${stage.name}: checkpoint (${ctx.state.ticket.ref})`,
     };
+  }
+  if (result.verdict === "PASS" && isSeedWriterAgent(agent.name)) {
+    const runsDir = deps.runsDir ?? join(ctx.runDir, "..");
+    try {
+      const declared = verdict.scripts ?? [];
+      const createdFiles = [
+        ...new Set([
+          ...(verdict.changedFiles ?? []),
+          ...declared.map((s) => s.path),
+          ...(await listScriptFiles(join(ctx.runDir, "scripts"), "scripts")),
+          ...(await listScriptFiles(join(ctx.workspaceDir, "scripts"), "scripts")),
+        ]),
+      ];
+      await seedAfterWriterStage({
+        runsDir,
+        runId: ctx.state.runId,
+        stage: stage.name,
+        workspaceDir: ctx.workspaceDir,
+        runDir: ctx.runDir,
+        writeRoots: ctx.cfg.writeRoots[ctx.state.kind] ?? [],
+        createdFiles,
+        commands: result.evidence?.commands ?? [],
+        declared,
+        taskContext: ticket,
+        ...(deps.vault === undefined ? {} : { vault: deps.vault }),
+      });
+    } catch (err) {
+      try {
+        await appendLedger(runsDir, {
+          ts: new Date().toISOString(),
+          type: "codify.seed",
+          code: "seed-failed",
+          key: ctx.state.runId,
+        });
+      } catch {
+        /* seed-failed ledger is best-effort */
+      }
+      void err;
+    }
   }
   return result;
 }

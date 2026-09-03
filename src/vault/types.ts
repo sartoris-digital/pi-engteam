@@ -1,3 +1,5 @@
+export type SecretName = `secret:${string}`;
+
 export interface SecretMeta {
   name: string;
   note?: string;
