@@ -42,6 +42,41 @@ export const HOST_GIT_ENV: Readonly<Record<string, string>> = {
   LC_ALL: "C",
 };
 
+/** Parent-env keys host git / setupCommand may inherit. Everything else is dropped. */
+export const HOST_CHILD_ENV_PASSTHROUGH = [
+  "PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK", "GIT_EXEC_PATH",
+] as const;
+
+/** Never forwarded, even when present in opts.env. */
+export const HOST_CHILD_ENV_STRIP = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_COMMON_DIR",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "JIRA_API_TOKEN",
+  "AZURE_DEVOPS_EXT_PAT",
+]);
+
+export function allowlistedChildEnv(
+  from: NodeJS.ProcessEnv,
+  extra?: Record<string, string>,
+  defaults?: Record<string, string>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of HOST_CHILD_ENV_PASSTHROUGH) {
+    const value = from[key];
+    if (typeof value === "string" && value.length > 0) env[key] = value;
+  }
+  Object.assign(env, defaults ?? {}, extra ?? {});
+  for (const key of HOST_CHILD_ENV_STRIP) delete env[key];
+  return env;
+}
+
 const NO_VERIFY_SUBCOMMANDS = new Set(["commit", "push"]);
 const DEFAULT_RETRY_DELAYS = [200, 400, 800];
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -57,10 +92,8 @@ export function buildHostGitArgv(args: readonly string[], noOverrides = false): 
   return out;
 }
 
-export function hostGitEnv(extra?: Record<string, string>): Record<string, string> {
-  const base: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) base[k] = v;
-  return { ...base, ...HOST_GIT_ENV, ...(extra ?? {}) };
+export function hostGitEnv(extra?: Record<string, string>, from: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return allowlistedChildEnv(from, extra, HOST_GIT_ENV);
 }
 
 function runOnce(argv: string[], opts: HostGitOptions): Promise<HostGitResult> {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { probeSandbox } from "../../src/runtime/sandbox.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { makeFixtureRepo } from "../helpers/fixture-repo.js";
@@ -255,6 +256,46 @@ describe("chore lane end to end (steer gate)", () => {
         await expect(runApprove(parseFactoryArgs(`approve ${ref}`), deps)).rejects.toThrow(
           `approve: ${ref} is published, not waiting_user`,
         );
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 180_000);
+});
+
+describe("chore lane end to end (sandbox)", () => {
+  it("completes with sandbox required when the provider probe works", async () => {
+    const probe = await probeSandbox();
+    if (!probe.available) {
+      console.warn(`skipping sandbox e2e: ${probe.detail}`);
+      return;
+    }
+
+    const fixture = await makeFixtureRepo();
+    try {
+      await withTmpHome(async (home) => {
+        await writeFactoryTestConfig(home, fixture.repo, {
+          steering: "never",
+          junitPath: JUNIT,
+          sandbox: "required",
+        });
+        const scenarioPath = await writeScenario(home, UNATTENDED_SCENARIO);
+        const deps = await buildTestDeps({ home, repo: fixture.repo, scenarioPath, sandbox: true });
+
+        await runEnqueue(
+          parseFactoryArgs(`enqueue --task "add a greeting helper" --repo ${fixture.repo} --kind chore`),
+          deps,
+        );
+        const states = await runStart(parseFactoryArgs("start"), deps);
+        expect(states).toHaveLength(1);
+        const state = states[0];
+        if (state === undefined) throw new Error("no run state");
+
+        expect(state.status).toBe("succeeded");
+        const dir = runDir(state.runId);
+        const profile = join(dir, probe.provider === "bwrap" ? "sandbox.bwrap" : "sandbox.sb");
+        await expect(stat(profile)).resolves.toBeTruthy();
+        await assertJudgedPush(state, fixture.bare);
       });
     } finally {
       await fixture.cleanup();

@@ -1,4 +1,7 @@
-export { hostGit, hostGitOk, buildHostGitArgv, hostGitEnv, HostGitError, HOST_GIT_CONFIG, HOST_GIT_ENV } from "./host-git.js";
+export {
+  hostGit, hostGitOk, buildHostGitArgv, hostGitEnv, allowlistedChildEnv, HostGitError,
+  HOST_GIT_CONFIG, HOST_GIT_ENV, HOST_CHILD_ENV_PASSTHROUGH, HOST_CHILD_ENV_STRIP,
+} from "./host-git.js";
 export type { HostGitOptions, HostGitResult } from "./host-git.js";
 export {
   checkpointCommit, sanitizeCommitMessage, trailerArgs, excludePathspecs, checkpointExcludes, statusExcluding, CHECKPOINT_EXCLUDES, MAX_COMMIT_MESSAGE_CHARS,

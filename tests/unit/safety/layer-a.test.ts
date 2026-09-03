@@ -40,9 +40,8 @@ describe("command table", () => {
     expect(block?.terminate, cmd).toBe(true);
   });
 
-  it("does not take Layer C's job: relative rm and ordinary commits pass Layer A", () => {
+  it("does not take Layer C's job: relative rm and ordinary git stash pass Layer A", () => {
     expect(A("bash", { command: "rm -rf build" })).toBeNull();
-    expect(A("bash", { command: "git commit -m x" })).toBeNull();
     expect(A("bash", { command: "ls -la" })).toBeNull();
     expect(A("bash", { command: "git stash push" })).toBeNull();
     expect(A("bash", {})).toBeNull();
@@ -59,6 +58,20 @@ describe("command table", () => {
     expect(block?.layer, cmd).toBe("A");
     expect(block?.terminate, cmd).toBe(true);
     expect(block?.reason, cmd).toMatch(/git push is never allowed/);
+  });
+
+  it.each([
+    "git commit -m x",
+    "git commit",
+    "git -C . commit -m x",
+    "git -c x=y commit -m x",
+    "git commit --amend",
+    "bash -c 'git commit -m x'",
+  ])("terminates every git commit form: %s", (cmd) => {
+    const block = A("bash", { command: cmd });
+    expect(block?.layer, cmd).toBe("A");
+    expect(block?.terminate, cmd).toBe(true);
+    expect(block?.reason, cmd).toMatch(/git commit is never allowed/);
   });
 
   it.each([

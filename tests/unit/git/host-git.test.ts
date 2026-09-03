@@ -3,7 +3,9 @@ import { chmod, mkdir, mkdtemp, stat, unlink, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { rawGit } from "../../helpers/raw-git.js";
-import { buildHostGitArgv, hostGit, hostGitOk, HostGitError, HOST_GIT_CONFIG } from "../../../src/git/host-git.js";
+import {
+  buildHostGitArgv, hostGit, hostGitEnv, hostGitOk, HostGitError, HOST_GIT_CONFIG, HOST_GIT_ENV,
+} from "../../../src/git/host-git.js";
 
 async function tmpRepo(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "hostgit-"));
@@ -91,5 +93,55 @@ describe("hostGit", () => {
     expect(res.code).toBe(0);
     expect(res.stdout).toMatch(/^GIT_TERMINAL_PROMPT=0$/m);
     expect(res.stdout).toMatch(/^GIT_CONFIG_NOSYSTEM=1$/m);
+  });
+
+  it("does not copy GIT_DIR or credential vars from the parent env or opts.env", () => {
+    const env = hostGitEnv(
+      { GIT_DIR: "/tmp/opts.git", GH_TOKEN: "from-opts", GITHUB_TOKEN: "gho_opts", EXTRA: "keep-me" },
+      {
+        PATH: "/bin",
+        HOME: "/home/op",
+        USER: "op",
+        GIT_DIR: "/tmp/leaked.git",
+        GIT_WORK_TREE: "/tmp/leaked-wt",
+        GH_TOKEN: "ghp_parent",
+        GITHUB_TOKEN: "gho_parent",
+        JIRA_API_TOKEN: "jira",
+        AZURE_DEVOPS_EXT_PAT: "ado",
+        SHELL: "/bin/zsh",
+      },
+    );
+    expect(env.PATH).toBe("/bin");
+    expect(env.HOME).toBe("/home/op");
+    expect(env.EXTRA).toBe("keep-me");
+    expect(env).toMatchObject(HOST_GIT_ENV);
+    for (const key of [
+      "GIT_DIR", "GIT_WORK_TREE", "GH_TOKEN", "GITHUB_TOKEN", "JIRA_API_TOKEN", "AZURE_DEVOPS_EXT_PAT", "SHELL",
+    ]) {
+      expect(env, key).not.toHaveProperty(key);
+    }
+  });
+
+  it("does not leak injected GIT_DIR or GH_TOKEN into the child env", async () => {
+    const repo = await tmpRepo();
+    const prev = { GIT_DIR: process.env.GIT_DIR, GH_TOKEN: process.env.GH_TOKEN };
+    process.env.GIT_DIR = "/tmp/leaked.git";
+    process.env.GH_TOKEN = "ghp_leaked";
+    try {
+      const res = await hostGit(["-c", "alias.printenv=!env", "printenv"], {
+        cwd: repo,
+        env: { GIT_DIR: "/tmp/also-leaked", GH_TOKEN: "also" },
+      });
+      expect(res.code).toBe(0);
+      expect(res.stdout).not.toMatch(/^GIT_DIR=/m);
+      expect(res.stdout).not.toMatch(/^GH_TOKEN=/m);
+      expect(res.stdout).not.toMatch(/^GITHUB_TOKEN=/m);
+      expect(res.stdout).toMatch(/^GIT_TERMINAL_PROMPT=0$/m);
+    } finally {
+      if (prev.GIT_DIR === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = prev.GIT_DIR;
+      if (prev.GH_TOKEN === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = prev.GH_TOKEN;
+    }
   });
 });

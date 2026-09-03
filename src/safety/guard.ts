@@ -24,6 +24,8 @@ export interface GuardDeps {
   policy?: DomainPolicy;
   tokens?: TokenSource;
   env?: PathEnv;
+  /** Lowercased tool allowlist. When set (including []), tools outside it are blocked. */
+  allowedTools?: string[];
 }
 
 export interface GuardStats {
@@ -39,6 +41,14 @@ export interface InstalledGuard {
 }
 
 const POLICY_GATED_TOOLS = new Set(["write", "edit", "bash", "powershell", "read", "grep", "glob", "find", "ls"]);
+const WORKER_INTRINSIC_TOOLS = new Set(["verdictemit", "requestapproval"]);
+
+function toolInAllowlist(tool: string, allow: string[] | undefined): boolean {
+  if (allow === undefined) return true;
+  const name = tool.toLowerCase();
+  if (WORKER_INTRINSIC_TOOLS.has(name)) return true;
+  return allow.includes(name);
+}
 
 /** Synchronous run-secret read. Named `…Sync` so it never collides with the engine's async `readRunSecret`. */
 export function readRunSecretSync(runDir: string): string | null {
@@ -79,7 +89,8 @@ export function installSafetyGuard(pi: GuardHost, ctx: RunContext | null, deps: 
     }
   }
   const tokens = deps.tokens ?? fileTokenSource(ctx.runDir, readRunSecretSync(ctx.runDir), ctx.runId);
-  const full: Required<GuardDeps> = { policy, tokens, env };
+  const full: Required<Omit<GuardDeps, "allowedTools">> = { policy, tokens, env };
+  const allowlist = deps.allowedTools ?? ctx.tools;
   const stats: GuardStats = { evaluated: 0, blocked: { A: 0, B: 0, C: 0, D: 0 } };
   const evaluate = (tool: string, input: Record<string, unknown>): Block | null => {
     stats.evaluated++;
@@ -106,6 +117,9 @@ export function installSafetyGuard(pi: GuardHost, ctx: RunContext | null, deps: 
     return d;
   };
   pi.on("tool_call", ((event: ToolCallEventLike): ToolCallBlock | undefined => {
+    if (!toolInAllowlist(event.toolName, allowlist)) {
+      return { block: true, reason: `tool "${event.toolName}" is not in this agent's PI_SDLC_TOOLS allowlist` };
+    }
     const input = (event.input ?? {}) as Record<string, unknown>;
     return toResult(evaluate(event.toolName, input));
   }) as never);

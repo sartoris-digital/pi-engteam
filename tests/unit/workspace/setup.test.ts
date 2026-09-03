@@ -77,4 +77,40 @@ describe("runSetupCommand", () => {
     await expect(p).rejects.toBeInstanceOf(EnvSetupFailedError);
     await expect(p).rejects.toMatchObject({ detail: expect.stringContaining("ENOENT") });
   });
+
+  it("does not leak injected GIT_DIR or GH_TOKEN into the child env", async () => {
+    const cfg = fakeRepoCfg({
+      setupCommand: [
+        node,
+        "-e",
+        [
+          "console.log('GIT_DIR=' + (process.env.GIT_DIR ?? ''))",
+          "console.log('GH_TOKEN=' + (process.env.GH_TOKEN ?? ''))",
+          "console.log('GITHUB_TOKEN=' + (process.env.GITHUB_TOKEN ?? ''))",
+          "console.log('CI=' + process.env.CI)",
+          "console.log('GIT_TERMINAL_PROMPT=' + process.env.GIT_TERMINAL_PROMPT)",
+        ].join(";"),
+      ],
+    });
+    const prev = { GIT_DIR: process.env.GIT_DIR, GH_TOKEN: process.env.GH_TOKEN };
+    process.env.GIT_DIR = "/tmp/leaked.git";
+    process.env.GH_TOKEN = "ghp_leaked";
+    try {
+      const res = await runSetupCommand(await fakeWs(), cfg, {
+        timeoutMs: 5000,
+        env: { GIT_DIR: "from-opts", GH_TOKEN: "from-opts" },
+      });
+      expect(res.code).toBe(0);
+      expect(res.outputTail).toMatch(/^GIT_DIR=$/m);
+      expect(res.outputTail).toMatch(/^GH_TOKEN=$/m);
+      expect(res.outputTail).toMatch(/^GITHUB_TOKEN=$/m);
+      expect(res.outputTail).toMatch(/^CI=1$/m);
+      expect(res.outputTail).toMatch(/^GIT_TERMINAL_PROMPT=0$/m);
+    } finally {
+      if (prev.GIT_DIR === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = prev.GIT_DIR;
+      if (prev.GH_TOKEN === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = prev.GH_TOKEN;
+    }
+  });
 });

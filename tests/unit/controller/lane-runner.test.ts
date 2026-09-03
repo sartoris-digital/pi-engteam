@@ -7,8 +7,10 @@ import {
   rehydrateOpenWorkflows,
   runSandboxModes,
   runTicket,
+  sandboxProfileForRun,
   type FactoryDeps,
 } from "../../../src/controller/lane-runner.js";
+import { makeWorkerRequest } from "../../helpers/worker-request.js";
 import { makeEngine } from "../../../src/controller/register.js";
 import { loadAgentDefs, packageRoot } from "../../../src/controller/agents.js";
 import { saveRunState } from "../../../src/engine/state.js";
@@ -45,6 +47,33 @@ describe("prepareRunSandbox", () => {
       escalate: "env-setup-failed",
       detail: "no provider",
     });
+    expect(runSandboxModes.has("run-req")).toBe(false);
+  });
+
+  it("records off when sandbox is best-effort and the probe is unavailable", async () => {
+    const result = await prepareRunSandbox("run-be", makeRepoConfig({ sandbox: "best-effort" }), {
+      probe: async () => ({ available: false, provider: null, detail: "no provider" }),
+    });
+    expect(result).toEqual({ ok: true });
+    expect(runSandboxModes.get("run-be")).toBe("off");
+  });
+
+  it("records required when the probe is available", async () => {
+    const result = await prepareRunSandbox("run-ok", makeRepoConfig({ sandbox: "required" }), {
+      probe: async () => ({ available: true, provider: "sandbox-exec", detail: "ok" }),
+    });
+    expect(result).toEqual({ ok: true });
+    expect(runSandboxModes.get("run-ok")).toBe("required");
+  });
+
+  it("sandboxProfileForRun wraps unless the run mode is off (buildFactoryDeps callback)", () => {
+    runSandboxModes.set("run-off", "off");
+    expect(sandboxProfileForRun(makeWorkerRequest({ runId: "run-off" }), "/home")).toBeNull();
+    runSandboxModes.set("run-req", "required");
+    const profile = sandboxProfileForRun(makeWorkerRequest({ runId: "run-req", cwd: "/ws", runDir: "/runs/run-req" }), "/home");
+    expect(profile).not.toBeNull();
+    expect(profile?.workspaceDir).toBe("/ws");
+    expect(profile?.runDir).toBe("/runs/run-req");
   });
 });
 

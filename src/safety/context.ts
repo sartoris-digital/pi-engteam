@@ -17,6 +17,8 @@ export interface RunContext {
   extraUpsert: string[];
   denyUpsert: string[];
   nonce: string;
+  /** Present when PI_SDLC_TOOLS is set (even if empty). Lowercased tool names. */
+  tools?: string[];
 }
 
 export type Block = { block: true; reason: string; terminate?: boolean; layer: "A" | "B" | "C" | "D" };
@@ -78,6 +80,12 @@ function parseRootListStrict(raw: string | undefined, key: string): string[] {
   return parsed;
 }
 
+/** Comma-separated PI_SDLC_TOOLS. Unset → undefined (no enforcement). Empty → []. */
+function parseToolsList(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  return raw.split(",").map((item) => item.trim().toLowerCase()).filter((item) => item.length > 0);
+}
+
 export function runContextFromEnv(env: NodeJS.ProcessEnv): RunContext | null {
   const values: string[] = [];
   for (const key of REQUIRED_KEYS) {
@@ -91,6 +99,7 @@ export function runContextFromEnv(env: NodeJS.ProcessEnv): RunContext | null {
   if (!RUN_ID_RE.test(runId)) {
     throw new RunContextError("run-id", `invalid runId: ${JSON.stringify(runId)}`);
   }
+  const tools = parseToolsList(env.PI_SDLC_TOOLS);
   return {
     runId,
     runsDir,
@@ -104,5 +113,6 @@ export function runContextFromEnv(env: NodeJS.ProcessEnv): RunContext | null {
     extraUpsert: parseRootListStrict(env.PI_SDLC_EXTRA_UPSERT, "PI_SDLC_EXTRA_UPSERT"),
     denyUpsert: parseRootListStrict(env.PI_SDLC_DENY_UPSERT, "PI_SDLC_DENY_UPSERT"),
     nonce,
+    ...(tools !== undefined ? { tools } : {}),
   };
 }

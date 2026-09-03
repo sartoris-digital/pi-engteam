@@ -63,6 +63,10 @@ function gitPushFromArgv(cmd: string[]): boolean {
   return gitSubcommand(cmd) === "push";
 }
 
+function gitCommitFromArgv(cmd: string[]): boolean {
+  return gitSubcommand(cmd) === "commit";
+}
+
 function gitForceFromArgv(cmd: string[]): boolean {
   if (!gitPushFromArgv(cmd)) return false;
   const words = cmd.map(unquote);
@@ -80,6 +84,11 @@ function gitForceFromArgv(cmd: string[]): boolean {
 function isGitPushText(command: string): boolean {
   const s = dequote(command);
   return /(?:^|[\s;|&])git\s+push(?:\s|$)/.test(s);
+}
+
+function isGitCommitText(command: string): boolean {
+  const s = dequote(command);
+  return /(?:^|[\s;|&])git\s+commit(?:\s|$)/.test(s);
 }
 
 function pathWord(word: string, env: PathEnv): string | null {
@@ -108,6 +117,7 @@ function segmentBlock(segment: string, ctx: RunContext, env: PathEnv, depth: num
   }
   const cmd = stripAssignments(words);
   if (gitPushFromArgv(cmd) || gitForceFromArgv(cmd)) return A("git push is never allowed");
+  if (gitCommitFromArgv(cmd)) return A("git commit is never allowed");
   if (depth < MAX_NEST) {
     for (const nested of nestedShellCommands(cmd)) {
       const hit = commandBlock(nested, ctx, env, depth + 1);
@@ -150,6 +160,7 @@ export function commandBlock(command: string, ctx: RunContext, env: PathEnv = de
   if (/\.pi\/(?:sdlc-factory|engineering-team)\/expertise/i.test(command)) return A("expertise files are host-owned");
   if (isDangerousRm(command) || isDangerousRm(dequoted)) return A("destructive rm of a root or home path is never allowed");
   if (isForcePushText(command) || isGitPushText(command)) return A("git push is never allowed");
+  if (isGitCommitText(command)) return A("git commit is never allowed");
   if (isAlternateGitDirText(command)) return A("git --git-dir / GIT_DIR is never allowed");
   if (/(?:^|[;&|\n]\s*)sudo\s/.test(command) || /(?:^|[;&|\n]\s*)sudo\s/.test(dequoted)) return A("sudo is never allowed");
   if (/(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(command) || /(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(dequoted)) {

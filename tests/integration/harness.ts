@@ -11,7 +11,7 @@ import { LocalAdapter } from "../../src/trackers/local.js";
 import { GitWorktreeProvider } from "../../src/workspace/git-provider.js";
 import { loadAgentDefs, packageRoot } from "../../src/controller/agents.js";
 import { makeEngine } from "../../src/controller/register.js";
-import type { FactoryDeps } from "../../src/controller/lane-runner.js";
+import { sandboxProfileForRun, type FactoryDeps } from "../../src/controller/lane-runner.js";
 import { writeGlobalConfig } from "../../src/setup/writers.js";
 
 const exec = promisify(execFile);
@@ -62,14 +62,14 @@ const GIT_IDENT = [
 export async function writeFactoryTestConfig(
   home: string,
   repo: string,
-  opts: { steering: "always" | "elevated" | "never"; junitPath: string },
+  opts: { steering: "always" | "elevated" | "never"; junitPath: string; sandbox?: "required" | "best-effort" | "off" },
 ): Promise<{ globalPath: string; committedPath: string }> {
   const globalPath = await writeGlobalConfig(home, {
     operator: { coAuthoredBy: true, maxLanes: 1, maxLanesPerRepo: 1 },
     defaults: {
       steering: opts.steering,
       planApproval: "never",
-      sandbox: "off",
+      sandbox: opts.sandbox ?? "off",
       setupTimeoutSeconds: 60,
       stageTimeoutSeconds: 60,
       checksTimeoutSeconds: 180,
@@ -131,6 +131,8 @@ export async function buildTestDeps(opts: {
   home: string;
   repo: string;
   scenarioPath: string;
+  /** When true, wrap stub-pi with the same sandbox callback production uses. */
+  sandbox?: boolean;
 }): Promise<FactoryDeps> {
   const runs = runsDir();
   await mkdir(join(runs, "_factory"), { recursive: true, mode: 0o700 });
@@ -148,7 +150,7 @@ export async function buildTestDeps(opts: {
     projectRootDefault: root,
     engine: makeEngine(runs, { coAuthoredBy: true }),
     executor: new HeadlessExecutor({
-      sandbox: null,
+      sandbox: opts.sandbox === true ? (req) => sandboxProfileForRun(req, opts.home) : null,
       extraEnv: { PI_SDLC_STUB_SCENARIO: opts.scenarioPath },
       pollMs: 50,
     }),

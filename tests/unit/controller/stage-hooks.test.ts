@@ -91,6 +91,7 @@ describe("agentStep", () => {
     await run(ctx);
     expect(seen?.extraUpsert).toEqual(["src/**"]);
     expect(seen?.denyUpsert).toEqual(["tests/**", "**/PLAN.md"]);
+    expect(seen?.tools).toEqual(["read", "write", "edit", "bash"]);
   });
 
   it("does not grant writeRoots extraUpsert to a planner", async () => {
@@ -115,6 +116,7 @@ describe("agentStep", () => {
     await run(ctx);
     expect(seen?.extraUpsert).toEqual([]);
     expect(seen?.denyUpsert).toEqual([]);
+    expect(seen?.tools).toEqual(["read"]);
   });
 });
 

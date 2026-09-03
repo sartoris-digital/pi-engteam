@@ -2,6 +2,7 @@
 // is an env-setup-failed escalation before a single token is spent.
 import { spawn } from "node:child_process";
 import type { EffectiveRepoConfig } from "../config/schema.js";
+import { allowlistedChildEnv } from "../git/host-git.js";
 import { withRepoLock } from "./lock.js";
 import type { Workspace } from "./types.js";
 
@@ -73,9 +74,7 @@ function runProcess(argv: string[], cwd: string, env: Record<string, string>, ti
 export async function runSetupCommand(ws: Workspace, cfg: EffectiveRepoConfig, opts: RunSetupOptions): Promise<SetupResult> {
   const argv = setupArgv(cfg);
   if (argv === null) return { ran: false, argv: [], code: 0, signal: null, timedOut: false, durationMs: 0, outputTail: "" };
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-  Object.assign(env, { CI: "1", GIT_TERMINAL_PROMPT: "0" }, opts.env ?? {});
+  const env = allowlistedChildEnv(process.env, opts.env, { CI: "1", GIT_TERMINAL_PROMPT: "0" });
 
   let result: SetupResult;
   try {

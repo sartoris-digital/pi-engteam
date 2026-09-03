@@ -53,7 +53,10 @@ describe("installSafetyGuard", () => {
     expect(await handler(toolCall("bash", { command: "ls -la" }), {})).toBeUndefined();
     expect(await handler(toolCall("read", { path: "src/a.ts" }), {})).toBeUndefined();
 
-    const c = await handler(toolCall("bash", { command: "git commit -m x" }), {});
+    const commit = await handler(toolCall("bash", { command: "git commit -m x" }), {});
+    expect(commit).toEqual({ block: true, reason: expect.stringMatching(/^\[Layer A\].*git commit is never allowed/), terminate: true });
+
+    const c = await handler(toolCall("bash", { command: "rm -rf build" }), {});
     expect(c).toEqual({ block: true, reason: expect.stringMatching(/^\[Layer C\]/), terminate: false });
 
     expect(await handler(toolCall("write", { path: "src/a.ts", content: "" }), {})).toBeUndefined();
@@ -63,7 +66,7 @@ describe("installSafetyGuard", () => {
     expect(denied?.reason).toMatch(/^\[Layer D\].*denied/);
 
     expect(await handler(toolCall("VerdictEmit", { step: "implement", verdict: "PASS" }), {})).toBeUndefined();
-    expect(guard?.stats).toEqual({ evaluated: 8, blocked: { A: 1, B: 0, C: 1, D: 2 } });
+    expect(guard?.stats).toEqual({ evaluated: 9, blocked: { A: 2, B: 0, C: 1, D: 2 } });
     expect(guard?.policyError).toBeNull();
   });
 
@@ -78,7 +81,7 @@ describe("installSafetyGuard", () => {
     const d = await handler(toolCall("write", { path: `${ctx.runDir}/other.md`, content: "" }), {});
     expect(d?.reason).toMatch(/^\[Layer D\]/);
     expect(await handler(toolCall("bash", { command: "git status" }), {})).toBeUndefined();
-    expect((await handler(toolCall("bash", { command: "git commit -m x" }), {}))?.reason).toMatch(/^\[Layer B\]/);
+    expect((await handler(toolCall("bash", { command: "echo x > src/a.ts" }), {}))?.reason).toMatch(/^\[Layer B\]/);
     expect(guard?.stats.blocked).toEqual({ A: 0, B: 2, C: 0, D: 1 });
   });
 
@@ -109,10 +112,10 @@ describe("installSafetyGuard", () => {
       const handler = handlers[0] as Handler;
       expect(await handler(toolCall("write", { path: "src/a.ts", content: "" }), {})).toBeUndefined();
       expect((await handler(toolCall("write", { path: "lib/a.ts", content: "" }), {}))?.reason).toMatch(/^\[Layer D\]/);
-      expect((await handler(toolCall("bash", { command: "git commit -m x" }), {}))?.reason).toMatch(/^\[Layer C\]/);
-      mintToken(runDir, secret, { op: "bash", argsHash: hashArgs("bash", { command: "git commit -m x" }), ttlSeconds: 60 });
-      expect(await handler(toolCall("bash", { command: "git commit -m x" }), {})).toBeUndefined();
-      expect((await handler(toolCall("bash", { command: "git commit -m x" }), {}))?.reason).toMatch(/^\[Layer C\]/);
+      expect((await handler(toolCall("bash", { command: "echo x > src/a.ts" }), {}))?.reason).toMatch(/^\[Layer C\]/);
+      mintToken(runDir, secret, { op: "bash", argsHash: hashArgs("bash", { command: "echo x > src/a.ts" }), ttlSeconds: 60 });
+      expect(await handler(toolCall("bash", { command: "echo x > src/a.ts" }), {})).toBeUndefined();
+      expect((await handler(toolCall("bash", { command: "echo x > src/a.ts" }), {}))?.reason).toMatch(/^\[Layer C\]/);
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
@@ -165,8 +168,34 @@ describe("installSafetyGuard", () => {
     const ctx = fakeRunContext({ runDir: "/nonexistent/runs/run-0001", runsDir: "/nonexistent/runs" });
     installSafetyGuard(pi, ctx, { policy: IMPLEMENTER_POLICY, env });
     const handler = handlers[0] as Handler;
-    expect((await handler(toolCall("bash", { command: "git commit -m x" }), {}))?.reason).toMatch(/^\[Layer C\]/);
+    expect((await handler(toolCall("bash", { command: "echo x > src/a.ts" }), {}))?.reason).toMatch(/^\[Layer C\]/);
     expect(await handler(toolCall("bash", { command: "git status" }), {})).toBeUndefined();
+  });
+
+  it("blocks write for a read-only agent allowlist and allows implementer write", async () => {
+    const { pi, handlers } = fakePi();
+    const reviewer = fakeRunContext({ agent: "reviewer", stage: "review", tools: ["read", "grep", "find"] });
+    installSafetyGuard(pi, reviewer, {
+      policy: { ...EMPTY_POLICY, upsertRoots: ["${RUN_DIR}/review.md"], bashPolicy: "read-only" },
+      tokens: NO_TOKENS,
+      env,
+    });
+    const handler = handlers[0] as Handler;
+    expect(await handler(toolCall("read", { path: "src/a.ts" }), {})).toBeUndefined();
+    const write = await handler(toolCall("write", { path: `${reviewer.runDir}/review.md`, content: "" }), {});
+    expect(write).toEqual({ block: true, reason: expect.stringMatching(/PI_SDLC_TOOLS allowlist/) });
+    expect(write?.terminate).not.toBe(true);
+    expect(await handler(toolCall("VerdictEmit", { step: "review", verdict: "PASS" }), {})).toBeUndefined();
+    expect(await handler(toolCall("RequestApproval", { op: "bash", command: "x", justification: "y" }), {})).toBeUndefined();
+
+    const impl = fakePi();
+    const ctx = fakeRunContext({ tools: ["read", "write", "edit", "bash"] });
+    installSafetyGuard(impl.pi, ctx, { policy: IMPLEMENTER_POLICY, tokens: NO_TOKENS, env });
+    const implHandler = impl.handlers[0] as Handler;
+    expect(await implHandler(toolCall("write", { path: "src/a.ts", content: "" }), {})).toBeUndefined();
+    const blocked = await implHandler(toolCall("powershell", { command: "Get-ChildItem" }), {});
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason).toMatch(/PI_SDLC_TOOLS allowlist/);
   });
 });
 
@@ -282,6 +311,9 @@ describe("codex G2 installed-guard regressions", () => {
       "git push --force-with-lease=main origin main",
       "git --git-dir=/repos/app/.git status",
       "GIT_DIR=/repos/app/.git git status",
+      "git commit -m x",
+      "git -C . commit -m x",
+      "git -c x=y commit --amend",
     ]) {
       const result = await handler(toolCall("bash", { command: cmd }), {});
       expect(result?.block, cmd).toBe(true);

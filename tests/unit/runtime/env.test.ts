@@ -101,6 +101,20 @@ describe("buildWorkerEnv", () => {
     expect(JSON.parse(env.PI_SDLC_EXTRA_UPSERT ?? "null")).toEqual(["docs/**", "README.md"]);
     expect(JSON.parse(env.PI_SDLC_DENY_UPSERT ?? "null")).toEqual(["tests/**"]);
     expect(env.PI_SDLC_NONCE).toBe("nonce-1");
+    expect(env.PI_SDLC_TOOLS).toBe("read,write,edit,bash");
+  });
+
+  it("copies agent.tools into PI_SDLC_TOOLS as a lowercased comma list, honouring req.tools", () => {
+    const planner = buildWorkerEnv(
+      LEAKY_BASE,
+      makeWorkerRequest({
+        agent: { name: "planner", model: "m", promptPath: "p", tools: ["Read", "GREP", "find"], stageClass: "read-only" },
+      }),
+      { scrub: createScrubDirs(tmp) },
+    );
+    expect(planner.PI_SDLC_TOOLS).toBe("read,grep,find");
+    const override = buildWorkerEnv(LEAKY_BASE, makeWorkerRequest({ tools: ["read"] }), { scrub: createScrubDirs(tmp) });
+    expect(override.PI_SDLC_TOOLS).toBe("read");
   });
 
   it("encodes empty root lists as JSON []", () => {
@@ -144,6 +158,7 @@ describe("buildWorkerEnv", () => {
       "PI_SDLC_NONCE",
       "PI_SDLC_POLICY_SHA",
       "PI_SDLC_POLICY_FILE",
+      "PI_SDLC_TOOLS",
     ];
     for (const key of locked) {
       expect(() =>

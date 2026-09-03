@@ -33,6 +33,8 @@ export interface WorkerRequest {
   signal: AbortSignal;
   /** Executable to spawn; default "pi", tests point at tests/helpers/stub-pi.mjs. */
   piBinary: string;
+  /** Tool allowlist copied into PI_SDLC_TOOLS; defaults to agent.tools when omitted. */
+  tools?: string[];
 }
 
 export interface WorkerResult {

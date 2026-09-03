@@ -149,6 +149,7 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     timeoutMs: (stage.timeoutSeconds ?? ctx.cfg.stageTimeoutSeconds) * 1000,
     signal: ctx.signal,
     piBinary: deps.piBinary,
+    tools: agent.tools,
   };
   const worker = await deps.executor.run(req);
   const timedOut = worker.timedOut;

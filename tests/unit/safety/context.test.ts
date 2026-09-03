@@ -65,6 +65,17 @@ describe("runContextFromEnv (D4/R4)", () => {
     expect(withRoots?.denyUpsert).toEqual(["tests/**"]);
   });
 
+  it("parses optional PI_SDLC_TOOLS into lowercased ctx.tools and omits the field when unset", () => {
+    expect(runContextFromEnv(completeWorkerEnv())?.tools).toBeUndefined();
+    expect(runContextFromEnv(completeWorkerEnv({ PI_SDLC_TOOLS: "Read, WRITE,bash" }))?.tools).toEqual([
+      "read",
+      "write",
+      "bash",
+    ]);
+    expect(runContextFromEnv(completeWorkerEnv({ PI_SDLC_TOOLS: "" }))?.tools).toEqual([]);
+    expect(runContextFromEnv(completeWorkerEnv({ PI_SDLC_TOOLS: "  , read ,  " }))?.tools).toEqual(["read"]);
+  });
+
   it("throws RunContextError for a present-but-malformed run id", () => {
     expect(() => runContextFromEnv(completeWorkerEnv({ PI_SDLC_RUN_ID: "_factory" }))).toThrow(RunContextError);
     expect(() => runContextFromEnv(completeWorkerEnv({ PI_SDLC_RUN_ID: "../x" }))).toThrow(/run-id|invalid runId/);

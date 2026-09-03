@@ -9,8 +9,8 @@ import type { RunState } from "../engine/types.js";
 import { Observer } from "../observer/events.js";
 import { CATALOG, compileLane, BUILTIN_POLICY_PATH } from "../lanes/index.js";
 import type { LaneDef, NamedLane } from "../lanes/schema.js";
-import { probeSandbox, type SandboxProbe } from "../runtime/sandbox.js";
-import type { AgentDef, WorkerExecutor } from "../runtime/types.js";
+import { probeSandbox, profileForRequest, type SandboxProbe, type SandboxProfile } from "../runtime/sandbox.js";
+import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
 import { LocalAdapter } from "../trackers/local.js";
@@ -53,6 +53,11 @@ export async function prepareRunSandbox(
   }
   runSandboxModes.set(runId, result.available ? cfg.sandbox : "off");
   return { ok: true };
+}
+
+/** HeadlessExecutor sandbox callback: wrap unless this run recorded sandbox: off. */
+export function sandboxProfileForRun(req: WorkerRequest, home: string): SandboxProfile | null {
+  return runSandboxModes.get(req.runId) === "off" ? null : profileForRequest(req, { home });
 }
 
 export function renderBranch(cfg: EffectiveConfig, ticket: Ticket): string {

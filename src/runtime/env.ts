@@ -15,6 +15,7 @@ const EXTRA_ENV_LOCKED = new Set([
   "PI_SDLC_VERDICT_FILE",
   "PI_SDLC_WORKSPACE_DIR",
   "PI_SDLC_NONCE",
+  "PI_SDLC_TOOLS",
 ]);
 
 export interface ScrubDirs {
@@ -72,6 +73,7 @@ export function buildWorkerEnv(
     PI_SDLC_EXTRA_UPSERT: JSON.stringify(req.extraUpsert),
     PI_SDLC_DENY_UPSERT: JSON.stringify(req.denyUpsert),
     PI_SDLC_NONCE: req.nonce,
+    PI_SDLC_TOOLS: (req.tools ?? req.agent.tools).map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0).join(","),
     GIT_CONFIG_GLOBAL: scrub.gitConfigGlobal,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",

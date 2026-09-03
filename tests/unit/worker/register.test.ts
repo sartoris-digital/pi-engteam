@@ -26,7 +26,10 @@ describe("registerWorker", () => {
     await mkdir(join(root, "ws"), { recursive: true });
     policyFile = join(root, "runs", "_factory", "policy", "snapshot.yaml");
     await mkdir(join(root, "runs", "_factory", "policy"), { recursive: true });
-    await writeFile(policyFile, "agents:\n  implementer:\n    upsert: [src/**]\n");
+    await writeFile(
+      policyFile,
+      ["schemaVersion: 1", "agents:", "  implementer:", '    upsert: ["src/**"]', "    bash: full", "  reviewer:", "    bash: read-only", ""].join("\n"),
+    );
     policySha = createHash("sha256").update(await readFile(policyFile)).digest("hex");
     exits = [];
     logs = [];
@@ -128,5 +131,34 @@ describe("registerWorker", () => {
     expect(registerWorker(b.asPi(), { env: env({ PI_SDLC_VERDICT_FILE: undefined }), ...opts() })).toBeNull();
     expect(exits).toEqual([WORKER_REFUSED_EXIT_CODE]);
     expect(logs.join("\n")).toMatch(/PI_SDLC_VERDICT_FILE/);
+  });
+
+  it("blocks write when PI_SDLC_TOOLS is a read-only list and allows implementer write", async () => {
+    const reviewer = new FakePi();
+    registerWorker(reviewer.asPi(), {
+      env: env({ PI_SDLC_TOOLS: "read,grep,find", PI_SDLC_AGENT: "reviewer", PI_SDLC_STEP: "review" }),
+      ...opts(),
+    });
+    const blocked = await reviewer.emit("tool_call", {
+      type: "tool_call",
+      toolName: "write",
+      toolCallId: "t1",
+      input: { path: "src/a.ts", content: "" },
+    });
+    expect(blocked).toMatchObject({ block: true });
+    expect((blocked as { reason?: string }).reason).toMatch(/PI_SDLC_TOOLS allowlist/);
+    expect(
+      await reviewer.emit("tool_call", { type: "tool_call", toolName: "read", toolCallId: "t2", input: { path: "src/a.ts" } }),
+    ).toBeUndefined();
+
+    const impl = new FakePi();
+    registerWorker(impl.asPi(), { env: env({ PI_SDLC_TOOLS: "read,write,edit,bash" }), ...opts() });
+    const allowed = await impl.emit("tool_call", {
+      type: "tool_call",
+      toolName: "write",
+      toolCallId: "t1",
+      input: { path: "src/a.ts", content: "" },
+    });
+    expect(allowed).toBeUndefined();
   });
 });
