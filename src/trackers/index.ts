@@ -22,3 +22,5 @@ export { GitHubAdapter, parseGitHubRef, splitGitHubId } from "./github.js";
 export type { GitHubAdapterOptions } from "./github.js";
 export { buildTrackerRegistry, detectTrackerFromRemote, githubConfigured } from "./discovery.js";
 export type { TrackerRegistry } from "./discovery.js";
+export { HostCliError, createFakeCli, createPathCli } from "./host-cli.js";
+export type { HostCli, HostCliExecOptions, HostCliResult } from "./host-cli.js";

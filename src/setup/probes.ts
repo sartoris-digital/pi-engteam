@@ -1,8 +1,14 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { hostGit } from "../git/host-git.js";
+import type { HostCli } from "../trackers/host-cli.js";
 
 export { probeSandbox } from "../runtime/sandbox.js";
+
+export interface CliProbe {
+  available: boolean;
+  reason?: string;
+}
 
 export interface GitProbe {
   ok: boolean;
@@ -73,6 +79,27 @@ export async function probePackageManager(repo: string): Promise<PackageManagerP
     if (await exists(join(repo, lockfile))) return { manager, lockfile };
   }
   return { manager: "none", lockfile: null };
+}
+
+async function probeCli(cli: HostCli, argv: readonly string[]): Promise<CliProbe> {
+  try {
+    const result = await cli.exec(argv);
+    if (result.code === 0) return { available: true };
+    const reason = result.stderr.trim() || result.stdout.trim() || `${argv.join(" ")} exited ${result.code}`;
+    return { available: false, reason };
+  } catch (err) {
+    return { available: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Host-only `az account show`. Never throws. */
+export function probeAz(cli: HostCli): Promise<CliProbe> {
+  return probeCli(cli, ["az", "account", "show"]);
+}
+
+/** Host-only `jira me`. Never throws. */
+export function probeJira(cli: HostCli): Promise<CliProbe> {
+  return probeCli(cli, ["jira", "me"]);
 }
 
 export async function probeChecks(repo: string): Promise<ChecksProbe> {
