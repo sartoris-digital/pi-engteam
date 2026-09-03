@@ -27,6 +27,7 @@ import { runGrill } from "./grill.js";
 import { runLanded } from "./landed.js";
 import { runReconcile } from "./reconcile.js";
 import { runRemember } from "./remember.js";
+import { runRebase } from "./rebase.js";
 import { runReplan } from "./replan.js";
 import { runRescan } from "./rescan.js";
 import { runResume } from "./resume.js";
@@ -300,10 +301,13 @@ async function dispatchFactoryVerb(
       return info(await runStop(parsed, deps));
     case "watch":
       return info(await runWatch(parsed, deps));
+    case "rebase": {
+      const entry = await runRebase(parsed, deps);
+      return info(`${entry.ref} rebased → ${entry.workspace?.branch ?? entry.state}`);
+    }
     case "config":
     case "lanes":
     case "interrupt":
-    case "rebase":
       return notImplemented(verb);
   }
 }
@@ -322,6 +326,7 @@ export { runRetry } from "./retry.js";
 export { runRescan } from "./rescan.js";
 export { runGc } from "./gc.js";
 export { runClassify } from "./classify.js";
+export { runRebase } from "./rebase.js";
 export { runReplan } from "./replan.js";
 export { runStop } from "./stop.js";
 export { runWatch } from "./watch.js";

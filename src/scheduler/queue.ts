@@ -74,6 +74,9 @@ export interface QueueEntry {
   enqueuedAt: string;
   updatedAt: string;
   changedFiles?: string[];
+  rebaseCount?: number;
+  reviseRounds?: number;
+  lastReviseAt?: string;
 }
 
 export interface QueueFile {
