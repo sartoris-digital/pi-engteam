@@ -12,6 +12,7 @@ import { readAnswersFile, runGlobalInterview, runRepoInterview, type SetupUi } f
 import { writeGlobalConfig, writeRepoConfig } from "../setup/writers.js";
 import { runApprove } from "./approve.js";
 import { runClosed } from "./closed.js";
+import { runDoctor } from "./doctor.js";
 import { completeFactoryArgs, type AutocompleteItem, type CompletionDeps } from "./completions.js";
 import { readQueue, runEnqueue } from "./enqueue.js";
 import { runForget } from "./forget.js";
@@ -218,12 +219,15 @@ async function dispatchFactoryVerb(
     }
     case "secret":
       return info(await runSecret(parsed, deps));
+    case "doctor": {
+      const text = await runDoctor(deps, parsed);
+      return info(typeof text === "string" ? text : JSON.stringify(text));
+    }
     case "config":
     case "lanes":
     case "watch":
     case "interrupt":
     case "stop":
-    case "doctor":
     case "classify":
     case "resume":
     case "replan":
@@ -243,4 +247,5 @@ export { runForget } from "./forget.js";
 export { runGrill } from "./grill.js";
 export { runGrant } from "./grant.js";
 export { runSecret } from "./secret.js";
+export { runDoctor } from "./doctor.js";
 
