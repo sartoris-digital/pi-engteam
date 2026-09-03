@@ -64,17 +64,6 @@ const PLAN_MD = [
 ].join("\n");
 
 const ADDED_TS = "export function greet(name: string): string {\n  return `hello ${name}`;\n}\n";
-const ADDED_TEST = [
-  'import { greet } from "../src/added.js";',
-  "",
-  "declare const test: (name: string, fn: () => void) => void;",
-  "declare const expect: (actual: unknown) => { toBe(expected: unknown): void };",
-  "",
-  'test("greets", () => {',
-  '  expect(greet("world")).toBe("hello world");',
-  "});",
-  "",
-].join("\n");
 
 const UNATTENDED_SCENARIO = {
   plan: {
@@ -84,10 +73,13 @@ const UNATTENDED_SCENARIO = {
   },
   implement: {
     verdict: "PASS",
-    files: { "src/added.ts": ADDED_TS, "tests/added.test.ts": ADDED_TEST },
+    files: { "src/added.ts": ADDED_TS },
     commit_message: "chore: add a greeting helper",
   },
-  review: { verdict: "PASS" },
+  review: {
+    verdict: "PASS",
+    runDirFiles: { "review.md": "PASS\n\nChecked src/added.ts:1. No blocking findings.\n" },
+  },
   judge: { verdict: "PASS" },
 };
 

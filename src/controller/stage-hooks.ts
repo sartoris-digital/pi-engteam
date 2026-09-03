@@ -13,8 +13,15 @@ import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.j
 import { makeSteerStep, type SteerHooks } from "../steer/stage.js";
 import type { RunState } from "../engine/types.js";
 import type { Workspace } from "../workspace/types.js";
+import { isImplementClassStage } from "../lanes/catalog.js";
 import { ensureGeneratedMarker } from "./artifacts.js";
-import { allGatesOk, evaluateGates } from "./predicates.js";
+import {
+  applyGateOutcomes,
+  captureManifest,
+  captureSnapshotBefore,
+  evaluateGates,
+  hasManifest,
+} from "./predicates.js";
 
 const ART_CONFIG = "workspace.configSha";
 const ART_COMMON = "workspace.gitCommonDir";
@@ -67,6 +74,32 @@ function implementerWriteRoots(ctx: StepContext): { extraUpsert: string[]; denyU
   return { extraUpsert, denyUpsert };
 }
 
+function needsSnapshot(gates: string[]): boolean {
+  return gates.some((g) => g === "snapshot" || g.startsWith("snapshot:"));
+}
+
+function needsManifest(gates: string[]): boolean {
+  return gates.includes("manifest") || gates.includes("manifest-record");
+}
+
+async function prepareWriteBoundary(ctx: StepContext, stage: StageDef): Promise<void> {
+  const gates = stage.gates ?? [];
+  if (needsSnapshot(gates)) {
+    try {
+      await captureSnapshotBefore(ctx);
+    } catch {
+      /* snapshot predicate fails closed */
+    }
+  }
+  if (isImplementClassStage(stage.name) && needsManifest(gates) && !hasManifest(ctx)) {
+    try {
+      await captureManifest(ctx);
+    } catch {
+      /* manifest predicate fails closed */
+    }
+  }
+}
+
 export function makeStageHooks(deps: StageHookDeps): StageHooks {
   return {
     agentStep: (def, _stage) => (ctx) => runAgent(ctx, def, deps),
@@ -78,6 +111,7 @@ export function makeStageHooks(deps: StageHookDeps): StageHooks {
 async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {
   const agent = deps.agents.find((a) => a.name === stage.agent);
   if (!agent) throw new Error(`no agent definition for "${stage.agent ?? ""}"`);
+  await prepareWriteBoundary(ctx, stage);
   const round = ctx.state.steps.filter((s) => s.name === stage.name).length;
   let ticket = "";
   try {
@@ -134,9 +168,14 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     issues: verdict.issues,
     evidence: { timedOut: false, artifacts: (verdict.artifacts ?? []).map((path) => ({ path, sha256: "" })) },
   };
-  const gates = await evaluateGates(ctx, stage.gates ?? [], result);
-  result.evidence = { ...result.evidence, predicates: gates };
-  if (!allGatesOk(gates) && result.verdict === "PASS") result.verdict = "FAIL";
+  if (stage.name === "gate" && !hasManifest(ctx)) {
+    try {
+      await captureManifest(ctx);
+    } catch {
+      /* manifest-record predicate fails closed */
+    }
+  }
+  applyGateOutcomes(result, await evaluateGates(ctx, stage.gates ?? [], result));
   const status = await hostGit(["status", "--porcelain"], { cwd: ctx.workspaceDir });
   if (status.stdout.trim().length > 0) {
     result.commit = {
@@ -209,9 +248,7 @@ async function runTestChecks(ctx: StepContext, stage: StageDef): Promise<StepRes
     stepResult.escalate = "too-large";
   }
   const extra = ["junit-green", "checks-green"].filter((g) => !(stage.gates ?? []).includes(g));
-  const gates = await evaluateGates(ctx, [...(stage.gates ?? []), ...extra], stepResult);
-  stepResult.evidence = { ...stepResult.evidence, predicates: gates };
-  if (!allGatesOk(gates)) stepResult.verdict = "FAIL";
+  applyGateOutcomes(stepResult, await evaluateGates(ctx, [...(stage.gates ?? []), ...extra], stepResult));
   if (!fin.ok && fin.violations.some((v) => v.code === "scope-violation" || v.code === "generated-doc")) {
     stepResult.verdict = "FAIL";
   }
@@ -219,13 +256,15 @@ async function runTestChecks(ctx: StepContext, stage: StageDef): Promise<StepRes
 }
 
 async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult> {
-  const gates = await evaluateGates(ctx, stage.gates ?? [], { verdict: "PASS" });
-  if (!allGatesOk(gates)) {
+  const published: StepResult = { verdict: "PASS" };
+  const gates = await evaluateGates(ctx, stage.gates ?? [], published);
+  applyGateOutcomes(published, gates);
+  if (published.verdict !== "PASS") {
     return {
       verdict: "FAIL",
       issues: gates.filter((g) => !g.ok).map((g) => `${g.name}: ${g.note ?? "failed"}`),
-      escalate: "publish-refused",
-      evidence: { predicates: gates },
+      escalate: published.escalate ?? "publish-refused",
+      evidence: published.evidence,
     };
   }
   const result = await publish(ctx.state, ctx.cfg, ws(ctx));
@@ -234,7 +273,7 @@ async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult
       verdict: "FAIL",
       issues: [result.detail],
       escalate: result.code === "push-rejected" ? "push-rejected" : "publish-refused",
-      evidence: { predicates: gates },
+      evidence: published.evidence,
     };
   }
   ctx.emit({
@@ -245,7 +284,7 @@ async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult
     step: "publish",
     data: { sha: result.sha, branch: result.branch },
   });
-  return { verdict: "PASS", evidence: { predicates: gates } };
+  return { verdict: "PASS", evidence: published.evidence };
 }
 
 async function runHuman(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {
