@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { CATALOG, type Catalog } from "./catalog.js";
+import { LaneInvariantError, checkAllInvariants } from "./invariants.js";
 import { LaneSchemaError, assertLaneLayerFile, type LaneDef, type LaneLayerFile, type LanePatch, type StageDef } from "./schema.js";
 
 export class LaneLoadError extends Error {
@@ -45,14 +47,6 @@ export async function loadLaneLayers(paths: string[]): Promise<LaneLayer[]> {
     }
   }
   return out;
-}
-
-function lastDefined<T>(items: T[], read: (item: T) => string | undefined): string | undefined {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const value = read(items[i]!);
-    if (value !== undefined) return value;
-  }
-  return undefined;
 }
 
 export function mergeStages(base: StageDef[], overlay?: StageDef[]): StageDef[] {
@@ -108,36 +102,41 @@ function assertComplete(name: string, lane: Partial<LaneDef>): LaneDef {
 }
 
 export function mergeLanes(files: LaneLayerFile[]): Record<string, LaneDef> {
-  const patches = new Map<string, LanePatch[]>();
+  const acc: Record<string, LaneDef> = {};
+
   for (const file of files) {
-    for (const [name, patch] of Object.entries(file.lanes)) {
-      const list = patches.get(name) ?? [];
-      list.push(patch);
-      patches.set(name, list);
+    const names = Object.keys(file.lanes);
+    const existing = names.filter((name) => acc[name] !== undefined);
+    const created = names.filter((name) => acc[name] === undefined);
+
+    for (const name of existing) {
+      acc[name] = assertComplete(name, mergeLanePatch(acc[name]!, file.lanes[name]!));
     }
+
+    const visiting = new Set<string>();
+    const resolveNew = (name: string): LaneDef => {
+      const hit = acc[name];
+      if (hit !== undefined) return hit;
+      if (visiting.has(name)) throw new LaneLoadError(`extends cycle at ${name}`);
+      const patch = file.lanes[name];
+      if (patch === undefined) throw new LaneLoadError(`lane ${name} is referenced but never defined`);
+      visiting.add(name);
+      const parentName = patch.extends;
+      let current: Partial<LaneDef> = {};
+      if (parentName && parentName !== name) {
+        current = structuredClone(resolveNew(parentName));
+        current = { ...current, extends: parentName };
+      }
+      const complete = assertComplete(name, mergeLanePatch(current, patch));
+      acc[name] = complete;
+      visiting.delete(name);
+      return complete;
+    };
+
+    for (const name of created) resolveNew(name);
   }
-  const resolved = new Map<string, LaneDef>();
-  const visiting = new Set<string>();
 
-  const resolve = (name: string): LaneDef => {
-    const hit = resolved.get(name);
-    if (hit) return hit;
-    if (visiting.has(name)) throw new LaneLoadError(`extends cycle at ${name}`);
-    const list = patches.get(name);
-    if (list === undefined) throw new LaneLoadError(`lane ${name} is referenced but never defined`);
-    visiting.add(name);
-    const parentName = lastDefined(list, (p) => p.extends);
-    let current: Partial<LaneDef> = parentName && parentName !== name ? structuredClone(resolve(parentName)) : {};
-    if (parentName) current = { ...current, extends: parentName };
-    for (const patch of list) current = mergeLanePatch(current, patch);
-    visiting.delete(name);
-    const complete = assertComplete(name, current);
-    resolved.set(name, complete);
-    return complete;
-  };
-
-  for (const name of patches.keys()) resolve(name);
-  return Object.fromEntries(resolved);
+  return acc;
 }
 
 export const BUILTIN_LANES_PATH = fileURLToPath(new URL("../assets/lanes.yaml", import.meta.url));
@@ -149,4 +148,21 @@ export async function loadBuiltinLanes(): Promise<Record<string, LaneDef>> {
   const builtin = layers[0];
   if (builtin === undefined) throw new LaneLoadError(`built-in lane file missing: ${BUILTIN_LANES_PATH}`, BUILTIN_LANES_PATH);
   return mergeLanes([builtin.file]);
+}
+
+/**
+ * Five-layer load (spec §4.2): paths[0] is the built-in file, the rest are optional override layers
+ * in precedence order. Every effective lane must pass class, override-tightening and catalog invariants.
+ */
+export async function loadEffectiveLanes(paths: string[], catalog: Catalog = CATALOG): Promise<Record<string, LaneDef>> {
+  const layers = await loadLaneLayers(paths);
+  const first = layers[0];
+  if (first === undefined || first.path !== paths[0]) {
+    throw new LaneLoadError(`built-in lane file missing: ${paths[0] ?? "(no paths given)"}`, paths[0]);
+  }
+  const builtins = mergeLanes([first.file]);
+  const effective = mergeLanes(layers.map((layer) => layer.file));
+  const errors = checkAllInvariants(builtins, effective, catalog);
+  if (errors.length > 0) throw new LaneInvariantError(errors);
+  return effective;
 }

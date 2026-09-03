@@ -25,7 +25,7 @@ describe("loadLaneLayers", () => {
     expect(layers[0]?.path).toBe(p);
     expect(layers[0]?.file.schemaVersion).toBe(1);
     expect(layers[0]?.file.lanes.chore?.match).toEqual({ kind: "chore" });
-    expect(layers[0]?.file.lanes.chore?.stages[0]).toMatchObject({ name: "plan", agent: "planner" });
+    expect(layers[0]?.file.lanes.chore?.stages?.[0]).toMatchObject({ name: "plan", agent: "planner" });
   });
 
   it("skips missing paths and keeps existing files in input order", async () => {

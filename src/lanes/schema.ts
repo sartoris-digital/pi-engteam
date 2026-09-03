@@ -1,4 +1,4 @@
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 export const SCHEMA_VERSION = 1 as const;
@@ -147,8 +147,8 @@ export class LaneSchemaError extends Error {
   }
 }
 
-function firstError(schema: Parameters<typeof Value.Errors>[0], raw: unknown): string {
-  const err = [...Value.Errors(schema, raw)][0];
+function firstError(schema: TSchema, raw: unknown): string {
+  const err = Value.Errors(schema, raw)[0];
   return err ? `${err.instancePath || "/"}: ${err.message}` : "invalid";
 }
 
@@ -156,11 +156,13 @@ function stageKindCount(stage: StageDef): number {
   return (stage.agent ? 1 : 0) + (stage.host ? 1 : 0) + (stage.human === true ? 1 : 0);
 }
 
-function assertStages(stages: StageDef[], path: string, allowRemoveOnly: boolean): void {
+function assertStages(stages: StageDef[], path: string, allowPatchOmitKind: boolean): void {
   stages.forEach((stage, i) => {
     const here = `${path}.stages[${i}]`;
-    if (allowRemoveOnly && stage.remove === true) return;
-    if (stageKindCount(stage) !== 1) {
+    const count = stageKindCount(stage);
+    // Layer patches may omit agent|host|human (field overlays / remove: true). Complete lanes may not.
+    if (allowPatchOmitKind && count === 0) return;
+    if (count !== 1) {
       throw new LaneSchemaError(`${here}: exactly one of agent | host | human:true`, here);
     }
   });
