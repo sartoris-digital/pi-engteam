@@ -33,6 +33,13 @@ export const FACTORY_EVENTS = [
   "stage.end",
   "run.published",
   "factory.fusion.degraded",
+  "factory.ticket.claimed",
+  "factory.ticket.classified",
+  "factory.lane.started",
+  "factory.ticket.blocked",
+  "factory.ticket.landed",
+  "factory.pr.opened",
+  "factory.approval.granted",
 ] as const;
 
 export type FactoryEventName = (typeof FACTORY_EVENTS)[number];

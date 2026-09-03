@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -7,7 +6,6 @@ import { registerCommands } from "../commands/index.js";
 import type { TrackerEntry } from "../config/schema.js";
 import { Engine } from "../engine/engine.js";
 import { defaultVerify } from "../engine/verify.js";
-import { loadRunState, saveRunState } from "../engine/state.js";
 import { checkpointCommit } from "../git/checkpoint.js";
 import { ensureDirs, factoryHome, runsDir } from "../home.js";
 import { evalWhen as evalLaneExpr, type WhenContext } from "../lanes/expr.js";
@@ -28,6 +26,7 @@ import { HerdrWorktreeProvider } from "../workspace/herdr-provider.js";
 import type { WorkspaceProvider } from "../workspace/types.js";
 import { loadAgentDefs, packageRoot, V1_AGENTS } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
+import { recoverFactory, pauseRunningEngineRuns } from "../scheduler/recover.js";
 import { rehydrateOpenWorkflows, runObservers, sandboxProfileForRun, type FactoryDeps } from "./lane-runner.js";
 import { workspaceFromState } from "./stage-hooks.js";
 
@@ -211,23 +210,7 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
 }
 
 export async function recoverRunningRuns(runsDirPath: string): Promise<string[]> {
-  let entries: { name: string; isDirectory(): boolean }[] = [];
-  try {
-    entries = await readdir(runsDirPath, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const recovered: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === "_factory") continue;
-    const state = await loadRunState(runsDirPath, entry.name);
-    if (state === null || state.status !== "running") continue;
-    state.status = "paused";
-    state.updatedAt = new Date().toISOString();
-    await saveRunState(runsDirPath, state);
-    recovered.push(entry.name);
-  }
-  return recovered;
+  return pauseRunningEngineRuns(runsDirPath);
 }
 
 export async function registerController(pi: ExtensionAPI): Promise<void> {
@@ -244,7 +227,20 @@ export async function registerController(pi: ExtensionAPI): Promise<void> {
   if (vault !== null) deps.vault = vault;
   installInputGuard(pi, vault);
   pi.on("session_start", async () => {
-    await recoverRunningRuns(deps.runsDir);
+    await recoverFactory({
+      runsDir: deps.runsDir,
+      ...(process.env.VITEST === undefined
+        ? {
+            kill: (pid: number, sig: NodeJS.Signals) => {
+              try {
+                process.kill(pid, sig);
+              } catch {
+                /* already gone */
+              }
+            },
+          }
+        : {}),
+    });
     await rehydrateOpenWorkflows(deps);
     await deps.scheduler?.start();
     await commands.refresh();

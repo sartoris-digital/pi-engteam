@@ -60,7 +60,17 @@ describe("EventCategory", () => {
       "stage.end",
       "run.published",
       "factory.fusion.degraded",
+      "factory.ticket.claimed",
+      "factory.ticket.classified",
+      "factory.lane.started",
+      "factory.ticket.blocked",
+      "factory.ticket.landed",
+      "factory.pr.opened",
+      "factory.approval.granted",
     ]);
+    expect(FACTORY_EVENTS).toContain("run.start");
+    expect(FACTORY_EVENTS).toContain("run.published");
+    expect(FACTORY_EVENTS).toContain("factory.ticket.claimed");
   });
 });
 
