@@ -82,6 +82,13 @@ function checkPreBuild(lane: NamedLane): InvariantError[] {
   return out;
 }
 
+const META_OK_AGENTS = new Set(["codifier", "judge", "reviewer", "security-auditor"]);
+const META_FUSION_STAGES = new Set(["assess", "review", "security"]);
+
+function isMetaPublishHost(host: string | undefined): boolean {
+  return host === "publish" || host === "codify-publish";
+}
+
 function checkMeta(lane: NamedLane): InvariantError[] {
   const out: InvariantError[] = [];
   if (lane.stages.some((s) => s.human === true)) out.push(err(lane.name, "meta-has-human"));
@@ -90,10 +97,27 @@ function checkMeta(lane: NamedLane): InvariantError[] {
   if (lane.stages.some((s) => s.name === "steer")) out.push(err(lane.name, "meta-has-steer"));
   const security = lane.stages.find((s) => s.name === "security");
   if (!security || security.when !== "true") out.push(err(lane.name, "meta-security-when", "security"));
+  if (!security || security.locked !== true) out.push(err(lane.name, "meta-security-locked", "security"));
   const judge = lane.stages.find((s) => s.name === "judge");
   if (!judge || judge.safetyGating !== true) out.push(err(lane.name, "judge-missing", "judge"));
+  if (!judge || judge.locked !== true) out.push(err(lane.name, "meta-judge-locked", "judge"));
+  const validate = lane.stages.find((s) => s.name === "validate" || s.host === "codify-validate");
+  if (!validate || validate.locked !== true || validate.host !== "codify-validate") {
+    out.push(err(lane.name, "meta-validate-locked", "validate"));
+  }
   const last = lane.stages[lane.stages.length - 1];
-  if (!last || last.host !== "publish") out.push(err(lane.name, "publish-not-last", last?.name));
+  if (!last || !isMetaPublishHost(last.host)) out.push(err(lane.name, "publish-not-last", last?.name));
+  if (last && isMetaPublishHost(last.host) && last.locked !== true) {
+    out.push(err(lane.name, "meta-publish-locked", last.name));
+  }
+  for (const stage of lane.stages) {
+    if (stage.agent && !META_OK_AGENTS.has(stage.agent)) {
+      out.push(err(lane.name, "meta-codifier-only-writer", stage.name, stage.agent));
+    }
+    if (stage.fusion && !META_FUSION_STAGES.has(stage.name)) {
+      out.push(err(lane.name, "meta-fusion-scope", stage.name));
+    }
+  }
   return out;
 }
 
@@ -163,6 +187,13 @@ export function checkOverrideInvariants(
       const prev = baseByName.get(stage.name);
       if (!prev) continue;
       if (isAlways(prev.when) && !isAlways(stage.when)) out.push(err(name, "when-loosened", stage.name));
+    }
+  }
+  for (const [name, lane] of Object.entries(effective)) {
+    if ((lane.class ?? "build") !== "meta") continue;
+    const base = builtins[name];
+    if (!base || (base.class ?? "build") !== "meta") {
+      out.push(err(name, "meta-added-by-repo"));
     }
   }
   const names = Object.keys(effective);

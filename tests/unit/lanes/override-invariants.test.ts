@@ -118,6 +118,24 @@ describe("checkOverrideInvariants", () => {
     expect(rules).toEqual(["match-overlap"]);
   });
 
+  it("reports meta-added-by-repo when a non-builtin class: meta lane appears", () => {
+    const othermeta: LaneDef = {
+      class: "meta",
+      match: { trigger: ["on-demand"] },
+      priority: -11,
+      budget: { fixRounds: 1, maxWallSeconds: 1800, maxCostUsd: 6 },
+      stages: [
+        { name: "mine", host: "codify-mine", locked: true },
+        { name: "validate", host: "codify-validate", locked: true },
+        { name: "security", agent: "security-auditor", when: "true", locked: true },
+        { name: "judge", agent: "judge", safetyGating: true, locked: true },
+        { name: "publish", host: "codify-publish", locked: true },
+      ],
+    };
+    const rules = checkOverrideInvariants(builtins, { ...builtins, othermeta }, CATALOG).map((e) => e.rule);
+    expect(rules).toContain("meta-added-by-repo");
+  });
+
   it("checkAllInvariants combines class errors with override errors", () => {
     const broken = {
       ...builtins,

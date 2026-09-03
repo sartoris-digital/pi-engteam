@@ -32,7 +32,7 @@ async function violation(paths: string[]): Promise<LaneInvariantError> {
 describe("loadEffectiveLanes with a repo layer", () => {
   it("returns the built-ins when no override layer exists", async () => {
     const lanes = await loadEffectiveLanes([BUILTIN_LANES_PATH, join(dir, "missing.yaml")]);
-    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "enhancement", "feature", "grill"]);
+    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "codify", "enhancement", "feature", "grill"]);
   });
 
   it("rejects a repo lane file that removes the judge", async () => {
@@ -100,6 +100,30 @@ describe("loadEffectiveLanes with a repo layer", () => {
     expect(lanes.hotfix?.budget).toEqual({ fixRounds: 2, maxWallSeconds: 2700, maxCostUsd: 20 });
     expect(lanes.bug?.budget.maxCostUsd).toBe(15);
     expect(lanes.bug?.stages.find((s) => s.name === "review")?.gates).toContain("checklist");
+  });
+
+  it("rejects a repo layer that adds a class: meta lane", async () => {
+    const p = await repoFile(
+      "factory-lanes.yaml",
+      [
+        "schemaVersion: 1",
+        "lanes:",
+        "  othermeta:",
+        "    class: meta",
+        "    match: { trigger: [on-demand] }",
+        "    priority: -11",
+        "    budget: { fixRounds: 1, maxWallSeconds: 1800, maxCostUsd: 6 }",
+        "    stages:",
+        "      - { name: mine, host: codify-mine, locked: true }",
+        "      - { name: validate, host: codify-validate, locked: true }",
+        "      - { name: security, agent: security-auditor, when: \"true\", locked: true }",
+        "      - { name: judge, agent: judge, safetyGating: true, locked: true }",
+        "      - { name: publish, host: codify-publish, locked: true }",
+        "",
+      ].join("\n"),
+    );
+    const rules = (await violation([BUILTIN_LANES_PATH, p])).errors.map((e) => e.rule);
+    expect(rules).toContain("meta-added-by-repo");
   });
 
   it("requires the built-in file first", async () => {

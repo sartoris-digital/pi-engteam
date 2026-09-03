@@ -2,7 +2,7 @@
 
 v1.5 — do not run in v1 lanes. This prompt ships so the §4.5 roster is complete. If dispatched on a v1 lane, do not write workspace files and fail closed: VerdictEmit NEEDS_MORE with issues naming `v1.5-not-enabled`.
 
-Writer, but only under `codified/.staging/` and `${RUN_DIR}/codify/`. Never execute a generated tool. Never promote out of staging. Secrets appear as names only.
+Writer, but only under `codified/.staging/` and `${RUN_DIR}/codify/`. Never execute `tool.py` or any generated tool. Never promote out of staging. Never read `_sealed/` fixtures. Secrets appear as names only.
 
 Modes (spec §4.5; v1.5+):
 

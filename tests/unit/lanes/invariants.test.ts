@@ -152,3 +152,97 @@ describe("checkInvariants (catalog + other classes)", () => {
     expect(r).toContain("meta-security-when");
   });
 });
+
+const metaStages: StageDef[] = [
+  { name: "mine", host: "codify-mine", locked: true, gates: ["evidence-signatures-verified", "candidates-schema", "candidates-nonempty"], onFail: "continue" },
+  {
+    name: "assess",
+    agent: "codifier",
+    mode: "assess",
+    fusion: { mode: "adversarial", slots: ["A", "B"] },
+    gates: ["assessment-schema", "rubric-hard", "oracles-select-observed-branches", "provenance-reproduces-members"],
+    onFail: "escalate:not-codifiable",
+  },
+  {
+    name: "generate",
+    agent: "codifier",
+    mode: "generate",
+    maxRounds: 3,
+    gates: ["staged-layout", "header-template", "no-fixture-edits", "lint-clean", "skill-rendered"],
+    onFail: "fix-round",
+  },
+  {
+    name: "validate",
+    host: "codify-validate",
+    locked: true,
+    gates: ["lint-clean", "dev-fixtures", "sealed-fixtures", "idempotent", "deterministic", "smoke-current-base", "checks-green", "matcher-overlap"],
+    onFail: "fix-round",
+  },
+  { name: "review", agent: "reviewer", mode: "codified", gates: ["citations", "verdict-consistent", "bindings-match-assessment"] },
+  {
+    name: "security",
+    agent: "security-auditor",
+    mode: "codified",
+    when: "true",
+    locked: true,
+    gates: ["deps-allowlist", "deps-locked", "no-hidden-unicode", "no-network-ast", "skill-injection-screen"],
+  },
+  {
+    name: "judge",
+    agent: "judge",
+    mode: "approve-codify",
+    safetyGating: true,
+    locked: true,
+    gates: ["evidence-signed", "no-synthesized", "all-fixtures-pass", "lint-clean", "manifest-sha-matches", "fusion-matches-lane"],
+  },
+  {
+    name: "publish",
+    host: "codify-publish",
+    locked: true,
+    gates: ["head-is-judged-sha", "preflight", "artifact-sha-matches-judged"],
+  },
+];
+
+function meta(over: Partial<NamedLane> & { stages?: StageDef[] } = {}): NamedLane {
+  return named({
+    name: "codify",
+    class: "meta",
+    match: { trigger: ["on-demand"] },
+    budget: { fixRounds: 1, maxWallSeconds: 1800, maxCostUsd: 6 },
+    stages: metaStages,
+    ...over,
+  });
+}
+
+describe("checkInvariants (meta locked + fusion + writers)", () => {
+  it("accepts the built-in-shaped codify lane including host codify-publish", () => {
+    expect(checkInvariants(meta(), CATALOG)).toEqual([]);
+  });
+
+  it("reports meta-validate-locked when validate is missing or unlocked", () => {
+    expect(rules(meta({ stages: metaStages.filter((s) => s.name !== "validate") }))).toContain("meta-validate-locked");
+    const unlocked = metaStages.map((s) => (s.name === "validate" ? { ...s, locked: false } : s));
+    expect(rules(meta({ stages: unlocked }))).toContain("meta-validate-locked");
+  });
+
+  it("reports meta-security-locked, meta-judge-locked and meta-publish-locked", () => {
+    const security = metaStages.map((s) => (s.name === "security" ? { ...s, locked: false } : s));
+    expect(rules(meta({ stages: security }))).toContain("meta-security-locked");
+    const judge = metaStages.map((s) => (s.name === "judge" ? { ...s, locked: false } : s));
+    expect(rules(meta({ stages: judge }))).toContain("meta-judge-locked");
+    const publish = metaStages.map((s) => (s.name === "publish" ? { ...s, locked: false } : s));
+    expect(rules(meta({ stages: publish }))).toContain("meta-publish-locked");
+  });
+
+  it("reports meta-codifier-only-writer when a non-codifier writer is present", () => {
+    const stages = [...metaStages];
+    const generate = stages.findIndex((s) => s.name === "generate");
+    stages.splice(generate, 0, { name: "notes", agent: "tester" });
+    expect(rules(meta({ stages }))).toContain("meta-codifier-only-writer");
+  });
+
+  it("reports meta-fusion-scope when fusion is not on assess/review/security", () => {
+    const stages = metaStages.map((s) => (s.name === "generate" ? { ...s, fusion: { mode: "adversarial" } } : s));
+    expect(rules(meta({ stages }))).toContain("meta-fusion-scope");
+  });
+});

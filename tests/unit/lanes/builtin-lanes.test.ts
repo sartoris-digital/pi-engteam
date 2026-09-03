@@ -4,9 +4,9 @@ import { checkInvariants } from "../../../src/lanes/invariants.js";
 import { BUILTIN_LANES_PATH, loadBuiltinLanes } from "../../../src/lanes/load.js";
 
 describe("built-in lanes.yaml", () => {
-  it("loads chore, bug, enhancement, feature, and grill", async () => {
+  it("loads chore, bug, enhancement, feature, grill, and codify", async () => {
     const lanes = await loadBuiltinLanes();
-    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "enhancement", "feature", "grill"]);
+    expect(Object.keys(lanes).sort()).toEqual(["bug", "chore", "codify", "enhancement", "feature", "grill"]);
     expect(BUILTIN_LANES_PATH).toMatch(/assets\/lanes\.yaml$/);
   });
 
@@ -62,14 +62,49 @@ describe("built-in lanes.yaml", () => {
     }
   });
 
-  it("does not ship dep-update, land-reconcile, escalate or fusion defaults", async () => {
+  it("does not ship dep-update, land-reconcile, escalate or fusion defaults outside codify", async () => {
     const lanes = await loadBuiltinLanes();
-    for (const def of Object.values(lanes)) {
+    for (const [name, def] of Object.entries(lanes)) {
       expect(def.stages.map((s) => s.name)).not.toContain("dep-update");
       expect(def.stages.map((s) => s.name)).not.toContain("land-reconcile");
       expect(def.stages.map((s) => s.name)).not.toContain("escalate");
-      expect(def.stages.some((s) => s.fusion)).toBe(false);
       expect(def.stages.some((s) => s.host === "deps")).toBe(false);
+      if (name === "codify") {
+        expect(def.stages.find((s) => s.name === "assess")?.fusion).toEqual({ mode: "adversarial", slots: ["A", "B"] });
+        expect(def.stages.filter((s) => s.name !== "assess").every((s) => !s.fusion)).toBe(true);
+      } else {
+        expect(def.stages.some((s) => s.fusion)).toBe(false);
+      }
     }
+  });
+
+  it("codify is a class: meta lane with the §8.18 stage names and triggers", async () => {
+    const codify = (await loadBuiltinLanes()).codify!;
+    expect(codify.class).toBe("meta");
+    expect(codify.priority).toBe(-10);
+    expect(codify.budget).toEqual({ fixRounds: 1, maxWallSeconds: 1800, maxCostUsd: 6 });
+    expect(codify.match.trigger).toEqual([
+      "script-seed", "post-landed", "schedule", "on-demand", "verifier-gaps", "rule-check",
+    ]);
+    expect(codify.stages.map((s) => s.name)).toEqual([
+      "mine", "assess", "generate", "validate", "review", "security", "judge", "publish",
+    ]);
+    expect(codify.stages[0]).toMatchObject({ name: "mine", host: "codify-mine", locked: true });
+    expect(codify.stages.find((s) => s.name === "validate")).toMatchObject({ host: "codify-validate", locked: true });
+    expect(codify.stages.find((s) => s.name === "security")).toMatchObject({
+      agent: "security-auditor",
+      mode: "codified",
+      when: "true",
+      locked: true,
+    });
+    expect(codify.stages.find((s) => s.name === "judge")).toMatchObject({
+      agent: "judge",
+      mode: "approve-codify",
+      safetyGating: true,
+      locked: true,
+    });
+    const last = codify.stages[codify.stages.length - 1];
+    expect(last).toMatchObject({ name: "publish", host: "codify-publish", locked: true });
+    expect(checkInvariants({ ...codify, name: "codify" }, CATALOG)).toEqual([]);
   });
 });

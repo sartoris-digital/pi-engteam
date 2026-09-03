@@ -85,3 +85,25 @@ lanes:
       - { name: plan, agent: planner, mode: approach, gates: ["sections:plan.md:Goal,Files to touch,Steps,Verify,Out of scope"] }
       - { name: handoff, human: true, packet: handoff, locked: true }
     onExhausted: escalate
+
+  codify:
+    class: meta
+    match: { trigger: [script-seed, post-landed, schedule, on-demand, verifier-gaps, rule-check] }
+    priority: -10
+    budget: { fixRounds: 1, maxWallSeconds: 1800, maxCostUsd: 6 }
+    stages:
+      - { name: mine,     host: codify-mine,   gates: [evidence-signatures-verified, candidates-schema, candidates-nonempty], onFail: continue, locked: true }
+      - { name: assess,   agent: codifier, mode: assess, fusion: { mode: adversarial, slots: [A, B] },
+          gates: [assessment-schema, rubric-hard, oracles-select-observed-branches, provenance-reproduces-members], onFail: "escalate:not-codifiable" }
+      - { name: generate, agent: codifier, mode: generate, maxRounds: 3,
+          gates: [staged-layout, header-template, no-fixture-edits, lint-clean, skill-rendered], onFail: fix-round }
+      - { name: validate, host: codify-validate,
+          gates: [lint-clean, dev-fixtures, sealed-fixtures, idempotent, deterministic, smoke-current-base, checks-green, matcher-overlap], onFail: fix-round, locked: true }
+      - { name: review,   agent: reviewer, mode: codified, gates: [citations, verdict-consistent, bindings-match-assessment] }
+      - { name: security, agent: security-auditor, mode: codified, when: "true",
+          gates: [deps-allowlist, deps-locked, no-hidden-unicode, no-network-ast, skill-injection-screen], locked: true }
+      - { name: judge,    agent: judge, mode: approve-codify, safetyGating: true,
+          gates: [evidence-signed, no-synthesized, all-fixtures-pass, lint-clean, manifest-sha-matches, fusion-matches-lane], locked: true }
+      - { name: publish,  host: codify-publish, gates: [head-is-judged-sha, preflight, artifact-sha-matches-judged], locked: true }
+    publish: { draft: "writeGlobs ∩ src", labels: [factory:codified], titleTemplate: "chore(codified): add {name} v{version}" }
+    onExhausted: escalate

@@ -168,7 +168,7 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     root,
     models: {},
     defaultModel: process.env["PI_SDLC_DEFAULT_MODEL"] ?? "slot-a",
-    required: [...V1_AGENTS],
+    required: lanes.codify ? [...V1_AGENTS, "codifier"] : [...V1_AGENTS],
   });
   const tracker = new LocalAdapter(runs);
   const detected = overlay.remotes.map(detectTrackerFromRemote).find((hit) => hit !== null);
