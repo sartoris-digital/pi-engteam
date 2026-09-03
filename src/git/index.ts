@@ -11,3 +11,5 @@ export { publishPreflight } from "./preflight.js";
 export type { PreflightResult, PreflightFailureCode, PreflightDeps } from "./preflight.js";
 export { publish } from "./publish.js";
 export type { PublishResult, PublishOptions } from "./publish.js";
+export { composePrBody, neutralizeQuoted } from "./prbody.js";
+export type { ComposePrBodyInput, PrBrief, PrBriefAc, AcSource } from "./prbody.js";
