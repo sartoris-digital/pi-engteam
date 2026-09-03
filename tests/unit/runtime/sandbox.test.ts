@@ -160,7 +160,7 @@ describe("sandbox", () => {
       expect(p.workspaceDir).toBe(ws);
       expect(p.runDir).toBe(profile.runDir);
       expect(p.allowWrite).toEqual([ws, profile.runDir, join(root, "tmp"), join(root, "main", ".git", "worktrees", "wt")]);
-      expect(p.denyRead).toEqual(PROTECTED_READ_DENY.map((rel) => join(home, rel)));
+      expect(p.denyRead).toEqual(PROTECTED_READ_DENY.map((rel) => (rel.startsWith("/") ? rel : join(home, rel))));
       expect(p.denyUnixSockets).toEqual([join(home, HERDR_SOCKET)]);
       expect(p.network).toBe("allow");
     });
@@ -169,6 +169,32 @@ describe("sandbox", () => {
       expect(worktreeGitDir(join(root, "nope"))).toBeNull();
       const p = profileForRequest(makeWorkerRequest({ cwd: join(root, "nope") }), { home: root, tmpDir: root });
       expect(p.allowWrite).toHaveLength(3);
+    });
+
+    it("deny-reads $HOME/.ssh and keyring stores (F11)", async () => {
+      expect(PROTECTED_READ_DENY).toEqual(
+        expect.arrayContaining([".ssh", "Library/Keychains", ".local/share/keyrings", "/Library/Keychains"]),
+      );
+      const home = join(root, "home");
+      const ssh = join(home, ".ssh");
+      const macKeyring = join(home, "Library", "Keychains");
+      const linuxKeyring = join(home, ".local", "share", "keyrings");
+      await mkdir(ssh, { recursive: true });
+      await mkdir(macKeyring, { recursive: true });
+      await mkdir(linuxKeyring, { recursive: true });
+      const ws = join(root, "wt-ssh");
+      await mkdir(ws, { recursive: true });
+      const p = profileForRequest(makeWorkerRequest({ cwd: ws, runDir: profile.runDir }), { home, tmpDir: join(root, "tmp") });
+      expect(p.denyRead).toEqual(expect.arrayContaining([ssh, macKeyring, linuxKeyring, "/Library/Keychains"]));
+      const text = renderSeatbeltProfile(p, "run-sb");
+      expect(text).toContain(`(deny file-read* (subpath "${ssh}"))`);
+      expect(text).toContain(`(deny file-read* (subpath "${macKeyring}"))`);
+      expect(text).toContain(`(deny file-read* (subpath "${linuxKeyring}"))`);
+      expect(text).toContain('(deny file-read* (subpath "/Library/Keychains"))');
+      const args = renderBwrapArgs(p).join(" ");
+      expect(args).toContain(`--tmpfs ${ssh}`);
+      expect(args).toContain(`--tmpfs ${macKeyring}`);
+      expect(args).toContain(`--tmpfs ${linuxKeyring}`);
     });
   });
 });

@@ -33,7 +33,7 @@ export class SandboxUnavailableError extends Error {
   }
 }
 
-/** Home-relative read-deny list from spec §5.8. */
+/** Spec §5.8 credential stores plus `.ssh` and OS keyring. Absolute entries (e.g. `/Library/Keychains`) are used as-is. */
 export const PROTECTED_READ_DENY = [
   ".config/gh",
   ".git-credentials",
@@ -42,6 +42,10 @@ export const PROTECTED_READ_DENY = [
   ".docker",
   ".config/jira*",
   ".config/herdr",
+  ".ssh",
+  "Library/Keychains",
+  ".local/share/keyrings",
+  "/Library/Keychains",
 ] as const;
 export const HERDR_SOCKET = ".config/herdr/herdr.sock";
 
@@ -202,7 +206,7 @@ export function profileForRequest(req: WorkerRequest, opts: ProfileForRequestOpt
     workspaceDir: req.cwd,
     runDir: req.runDir,
     allowWrite,
-    denyRead: PROTECTED_READ_DENY.map((rel) => join(home, rel)),
+    denyRead: PROTECTED_READ_DENY.map((rel) => (rel.startsWith("/") ? rel : join(home, rel))),
     denyUnixSockets: [join(home, HERDR_SOCKET)],
     network: "allow",
   };
