@@ -152,3 +152,9 @@ export function registerCommands(pi: ExtensionAPI, deps: FactoryDeps): Registere
 
   return { refresh };
 }
+
+export { runRemember } from "./remember.js";
+export { runRules } from "./rules.js";
+export { runForget } from "./forget.js";
+export { runGrill } from "./grill.js";
+

@@ -220,3 +220,28 @@ export async function addRule(
   if (!global && opts.repoPath !== undefined) await ensureLocalRulesExcluded(opts.repoPath);
   return record;
 }
+
+export async function retireRule(
+  id: string,
+  opts: { home: string; repoPath?: string },
+): Promise<RuleRecord> {
+  const loaded = await loadEffectiveRules({
+    home: opts.home,
+    ...(opts.repoPath === undefined ? {} : { repoPath: opts.repoPath }),
+  });
+  const rule = loaded.rules.find((r) => r.id === id);
+  if (rule === undefined) throw new Error(`forget: unknown rule ${id}`);
+  if (rule.status === "locked" || loaded.provenance[id] === "builtin") {
+    throw new Error(`forget: ${id} is locked`);
+  }
+  const layer = loaded.provenance[id];
+  const path =
+    layer === "local" && opts.repoPath !== undefined ? localRulesPath(opts.repoPath) : globalRulesPath(opts.home);
+  const stored = await readStoredRules(path);
+  const idx = stored.findIndex((r) => r.id === id);
+  if (idx < 0) throw new Error(`forget: ${id} is not stored in a writable layer`);
+  const retired: RuleRecord = { ...stored[idx]!, status: "retired" };
+  stored[idx] = retired;
+  await writeStoredRules(path, stored);
+  return retired;
+}

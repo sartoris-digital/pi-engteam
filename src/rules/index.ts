@@ -28,5 +28,6 @@ export {
   RuleScreenError,
   addRule,
   ensureLocalRulesExcluded,
+  retireRule,
 } from "./remember.js";
 export { operatorRulesBlock, ruleSpecificity } from "./prompt.js";
