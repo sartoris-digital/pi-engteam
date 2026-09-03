@@ -2,9 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeStageHooks } from "../../../src/controller/stage-hooks.js";
+import { makeStageHooks, pinWorkspaceArtifacts } from "../../../src/controller/stage-hooks.js";
 import { makeStepContext } from "../../helpers/steer-fixtures.js";
-import type { WorkerExecutor, WorkerResult } from "../../../src/runtime/types.js";
+import { makeJudgedWorkspace } from "../../helpers/judged-workspace.js";
+import type { WorkerExecutor, WorkerRequest, WorkerResult } from "../../../src/runtime/types.js";
 import type { StageDef } from "../../../src/lanes/schema.js";
 
 function stage(over: Partial<StageDef> & { name: string }): StageDef {
@@ -52,21 +53,139 @@ describe("agentStep", () => {
       "REQUIRED FINAL ACTION",
     );
   });
-});
 
-describe("hostStep publish emits run.published", () => {
-  it("is implemented by hostStep('publish') — covered in integration 9.14; unit-level emit is asserted here with a stub publish via the hook result shape", () => {
+  it("sets extraUpsert from writeRoots for implementer and denies testDir plus generated docs", async () => {
+    let seen: WorkerRequest | undefined;
     const hooks = makeStageHooks({
-      executor: executor({ verdict: { step: "x", verdict: "PASS" }, exitCode: 0, timedOut: false, stderrTail: "", durationMs: 1 }),
-      agents: [],
+      executor: {
+        run: async (req) => {
+          seen = req;
+          return { verdict: { step: "implement", verdict: "PASS" }, exitCode: 0, timedOut: false, stderrTail: "", durationMs: 1 };
+        },
+      },
+      agents: [
+        {
+          name: "implementer",
+          model: "stub",
+          promptPath: "/dev/null",
+          tools: ["read", "write", "edit", "bash"],
+          stageClass: "writer",
+        },
+      ],
       piBinary: "pi",
       projectRootDefault: "/",
       policyFile: "/dev/null",
       policySha: "0".repeat(64),
-      writeEvidence: async () => "/tmp/e.json",
+      writeEvidence: async () => join(runDir, "evidence", "x.json"),
     });
-    const run = hooks.hostStep(stage({ name: "publish", host: "publish" }), "publish");
-    expect(typeof run).toBe("function");
+    const run = hooks.agentStep(stage({ name: "implement", agent: "implementer" }), "implement");
+    const ctx = makeStepContext(runDir, {
+      state: { runId: "run-1", kind: "chore", steps: [], workspaceDir: join(runDir, "ws") },
+      cfg: {
+        writeRoots: { chore: ["src/**"], feature: ["src/**"], enhancement: ["src/**"], bug: ["src/**"] },
+        testDir: "tests",
+        generatedDocPatterns: ["**/PLAN.md"],
+      },
+    });
+    await mkdir(ctx.workspaceDir, { recursive: true });
+    await run(ctx);
+    expect(seen?.extraUpsert).toEqual(["src/**"]);
+    expect(seen?.denyUpsert).toEqual(["tests/**", "**/PLAN.md"]);
+  });
+
+  it("does not grant writeRoots extraUpsert to a planner", async () => {
+    let seen: WorkerRequest | undefined;
+    const hooks = makeStageHooks({
+      executor: {
+        run: async (req) => {
+          seen = req;
+          return { verdict: { step: "plan", verdict: "PASS" }, exitCode: 0, timedOut: false, stderrTail: "", durationMs: 1 };
+        },
+      },
+      agents: [{ name: "planner", model: "stub", promptPath: "/dev/null", tools: ["read"], stageClass: "read-only" }],
+      piBinary: "pi",
+      projectRootDefault: "/",
+      policyFile: "/dev/null",
+      policySha: "0".repeat(64),
+      writeEvidence: async () => join(runDir, "evidence", "x.json"),
+    });
+    const run = hooks.agentStep(stage({ name: "plan", agent: "planner" }), "plan");
+    const ctx = makeStepContext(runDir, { state: { runId: "run-1", steps: [] } });
+    await mkdir(ctx.workspaceDir, { recursive: true });
+    await run(ctx);
+    expect(seen?.extraUpsert).toEqual([]);
+    expect(seen?.denyUpsert).toEqual([]);
+  });
+});
+
+describe("hostStep publish emits run.published", () => {
+  it("evaluates yaml gates then publishes, recording the live head-is-judged-sha result", async () => {
+    const judged = await makeJudgedWorkspace();
+    try {
+      pinWorkspaceArtifacts(judged.state, judged.ws);
+      const events: { type: string }[] = [];
+      const hooks = makeStageHooks({
+        executor: executor({ verdict: { step: "x", verdict: "PASS" }, exitCode: 0, timedOut: false, stderrTail: "", durationMs: 1 }),
+        agents: [],
+        piBinary: "pi",
+        projectRootDefault: "/",
+        policyFile: "/dev/null",
+        policySha: "0".repeat(64),
+        writeEvidence: async () => "/tmp/e.json",
+      });
+      const run = hooks.hostStep(
+        stage({ name: "publish", host: "publish", gates: ["head-is-judged-sha", "preflight"] }),
+        "publish",
+      );
+      const ctx = makeStepContext("/tmp/unused-run", {
+        state: judged.state,
+        cfg: judged.cfg,
+      });
+      ctx.workspaceDir = judged.ws.path;
+      ctx.state.workspaceDir = judged.ws.path;
+      ctx.emit = (event) => events.push(event);
+      const result = await run(ctx);
+      expect(result.verdict).toBe("PASS");
+      expect(result.evidence?.predicates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "head-is-judged-sha", ok: true }),
+          expect.objectContaining({ name: "preflight", ok: true }),
+        ]),
+      );
+      expect(events.map((e) => e.type)).toContain("run.published");
+    } finally {
+      await judged.cleanup();
+    }
+  });
+
+  it("refuses publish when head-is-judged-sha fails without pushing", async () => {
+    const judged = await makeJudgedWorkspace();
+    try {
+      pinWorkspaceArtifacts(judged.state, judged.ws);
+      judged.state.judgedSha = "0".repeat(40);
+      const hooks = makeStageHooks({
+        executor: executor({ verdict: { step: "x", verdict: "PASS" }, exitCode: 0, timedOut: false, stderrTail: "", durationMs: 1 }),
+        agents: [],
+        piBinary: "pi",
+        projectRootDefault: "/",
+        policyFile: "/dev/null",
+        policySha: "0".repeat(64),
+        writeEvidence: async () => "/tmp/e.json",
+      });
+      const run = hooks.hostStep(
+        stage({ name: "publish", host: "publish", gates: ["head-is-judged-sha", "preflight"] }),
+        "publish",
+      );
+      const ctx = makeStepContext("/tmp/unused-run", { state: judged.state, cfg: judged.cfg });
+      ctx.workspaceDir = judged.ws.path;
+      ctx.state.workspaceDir = judged.ws.path;
+      const result = await run(ctx);
+      expect(result.verdict).toBe("FAIL");
+      expect(result.escalate).toBe("publish-refused");
+      expect(result.evidence?.predicates?.some((p) => p.name === "head-is-judged-sha" && !p.ok)).toBe(true);
+    } finally {
+      await judged.cleanup();
+    }
   });
 });
 

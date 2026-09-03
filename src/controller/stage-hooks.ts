@@ -59,6 +59,14 @@ function ws(ctx: StepContext): Workspace {
   return workspaceFromState(ctx.state);
 }
 
+/** extraUpsert is the sole implementer write path; policy.yaml implementer.upsert stays empty. */
+function implementerWriteRoots(ctx: StepContext): { extraUpsert: string[]; denyUpsert: string[] } {
+  const extraUpsert = [...(ctx.cfg.writeRoots[ctx.state.kind] ?? [])];
+  const testDir = ctx.cfg.testDir.replace(/\/+$/, "");
+  const denyUpsert = [`${testDir}/**`, ...ctx.cfg.generatedDocPatterns];
+  return { extraUpsert, denyUpsert };
+}
+
 export function makeStageHooks(deps: StageHookDeps): StageHooks {
   return {
     agentStep: (def, _stage) => (ctx) => runAgent(ctx, def, deps),
@@ -88,6 +96,7 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     "",
   ].join("\n");
   const promptPath = await writeStepPrompt(ctx.runDir, stage.name, body, round);
+  const writerRoots = agent.name === "implementer" ? implementerWriteRoots(ctx) : { extraUpsert: [] as string[], denyUpsert: [] as string[] };
   const req: WorkerRequest = {
     runId: ctx.state.runId,
     runDir: ctx.runDir,
@@ -100,8 +109,8 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
     projectRoot: ctx.state.mainCheckout || deps.projectRootDefault,
     policyFile: deps.policyFile,
     policySha: deps.policySha,
-    extraUpsert: [],
-    denyUpsert: [],
+    extraUpsert: writerRoots.extraUpsert,
+    denyUpsert: writerRoots.denyUpsert,
     nonce: ctx.nonce,
     timeoutMs: (stage.timeoutSeconds ?? ctx.cfg.stageTimeoutSeconds) * 1000,
     signal: ctx.signal,
@@ -140,7 +149,7 @@ async function runAgent(ctx: StepContext, stage: StageDef, deps: StageHookDeps):
 async function runHost(ctx: StepContext, stage: StageDef, _deps: StageHookDeps): Promise<StepResult> {
   if (stage.host === "scope-check") return scopeCheck(ctx);
   if (stage.host === "checks") return runTestChecks(ctx, stage);
-  if (stage.host === "publish") return runPublish(ctx);
+  if (stage.host === "publish") return runPublish(ctx, stage);
   if (stage.host === "escalate") {
     return { verdict: "FAIL", issues: ctx.state.escalation?.detail ? [ctx.state.escalation.detail] : ["escalated"] };
   }
@@ -209,13 +218,23 @@ async function runTestChecks(ctx: StepContext, stage: StageDef): Promise<StepRes
   return stepResult;
 }
 
-async function runPublish(ctx: StepContext): Promise<StepResult> {
+async function runPublish(ctx: StepContext, stage: StageDef): Promise<StepResult> {
+  const gates = await evaluateGates(ctx, stage.gates ?? [], { verdict: "PASS" });
+  if (!allGatesOk(gates)) {
+    return {
+      verdict: "FAIL",
+      issues: gates.filter((g) => !g.ok).map((g) => `${g.name}: ${g.note ?? "failed"}`),
+      escalate: "publish-refused",
+      evidence: { predicates: gates },
+    };
+  }
   const result = await publish(ctx.state, ctx.cfg, ws(ctx));
   if (!result.pushed) {
     return {
       verdict: "FAIL",
       issues: [result.detail],
       escalate: result.code === "push-rejected" ? "push-rejected" : "publish-refused",
+      evidence: { predicates: gates },
     };
   }
   ctx.emit({
@@ -226,7 +245,7 @@ async function runPublish(ctx: StepContext): Promise<StepResult> {
     step: "publish",
     data: { sha: result.sha, branch: result.branch },
   });
-  return { verdict: "PASS", evidence: { predicates: [{ name: "head-is-judged-sha", ok: true }] } };
+  return { verdict: "PASS", evidence: { predicates: gates } };
 }
 
 async function runHuman(ctx: StepContext, stage: StageDef, deps: StageHookDeps): Promise<StepResult> {

@@ -5,9 +5,16 @@ import { changedFilesSince } from "../gate/finalize.js";
 import { findGeneratedDocs } from "../gate/generated-docs.js";
 import { parseJunit } from "../gate/junit.js";
 import { hostGit } from "../git/host-git.js";
-import { listEvidence, verifyEvidence } from "../engine/evidence.js";
+import { publishPreflight } from "../git/preflight.js";
+import { listEvidence, readEvidence, verifyEvidence } from "../engine/evidence.js";
 import { readRunSecret } from "../engine/state.js";
+import { isPredicate } from "../lanes/catalog.js";
 import type { Workspace } from "../workspace/types.js";
+
+const ART_CONFIG = "workspace.configSha";
+const ART_COMMON = "workspace.gitCommonDir";
+const ART_REMOTE = "workspace.remote";
+const ART_REMOTE_URL = "workspace.remoteUrl";
 
 export interface PredicateResult {
   name: string;
@@ -16,14 +23,18 @@ export interface PredicateResult {
 }
 
 function workspaceOf(ctx: StepContext): Workspace {
+  const remote = ctx.state.artifacts[ART_REMOTE];
+  const remoteUrl = ctx.state.artifacts[ART_REMOTE_URL];
   return {
     provider: "git",
     path: ctx.workspaceDir,
     branch: ctx.state.branch,
     baseSha: ctx.state.baseSha,
     repoRoot: ctx.state.mainCheckout,
-    gitCommonDir: join(ctx.state.mainCheckout, ".git"),
-    configSha: ctx.state.configSha,
+    gitCommonDir: ctx.state.artifacts[ART_COMMON] ?? join(ctx.state.mainCheckout, ".git"),
+    configSha: ctx.state.artifacts[ART_CONFIG] ?? ctx.state.configSha,
+    ...(remote === undefined ? {} : { remote }),
+    ...(remoteUrl === undefined ? {} : { remoteUrl }),
   };
 }
 
@@ -82,14 +93,44 @@ async function headIsJudgedSha(ctx: StepContext): Promise<PredicateResult> {
 
 async function evidenceSigned(ctx: StepContext): Promise<PredicateResult> {
   const listed = await listEvidence(ctx.runDir);
-  const last = listed[listed.length - 1];
-  if (last === undefined) return { name: "evidence-signed", ok: false, note: "no evidence records" };
+  if (listed.length === 0) return { name: "evidence-signed", ok: false, note: "no evidence records" };
   try {
     const secret = await readRunSecret(ctx.runDir);
-    const verified = await verifyEvidence(ctx.runDir, last.stage, last.round, secret);
-    return { name: "evidence-signed", ok: verified.ok, note: verified.reason };
+    const failed: string[] = [];
+    for (const rec of listed) {
+      const verified = await verifyEvidence(ctx.runDir, rec.stage, rec.round, secret);
+      if (!verified.ok) failed.push(`${rec.stage}-r${rec.round}${verified.reason ? `: ${verified.reason}` : ""}`);
+    }
+    return {
+      name: "evidence-signed",
+      ok: failed.length === 0,
+      note: failed.length === 0 ? undefined : failed.join("; "),
+    };
   } catch (err) {
     return { name: "evidence-signed", ok: false, note: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function noSynthesized(ctx: StepContext): Promise<PredicateResult> {
+  const listed = await listEvidence(ctx.runDir);
+  const hits: string[] = [];
+  for (const rec of listed) {
+    const ev = await readEvidence(ctx.runDir, rec.stage, rec.round);
+    if ((ev?.synthesized ?? []).length > 0) hits.push(`${rec.stage}-r${rec.round}`);
+  }
+  return {
+    name: "no-synthesized",
+    ok: hits.length === 0,
+    note: hits.length === 0 ? undefined : `synthesized in ${hits.join(", ")}`,
+  };
+}
+
+async function preflightGate(ctx: StepContext): Promise<PredicateResult> {
+  try {
+    const pre = await publishPreflight(ctx.state, ctx.cfg, workspaceOf(ctx));
+    return { name: "preflight", ok: pre.ok, note: pre.ok ? undefined : `${pre.code}: ${pre.detail}` };
+  } catch (err) {
+    return { name: "preflight", ok: false, note: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -144,11 +185,23 @@ export async function evaluateGates(
       out.push(await evidenceSigned(ctx));
       continue;
     }
+    if (gate === "no-synthesized") {
+      out.push(await noSynthesized(ctx));
+      continue;
+    }
+    if (gate === "preflight") {
+      out.push(await preflightGate(ctx));
+      continue;
+    }
     if (gate.startsWith("sections:")) {
       out.push(await sectionsGate(ctx, gate.slice("sections:".length)));
       continue;
     }
-    out.push({ name: gate, ok: true, note: "v0: not enforced" });
+    if (isPredicate(gate)) {
+      out.push({ name: gate, ok: true, note: "v0: not enforced" });
+      continue;
+    }
+    out.push({ name: gate, ok: false, note: "unknown predicate" });
   }
   return out;
 }
