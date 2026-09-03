@@ -4,9 +4,36 @@ export type TicketKind = (typeof TICKET_KINDS)[number];
 export interface TicketRef {
   /** Adapter id: "local" in v0; "github" | "azure-devops" | "jira" in later releases. */
   tracker: string;
-  /** Tracker-native id. For "local" this is the full `local-<ulid>` string. */
+  /** Tracker-native id. For "local" this is the full `local-<ulid>` string. For GitHub: `owner/repo#n`. */
   id: string;
 }
+
+export interface TicketSummary {
+  ref: TicketRef;
+  title: string;
+  state?: string;
+  updatedAt?: string;
+  url?: string;
+}
+
+export interface Comment {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  role?: string;
+}
+
+export type CommentId = string;
+
+export interface PRRef {
+  repo: string;
+  number: number;
+  url?: string;
+  head?: string;
+}
+
+export type TrackerCapability = "editComment" | "reactions" | "transition" | "linkPR" | "nativeQuery";
 
 export interface Ticket {
   ref: TicketRef;
@@ -16,15 +43,35 @@ export interface Ticket {
   author: string;
   url?: string;
   kind?: TicketKind;
+  state?: string;
+  assignees?: string[];
+  updatedAt?: string;
+  priority?: string;
+  similar?: TicketSummary[];
+  raw?: unknown;
 }
 
-/** v0 subset of the spec §3.1 adapter: host-side only, operator credentials, no network in the local adapter. */
+/** Spec §3.1 adapter. Host-side only; workers never call tracker CLIs. `comment` still returns null when there is no stream. */
 export interface TrackerAdapter {
   readonly id: string;
+  readonly capabilities: Set<TrackerCapability>;
+  detect(): Promise<{ available: boolean; reason?: string }>;
   parseRef(input: string): TicketRef | null;
   fetch(ref: TicketRef): Promise<Ticket>;
-  /** Returns the tracker comment id, or null when the adapter has no comment stream. */
-  comment(ref: TicketRef, body: string, opts: { idempotencyKey: string }): Promise<string | null>;
+  list(q: { label: string; state: string; updatedSince?: Date }): Promise<Ticket[]>;
+  search(q: { titleTokens: string[] }): Promise<TicketSummary[]>;
+  getComments(ref: TicketRef, since?: Date): Promise<Comment[]>;
+  labelerOf(ref: TicketRef, label: string): Promise<{ login: string; role: string } | null>;
+  isAuthorized(login: string): Promise<boolean>;
+  acknowledge(ref: TicketRef): Promise<void>;
+  comment(ref: TicketRef, body: string, opts: { idempotencyKey: string }): Promise<CommentId | null>;
+  editComment?(ref: TicketRef, id: CommentId, body: string): Promise<void>;
+  addLabel(ref: TicketRef, label: string): Promise<void>;
+  removeLabel(ref: TicketRef, label: string): Promise<void>;
+  transition(ref: TicketRef, target: string): Promise<void>;
+  assign(ref: TicketRef, user: string): Promise<void>;
+  linkPR(ref: TicketRef, pr: PRRef): Promise<void>;
+  prHint?(pr: PRRef): Promise<{ state?: string; mergeCommit?: string }>;
 }
 
 export function isTicketKind(value: unknown): value is TicketKind {

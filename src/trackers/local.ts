@@ -1,6 +1,16 @@
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Ticket, TicketKind, TicketRef, TrackerAdapter } from "./adapter.js";
+import type {
+  Comment,
+  CommentId,
+  PRRef,
+  Ticket,
+  TicketKind,
+  TicketRef,
+  TicketSummary,
+  TrackerAdapter,
+  TrackerCapability,
+} from "./adapter.js";
 import { ulid as defaultUlid } from "./ulid.js";
 
 export const LOCAL_TICKET_STATUSES = ["queued", "running", "done", "failed"] as const;
@@ -44,6 +54,7 @@ export function deriveTitle(body: string): string {
  */
 export class LocalAdapter implements TrackerAdapter {
   readonly id = "local";
+  readonly capabilities: Set<TrackerCapability> = new Set();
   readonly dir: string;
   private readonly author: string;
   private readonly mint: () => string;
@@ -78,11 +89,47 @@ export class LocalAdapter implements TrackerAdapter {
     return ticket;
   }
 
+  async detect(): Promise<{ available: boolean; reason?: string }> {
+    return { available: true };
+  }
+
   async fetch(ref: TicketRef): Promise<Ticket> {
     return (await this.read(ref)).ticket;
   }
 
-  async list(filter: { status?: LocalTicketStatus } = {}): Promise<LocalTicketRecord[]> {
+  async list(_q: { label: string; state: string; updatedSince?: Date }): Promise<Ticket[]> {
+    return [];
+  }
+
+  async search(_q: { titleTokens: string[] }): Promise<TicketSummary[]> {
+    return [];
+  }
+
+  async getComments(_ref: TicketRef, _since?: Date): Promise<Comment[]> {
+    return [];
+  }
+
+  async labelerOf(_ref: TicketRef, _label: string): Promise<{ login: string; role: string } | null> {
+    return null;
+  }
+
+  async isAuthorized(_login: string): Promise<boolean> {
+    return false;
+  }
+
+  async acknowledge(_ref: TicketRef): Promise<void> {}
+
+  async addLabel(_ref: TicketRef, _label: string): Promise<void> {}
+
+  async removeLabel(_ref: TicketRef, _label: string): Promise<void> {}
+
+  async transition(_ref: TicketRef, _target: string): Promise<void> {}
+
+  async assign(_ref: TicketRef, _user: string): Promise<void> {}
+
+  async linkPR(_ref: TicketRef, _pr: PRRef): Promise<void> {}
+
+  async listRecords(filter: { status?: LocalTicketStatus } = {}): Promise<LocalTicketRecord[]> {
     let names: string[];
     try {
       names = await readdir(this.dir);
@@ -105,7 +152,7 @@ export class LocalAdapter implements TrackerAdapter {
     await this.write(record);
   }
 
-  async comment(_ref: TicketRef, _body: string, _opts: { idempotencyKey: string }): Promise<null> {
+  async comment(_ref: TicketRef, _body: string, _opts: { idempotencyKey: string }): Promise<CommentId | null> {
     return null;
   }
 

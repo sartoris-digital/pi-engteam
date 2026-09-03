@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalAdapter, deriveTitle, localTicketsDir } from "../../../src/trackers/local.js";
+import type { TrackerAdapter } from "../../../src/trackers/adapter.js";
 import { createUlidGenerator } from "../../../src/trackers/ulid.js";
 
 let runsDir: string;
@@ -58,16 +59,16 @@ describe("LocalAdapter", () => {
     const c = await adapter.createFromTask("third");
     await adapter.setStatus(b.ref, "running");
 
-    const all = await adapter.list();
+    const all = await adapter.listRecords();
     expect(all.map((r) => r.ticket.ref.id)).toEqual([a.ref.id, b.ref.id, c.ref.id]);
     expect(all.map((r) => r.status)).toEqual(["queued", "running", "queued"]);
 
-    const queued = await adapter.list({ status: "queued" });
+    const queued = await adapter.listRecords({ status: "queued" });
     expect(queued.map((r) => r.ticket.body)).toEqual(["first", "third"]);
   });
 
-  it("returns an empty list before any ticket exists", async () => {
-    expect(await new LocalAdapter(runsDir).list()).toEqual([]);
+  it("returns an empty record list before any ticket exists", async () => {
+    expect(await new LocalAdapter(runsDir).listRecords()).toEqual([]);
   });
 
   it("rejects refs from other trackers and unknown ids", async () => {
@@ -89,6 +90,27 @@ describe("LocalAdapter", () => {
     const adapter = new LocalAdapter(runsDir);
     const ticket = await adapter.createFromTask("anything");
     expect(await adapter.comment(ticket.ref, "hello", { idempotencyKey: "k" })).toBeNull();
+  });
+
+  it("satisfies TrackerAdapter with empty capabilities and no-op spec methods", async () => {
+    const adapter = new LocalAdapter(runsDir);
+    const asAdapter: TrackerAdapter = adapter;
+    expect(asAdapter.id).toBe("local");
+    expect(asAdapter.capabilities.size).toBe(0);
+    expect(await asAdapter.detect()).toEqual({ available: true });
+    expect(await asAdapter.list({ label: "factory:ready", state: "open" })).toEqual([]);
+    expect(await asAdapter.search({ titleTokens: ["readme"] })).toEqual([]);
+    expect(await asAdapter.getComments({ tracker: "local", id: "local-x" })).toEqual([]);
+    expect(await asAdapter.labelerOf({ tracker: "local", id: "local-x" }, "factory:ready")).toBeNull();
+    expect(await asAdapter.isAuthorized("ada")).toBe(false);
+    await asAdapter.acknowledge({ tracker: "local", id: "local-x" });
+    await asAdapter.addLabel({ tracker: "local", id: "local-x" }, "factory:in-progress");
+    await asAdapter.removeLabel({ tracker: "local", id: "local-x" }, "factory:ready");
+    await asAdapter.transition({ tracker: "local", id: "local-x" }, "Done");
+    await asAdapter.assign({ tracker: "local", id: "local-x" }, "ada");
+    await asAdapter.linkPR({ tracker: "local", id: "local-x" }, { repo: "acme/widgets", number: 1 });
+    expect(asAdapter.editComment).toBeUndefined();
+    expect(asAdapter.prHint).toBeUndefined();
   });
 
   it("honours an explicit title and author", async () => {
