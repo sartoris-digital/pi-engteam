@@ -132,7 +132,7 @@ export interface StepResult {
   issues?: string[];
   artifacts?: Record<string, string>; // logical name → absolute path
   evidence?: Partial<EvidenceRecord>; // predicates, commands, synthesized, timedOut
-  pauseForUser?: { reason: "steer" | "approval-needed" | "plan-approval"; packetPath?: string };
+  pauseForUser?: { reason: "steer" | "approval-needed" | "plan-approval" | "handoff"; packetPath?: string };
   escalate?: EscalationCode;
   commit?: { message: string }; // host performs checkpoint commit after the step
   /** Engine addition: cost this step consumed; the engine adds it to RunState.costUsd. */

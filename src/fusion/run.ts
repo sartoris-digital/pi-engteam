@@ -9,6 +9,7 @@ import { mergeSample } from "./sample.js";
 import type { FusionMode, FusionRequest, FusionSlot, SlotResult } from "./types.js";
 import { isFusionMode } from "./types.js";
 import { mergeVeto } from "./veto.js";
+import { degradeSlots, fusionEvidence, withFusionEvidence } from "./degrade.js";
 
 export interface RunFusionOptions {
   req: FusionRequest;
@@ -154,5 +155,25 @@ export async function runFusion(opts: RunFusionOptions): Promise<StepResult> {
     opts.base.nonce,
     "FUSION",
   );
-  return opts.merge(results);
+  const { remaining, discarded, failClosed } = degradeSlots(opts.req.mode, results);
+  if (discarded.length > 0) {
+    opts.emit?.({
+      category: "lifecycle",
+      type: "factory.fusion.degraded",
+      runId: opts.base.runId,
+      step: opts.req.stage,
+      data: { requested: results.map((s) => s.name), ran: remaining.map((s) => s.name) },
+    });
+  }
+  const merged: StepResult = failClosed
+    ? {
+        verdict: "FAIL",
+        issues: discarded.map((s) => `[${s.name}] ${s.error ?? (s.timedOut ? "timed out" : "missing vote")}`),
+      }
+    : opts.merge(remaining);
+  return withFusionEvidence(
+    merged,
+    fusionEvidence({ mode: opts.req.mode, all: results, remaining, discarded }),
+    discarded.some((s) => s.timedOut === true),
+  );
 }

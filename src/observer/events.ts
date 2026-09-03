@@ -32,6 +32,7 @@ export const FACTORY_EVENTS = [
   "stage.start",
   "stage.end",
   "run.published",
+  "factory.fusion.degraded",
 ] as const;
 
 export type FactoryEventName = (typeof FACTORY_EVENTS)[number];

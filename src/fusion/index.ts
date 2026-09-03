@@ -19,3 +19,13 @@ export {
   runFusion,
   type RunFusionOptions,
 } from "./run.js";
+export {
+  degradeSlots,
+  fusionEvidence,
+  isDroppedSlot,
+  resolvePinnedModel,
+  slotEvidence,
+  withFusionEvidence,
+  type FusionEvidence,
+  type FusionEvidenceSlot,
+} from "./degrade.js";

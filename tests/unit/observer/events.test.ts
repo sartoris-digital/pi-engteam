@@ -59,6 +59,7 @@ describe("EventCategory", () => {
       "stage.start",
       "stage.end",
       "run.published",
+      "factory.fusion.degraded",
     ]);
   });
 });
