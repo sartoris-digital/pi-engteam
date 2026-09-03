@@ -1,13 +1,17 @@
+# dependencies and build output
 node_modules/
-dist/*
-# Pre-built server bundle ships with the repo so postinstall works without devDependencies
-!dist/server.cjs
-.worktrees/
+dist/
+coverage/
+*.tsbuildinfo
 
-# Local agent / tooling state — never commit (may contain secrets, e.g. .pi/ vault)
-.pi/
+# local agent and tooling state — never commit (may hold secrets or planning docs)
 .omc/
 .omx/
-.serena/
+.pi/
 .claude/
-fix-plan.md
+.serena/
+.playwright-mcp/
+
+# scratch
+*.png
+.DS_Store
