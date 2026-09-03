@@ -46,6 +46,30 @@ describe("command table", () => {
     expect(A("bash", { command: "ls -la" })).toBeNull();
     expect(A("bash", {})).toBeNull();
   });
+
+  it.each([
+    "git -c x=y push --force origin main",
+    'git push "--force" origin main',
+    "bash -c 'git push \"--force\" origin main'",
+    "git push origin +HEAD:main",
+    "git -C . push --force origin main",
+    "git push --force-with-lease=main origin main",
+    "git push --force-with-lease origin main",
+    "git --git-dir=/repos/app/.git status",
+    "GIT_DIR=/repos/app/.git git status",
+    "GIT_WORK_TREE=/repos/app git status",
+    "git --work-tree=/tmp status",
+  ])("terminates disguised force-push / alternate git dir: %s", (cmd) => {
+    const block = A("bash", { command: cmd });
+    expect(block?.layer, cmd).toBe("A");
+    expect(block?.terminate, cmd).toBe(true);
+  });
+
+  it("terminates an attached write redirect into a protected path", () => {
+    const block = A("bash", { command: `echo pwned>${env.factoryHome}/vault.sqlite` });
+    expect(block?.layer).toBe("A");
+    expect(block?.terminate).toBe(true);
+  });
 });
 
 describe("controllerHardBlock", () => {

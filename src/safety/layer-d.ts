@@ -2,10 +2,21 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { HARMLESS_REDIRECT_TARGETS, classifyBash } from "./classifier.js";
+import { HARMLESS_REDIRECT_TARGETS, classifyBash, fsEffectsKnown } from "./classifier.js";
 import type { Block, RunContext } from "./context.js";
 import { defaultPathEnv, expandHome, isUnder, realish, type PathEnv } from "./paths.js";
-import { GROUP_PLACEHOLDER, SUBST_PLACEHOLDER, isWriteRedirect, splitSegments, stripAssignments, tokenize } from "./shell.js";
+import {
+  GROUP_PLACEHOLDER,
+  SUBST_PLACEHOLDER,
+  isWriteRedirect,
+  nestedShellCommands,
+  outputFlagTargets,
+  splitSegments,
+  stripAssignments,
+  tokenize,
+  unquote,
+  unsupportedShellConstruct,
+} from "./shell.js";
 
 export type BashPolicy = "none" | "read-only" | "full";
 
@@ -208,29 +219,48 @@ export function domainBlock(
       const c = classifyBash(command, { cwd: ctx.workspaceDir });
       return c.class === "safe" ? null : D(`${ctx.agent} bash is read-only: ${c.reason}`);
     }
-    for (const segment of splitSegments(command)) {
-      const { words, redirects } = tokenize(segment);
-      for (const r of redirects) {
-        if (!isWriteRedirect(r.op) || HARMLESS_REDIRECT_TARGETS.has(r.target)) continue;
-        const block = checkWrite(r.target);
-        if (block !== null) return block;
-      }
-      const cmd = stripAssignments(words);
-      const verb = cmd[0];
-      if (verb === "tee") {
-        for (const t of cmd.slice(1).filter((a) => !a.startsWith("-") && !HARMLESS_REDIRECT_TARGETS.has(a))) {
+    const confineCommand = (raw: string, depth: number): Block | null => {
+      const issue = unsupportedShellConstruct(raw);
+      if (issue !== null) return D(`effects cannot be proven confined: unsupported shell construct (${issue})`);
+      for (const segment of splitSegments(raw)) {
+        const { words, redirects } = tokenize(segment);
+        for (const r of redirects) {
+          if (!isWriteRedirect(r.op) || HARMLESS_REDIRECT_TARGETS.has(r.target)) continue;
+          const block = checkWrite(r.target);
+          if (block !== null) return block;
+        }
+        const cmd = stripAssignments(words);
+        const verb = unquote(cmd[0] ?? "");
+        if (depth < 4) {
+          for (const nested of nestedShellCommands(cmd)) {
+            const nestedBlock = confineCommand(nested, depth + 1);
+            if (nestedBlock !== null) return nestedBlock;
+          }
+        }
+        if (verb.length > 0 && !fsEffectsKnown(verb, cmd)) {
+          return D(`effects cannot be proven confined: ${verb}`);
+        }
+        for (const t of outputFlagTargets(cmd, verb.toLowerCase())) {
+          if (HARMLESS_REDIRECT_TARGETS.has(t)) continue;
           const block = checkWrite(t);
           if (block !== null) return block;
         }
-      }
-      if (verb === "rm") {
-        for (const t of cmd.slice(1).filter((a) => !a.startsWith("-"))) {
-          const block = checkDelete(t);
-          if (block !== null) return block;
+        if (verb === "tee") {
+          for (const t of cmd.slice(1).filter((a) => !unquote(a).startsWith("-") && !HARMLESS_REDIRECT_TARGETS.has(unquote(a)))) {
+            const block = checkWrite(unquote(t));
+            if (block !== null) return block;
+          }
+        }
+        if (verb === "rm") {
+          for (const t of cmd.slice(1).filter((a) => !unquote(a).startsWith("-"))) {
+            const block = checkDelete(unquote(t));
+            if (block !== null) return block;
+          }
         }
       }
-    }
-    return null;
+      return null;
+    };
+    return confineCommand(command, 0);
   }
   return null;
 }

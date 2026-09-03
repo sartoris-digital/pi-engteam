@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_DEVICES,
@@ -76,5 +79,34 @@ describe("isProtectedPath", () => {
     expect(P(`${ctx.projectRoot}/.git/HEAD`).blocked).toBe(true);
     expect(P(`${env.factoryHome}/worktrees/app/other-ticket/src/a.ts`).blocked).toBe(true);
     expect(P(`${ctx.workspaceDir}/src/a.ts`).blocked).toBe(false);
+  });
+
+  it("protects vault, _factory, other runs and sibling worktrees when factoryHome is a symlink", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "pi-sdlc-paths-link-"));
+    try {
+      const realFactory = join(tmp, "real-factory");
+      const linkFactory = join(tmp, "link-factory");
+      await mkdir(join(realFactory, "runs", "_factory"), { recursive: true });
+      await mkdir(join(realFactory, "worktrees", "other-ticket"), { recursive: true });
+      await writeFile(join(realFactory, "vault.sqlite"), "vault");
+      await writeFile(join(realFactory, "runs", "_factory", "queue.json"), "{}");
+      await writeFile(join(realFactory, "worktrees", "other-ticket", "src.ts"), "x");
+      await symlink(realFactory, linkFactory);
+      const linkedEnv = fakePathEnv({ home: join(tmp, "home"), factoryHome: linkFactory });
+      const linkedCtx = fakeRunContext({
+        workspaceDir: join(tmp, "ws"),
+        projectRoot: join(tmp, "main"),
+        runDir: join(tmp, "unrelated-run"),
+        runsDir: join(tmp, "unrelated-runs"),
+      });
+      const Q = (p: string) => isProtectedPath(p, linkedCtx, linkedEnv);
+      expect(Q(join(linkFactory, "vault.sqlite")).blocked).toBe(true);
+      expect(Q(join(realFactory, "vault.sqlite")).blocked).toBe(true);
+      expect(Q(join(linkFactory, "runs", "_factory", "queue.json")).blocked).toBe(true);
+      expect(Q(join(realFactory, "runs", "run-other", "state.json")).blocked).toBe(true);
+      expect(Q(join(linkFactory, "worktrees", "other-ticket", "src.ts")).blocked).toBe(true);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 });

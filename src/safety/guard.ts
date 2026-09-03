@@ -38,7 +38,7 @@ export interface InstalledGuard {
   evaluate(tool: string, input: Record<string, unknown>): Block | null;
 }
 
-const POLICY_GATED_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
+const POLICY_GATED_TOOLS = new Set(["write", "edit", "bash", "powershell", "read", "grep", "glob", "find", "ls"]);
 
 /** Synchronous run-secret read. Named `…Sync` so it never collides with the engine's async `readRunSecret`. */
 export function readRunSecretSync(runDir: string): string | null {

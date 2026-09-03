@@ -214,6 +214,18 @@ describe("domainBlock: bash", () => {
     expect(D("bash", {}, implementer)?.layer).toBe("D");
   });
 
+  it("confines attached redirects and write-flags, and refuses unprovable effects", () => {
+    expect(bash("echo pwned>src/a.ts", implementer)).toBeNull();
+    expect(bash("echo pwned>/tmp/out", implementer)?.layer).toBe("D");
+    expect(bash("sort -o /tmp/out package.json", implementer)?.layer).toBe("D");
+    expect(bash("sort -o src/a.ts package.json", implementer)).toBeNull();
+    expect(bash("git diff --output=/tmp/out", implementer)?.layer).toBe("D");
+    expect(bash("tsc --outDir /tmp/out", implementer)?.layer).toBe("D");
+    expect(bash("pnpm run anything", implementer)?.reason).toMatch(/confin/);
+    expect(bash("echo $(gh pr create --fill)", implementer)?.layer).toBe("D");
+    expect(bash("echo ok & rm -rf src", implementer)?.layer).toBe("D");
+  });
+
   it("ignores other tools", () => {
     expect(D("VerdictEmit", { step: "x" }, implementer)).toBeNull();
   });

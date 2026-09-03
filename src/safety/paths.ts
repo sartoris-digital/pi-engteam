@@ -106,7 +106,9 @@ function judgeException(rel: string, agent: string): boolean {
 }
 
 export function isProtectedPath(p: string, ctx: RunContext, env: PathEnv = defaultPathEnv()): PathCheck {
-  const expanded = expandHome(p.replace(/\$\{HOME\}|\$HOME/g, env.home), env.home);
+  const homeAbs = realish(resolve(env.home));
+  const factoryAbs = realish(resolve(env.factoryHome));
+  const expanded = expandHome(p.replace(/\$\{HOME\}|\$HOME/g, homeAbs), homeAbs);
   const abs = realish(resolve(expanded.startsWith("/") ? expanded : resolve(ctx.workspaceDir, expanded)));
   const runAbs = realish(resolve(ctx.runDir));
   const workspaceAbs = realish(resolve(ctx.workspaceDir));
@@ -120,7 +122,7 @@ export function isProtectedPath(p: string, ctx: RunContext, env: PathEnv = defau
     if (isUnder(abs, absProt)) return hit(`protected path ${absProt}`);
   }
   for (const rel of PROTECTED_HOME_PATTERNS) {
-    if (isUnder(abs, `${env.home}/${rel}`)) return hit(`protected credential path ~/${rel}`);
+    if (isUnder(abs, `${homeAbs}/${rel}`)) return hit(`protected credential path ~/${rel}`);
   }
 
   // Run-dir exceptions (judge roots, verdict slot already handled) must win over the
@@ -140,7 +142,7 @@ export function isProtectedPath(p: string, ctx: RunContext, env: PathEnv = defau
     }
   }
 
-  if (isUnder(abs, env.factoryHome) && !isUnder(abs, runAbs) && !isUnder(abs, workspaceAbs)) {
+  if (isUnder(abs, factoryAbs) && !isUnder(abs, runAbs) && !isUnder(abs, workspaceAbs)) {
     return hit(`the factory state dir ${env.factoryHome} is host-only`);
   }
   for (const pat of SECRET_FILE_PATTERNS) {
@@ -153,7 +155,7 @@ export function isProtectedPath(p: string, ctx: RunContext, env: PathEnv = defau
   if (isUnder(abs, realish(resolve(ctx.projectRoot))) && !isUnder(abs, workspaceAbs)) {
     return hit("the main checkout is outside the worktree");
   }
-  const worktrees = `${env.factoryHome}/worktrees`;
+  const worktrees = `${factoryAbs}/worktrees`;
   if (isUnder(abs, worktrees) && !isUnder(abs, workspaceAbs)) {
     return hit("sibling factory worktrees are off-limits");
   }

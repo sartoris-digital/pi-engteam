@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson } from "../config/json.js";
 
@@ -82,8 +82,17 @@ export function readTokenFile(runDir: string, tokenId: string): ApprovalToken | 
 export function consumeToken(runDir: string, tokenId: string): void {
   try {
     unlinkSync(tokenPath(runDir, tokenId));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
+function restoreClaim(claimed: string, src: string): void {
+  try {
+    renameSync(claimed, src);
   } catch {
-    /* missing is fine */
+    /* lost to a concurrent claim or already gone */
   }
 }
 
@@ -99,11 +108,35 @@ export function fileTokenSource(runDir: string, secret: string | null, runId: st
       }
       for (const name of names) {
         if (!name.endsWith(".json")) continue;
-        const token = readTokenFile(runDir, name.slice(0, -".json".length));
-        if (token === null) continue;
-        if (token.runId !== runId || token.op !== op || token.argsHash !== argsHash) continue;
-        if (!verifyToken(secret, token)) continue;
-        consumeToken(runDir, token.tokenId);
+        const tokenId = name.slice(0, -".json".length);
+        if (tokenId.length === 0) continue;
+        const src = tokenPath(runDir, tokenId);
+        const claimed = `${src}.${randomBytes(8).toString("hex")}.claim`;
+        try {
+          renameSync(src, claimed);
+        } catch {
+          continue;
+        }
+        let token: ApprovalToken;
+        try {
+          token = JSON.parse(readFileSync(claimed, "utf8")) as ApprovalToken;
+        } catch {
+          try { unlinkSync(claimed); } catch { /* ignore poison */ }
+          continue;
+        }
+        if (token.tokenId !== tokenId) {
+          restoreClaim(claimed, src);
+          continue;
+        }
+        if (token.runId !== runId || token.op !== op || token.argsHash !== argsHash || !verifyToken(secret, token)) {
+          restoreClaim(claimed, src);
+          continue;
+        }
+        try {
+          unlinkSync(claimed);
+        } catch {
+          return null;
+        }
         return token;
       }
       return null;

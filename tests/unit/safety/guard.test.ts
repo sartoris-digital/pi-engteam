@@ -124,9 +124,40 @@ describe("installSafetyGuard", () => {
     const guard = installSafetyGuard(pi, ctx, { tokens: NO_TOKENS, env });
     expect(guard?.policyError).toMatch(/nonexistent/);
     const handler = handlers[0] as Handler;
-    expect(await handler(toolCall("read", { path: "src/a.ts" }), {})).toBeUndefined();
-    expect((await handler(toolCall("write", { path: "src/a.ts", content: "" }), {}))?.reason).toMatch(/^\[Layer D\] policy unavailable/);
-    expect((await handler(toolCall("bash", { command: "ls" }), {}))?.reason).toMatch(/policy unavailable/);
+    for (const tool of ["read", "grep", "glob", "find", "ls", "write", "edit", "bash"]) {
+      const input = tool === "bash" ? { command: "ls" } : { path: "src/a.ts" };
+      expect((await handler(toolCall(tool, input), {}))?.reason, tool).toMatch(/^\[Layer D\] policy unavailable/);
+    }
+  });
+
+  it("fails closed on malformed YAML and SHA mismatch for every read and write tool", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "pi-sdlc-policy-err-"));
+    try {
+      const badFile = join(tmp, "bad.yaml");
+      await writeFile(badFile, "schemaVersion: 2\nagents: {}\n");
+      const goodText = ["schemaVersion: 1", "agents:", "  implementer:", '    upsert: ["src/"]', "    bash: full", ""].join("\n");
+      const goodFile = join(tmp, "good.yaml");
+      await writeFile(goodFile, goodText);
+      const sha = createHash("sha256").update(goodText).digest("hex");
+
+      for (const ctx of [
+        fakeRunContext({ policyFile: badFile, policySha: sha }),
+        fakeRunContext({ policyFile: goodFile, policySha: "0".repeat(64) }),
+      ]) {
+        const { pi, handlers } = fakePi();
+        const guard = installSafetyGuard(pi, ctx, { tokens: NO_TOKENS, env });
+        expect(guard?.policyError).toMatch(/\S/);
+        const handler = handlers[0] as Handler;
+        expect((await handler(toolCall("read", { path: "/Users/op/private-notes.txt" }), {}))?.reason).toMatch(/policy unavailable/);
+        for (const tool of ["grep", "glob", "find", "ls"]) {
+          expect((await handler(toolCall(tool, { path: "src/a.ts" }), {}))?.reason, tool).toMatch(/policy unavailable/);
+        }
+        expect((await handler(toolCall("write", { path: "src/a.ts", content: "" }), {}))?.reason).toMatch(/policy unavailable/);
+        expect((await handler(toolCall("bash", { command: "ls" }), {}))?.reason).toMatch(/policy unavailable/);
+      }
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when the run secret is missing: destructive commands are always denied", async () => {
@@ -153,6 +184,79 @@ describe("installControllerHardBlockers", () => {
     expect(await handler(toolCall("bash", { command: "rm -rf /" }), {})).toBeUndefined();
     expect(await handler(toolCall("write", { path: "/repos/app/src/a.ts", content: "" }), {})).toBeUndefined();
     expect(await handler(toolCall("other_extension_tool", { x: 1 }), {})).toBeUndefined();
+  });
+});
+
+describe("codex G2 installed-guard regressions", () => {
+  it("blocks unsupported shell constructs for a read-only reviewer", async () => {
+    const { pi, handlers } = fakePi();
+    const ctx = fakeRunContext({ agent: "reviewer", stage: "review" });
+    installSafetyGuard(pi, ctx, {
+      policy: { readRoots: ["src/"], upsertRoots: [`${ctx.runDir}/review.md`], deleteRoots: [], denyUpsert: [], bashPolicy: "read-only" },
+      tokens: NO_TOKENS,
+      env,
+    });
+    const handler = handlers[0] as Handler;
+    for (const cmd of [
+      "echo ok & rm -rf src",
+      "echo ok\ngit push origin HEAD",
+      "echo $(gh pr create --fill)",
+      "echo `env`",
+    ]) {
+      const result = await handler(toolCall("bash", { command: cmd }), {});
+      expect(result?.block, cmd).toBe(true);
+      expect(result?.reason, cmd).toMatch(/^\[Layer [ABCD]\]/);
+    }
+  });
+
+  it("blocks attached redirects and unconfined write-flag verbs", async () => {
+    const { pi, handlers } = fakePi();
+    const ctx = fakeRunContext();
+    installSafetyGuard(pi, ctx, { policy: IMPLEMENTER_POLICY, tokens: NO_TOKENS, env });
+    const handler = handlers[0] as Handler;
+    for (const cmd of [
+      "echo pwned>/tmp/out",
+      `echo pwned>${env.factoryHome}/vault.sqlite`,
+      "sort -o /tmp/out package.json",
+      "git diff --output=/tmp/out",
+      "tsc --outDir /tmp/out",
+      "pnpm run anything",
+    ]) {
+      const result = await handler(toolCall("bash", { command: cmd }), {});
+      expect(result?.block, cmd).toBe(true);
+    }
+  });
+
+  it("does not let a matching token override Layer A force-push / git-dir", async () => {
+    const { pi, handlers } = fakePi();
+    const ctx = fakeRunContext();
+    const always: typeof NO_TOKENS = {
+      take: () => ({
+        runId: "run-0001",
+        tokenId: "stub",
+        op: "bash",
+        argsHash: "0".repeat(64),
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        pauseEpoch: 0,
+        sig: "0".repeat(64),
+      }),
+    };
+    installSafetyGuard(pi, ctx, { policy: IMPLEMENTER_POLICY, tokens: always, env });
+    const handler = handlers[0] as Handler;
+    for (const cmd of [
+      "git -c x=y push --force origin main",
+      'git push "--force" origin main',
+      "bash -c 'git push \"--force\" origin main'",
+      "git push origin +HEAD:main",
+      "git push --force-with-lease=main origin main",
+      "git --git-dir=/repos/app/.git status",
+      "GIT_DIR=/repos/app/.git git status",
+    ]) {
+      const result = await handler(toolCall("bash", { command: cmd }), {});
+      expect(result?.block, cmd).toBe(true);
+      expect(result?.terminate, cmd).toBe(true);
+      expect(result?.reason, cmd).toMatch(/^\[Layer A\]/);
+    }
   });
 });
 

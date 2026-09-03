@@ -30,4 +30,22 @@ describe("classifyBash", () => {
     expect(HARMLESS_REDIRECT_TARGETS.has("/dev/null")).toBe(true);
     expect(C("x".repeat(MAX_COMMAND_BYTES + 1)).class).toBe("destructive");
   });
+
+  it.each([
+    "echo ok & rm -rf src",
+    "echo ok\ngit push origin HEAD",
+    "echo $(gh pr create --fill)",
+    "echo `env`",
+    "cat <(echo x)",
+    "echo pwned>/tmp/out",
+    "sort -o /tmp/out package.json",
+    "git diff --output=/tmp/out",
+    "tsc --outDir /tmp/out",
+    "pnpm run anything",
+    "npm run anything",
+  ])("destructive (unknown / unconfined effects): %s", (cmd) => {
+    const c = C(cmd);
+    expect(c.class, cmd).toBe("destructive");
+    expect(c.reason, cmd).toMatch(/\S/);
+  });
 });

@@ -33,6 +33,20 @@ describe("bash default-deny (spec §10.5)", () => {
     (cmd) => expect(C("bash", { command: cmd }), cmd).toBeNull(),
   );
 
+  it.each([
+    "echo ok & rm -rf src",
+    "echo ok\ngit push origin HEAD",
+    "echo $(gh pr create --fill)",
+    "echo `env`",
+    "echo pwned>/tmp/out",
+    "sort -o /tmp/out package.json",
+    "git diff --output=/tmp/out",
+    "tsc --outDir /tmp/out",
+    "pnpm run anything",
+  ])("blocks unconfined / attached-write %s without a token", (cmd) => {
+    expect(C("bash", { command: cmd })?.layer, cmd).toBe("C");
+  });
+
   it("never classifies powershell safe and refuses a missing command", () => {
     expect(C("powershell", { command: "Get-ChildItem" })?.layer).toBe("C");
     expect(C("bash", {})?.layer).toBe("C");

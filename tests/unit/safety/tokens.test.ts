@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -89,6 +90,59 @@ describe("fileTokenSource", () => {
       expect(tokens.take("bash", argsHash)?.op).toBe("bash");
       expect(tokens.take("bash", argsHash)).toBeNull();
       expect(fileTokenSource(runDir, null, "run-0001").take("bash", argsHash)).toBeNull();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not return a token stored under a mismatched filename", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "pi-sdlc-tokens-alias-"));
+    try {
+      const runDir = join(tmp, "run-0001");
+      await mkdir(runDir, { recursive: true });
+      const argsHash = hashArgs("bash", { command: "git commit -m x" });
+      mintToken(runDir, SECRET, { op: "bash", argsHash, ttlSeconds: 60, runId: "run-0001", tokenId: "real-id" });
+      const granted = join(runDir, "approvals", "granted");
+      await rename(join(granted, "real-id.json"), join(granted, "alias.json"));
+      const tokens = fileTokenSource(runDir, SECRET, "run-0001");
+      expect(tokens.take("bash", argsHash)).toBeNull();
+      expect(existsSync(join(granted, "alias.json"))).toBe(true);
+      const stored = JSON.parse(await readFile(join(granted, "alias.json"), "utf8")) as ApprovalToken;
+      expect(stored.tokenId).toBe("real-id");
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the granted file cannot be claimed or unlinked", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "pi-sdlc-tokens-unlink-"));
+    const granted = join(tmp, "run-0001", "approvals", "granted");
+    try {
+      const runDir = join(tmp, "run-0001");
+      await mkdir(runDir, { recursive: true });
+      const argsHash = hashArgs("bash", { command: "git commit -m x" });
+      const token = mintToken(runDir, SECRET, { op: "bash", argsHash, ttlSeconds: 60, runId: "run-0001", tokenId: "tok-lock" });
+      await chmod(granted, 0o555);
+      expect(() => consumeToken(runDir, token.tokenId)).toThrow();
+      const tokens = fileTokenSource(runDir, SECRET, "run-0001");
+      expect(tokens.take("bash", argsHash)).toBeNull();
+      expect(tokens.take("bash", argsHash)).toBeNull();
+    } finally {
+      await chmod(granted, 0o700).catch(() => undefined);
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("claims a granted file so a second consumer cannot replay it", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "pi-sdlc-tokens-race-"));
+    try {
+      const runDir = join(tmp, "run-0001");
+      await mkdir(runDir, { recursive: true });
+      const argsHash = hashArgs("bash", { command: "git commit -m x" });
+      mintToken(runDir, SECRET, { op: "bash", argsHash, ttlSeconds: 60, runId: "run-0001", tokenId: "tok-race" });
+      await rename(tokenPath(runDir, "tok-race"), `${tokenPath(runDir, "tok-race")}.other.claim`);
+      const tokens = fileTokenSource(runDir, SECRET, "run-0001");
+      expect(tokens.take("bash", argsHash)).toBeNull();
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }

@@ -1,20 +1,69 @@
 import { resolve } from "node:path";
 import type { Block, RunContext } from "./context.js";
 import { defaultPathEnv, expandHome, isProtectedPath, isUnder, realish, type PathEnv } from "./paths.js";
-import { isWriteRedirect, splitSegments, stripAssignments, tokenize } from "./shell.js";
+import {
+  assignmentName,
+  isWriteRedirect,
+  nestedShellCommands,
+  splitSegments,
+  stripAssignments,
+  tokenize,
+  unquote,
+} from "./shell.js";
 
 export const PATH_TOOLS: ReadonlySet<string> = new Set(["read", "write", "edit", "grep", "glob", "find", "ls"]);
 export const SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "powershell"]);
 
 const HOME_VAR = /\$\{HOME\}|\$HOME/g;
+const GIT_ENV = new Set(["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"]);
+const MAX_NEST = 4;
 
 const A = (reason: string): Block => ({ block: true, layer: "A", reason: `[Layer A] ${reason}`, terminate: true });
 
 function isDangerousRm(command: string): boolean {
   return /rm\s+(-\w+\s+)*-[rf]{1,2}\s+(\/|~|~\/|\*|\$HOME|\.\.)(\s|$)/.test(command);
 }
-function isForcePush(command: string): boolean {
-  return /git\s+push\s+.*(?:--force(?:-with-lease)?|-f)(?:\s|$)/.test(command);
+
+function dequote(command: string): string {
+  return command.replace(/['"`]/g, "");
+}
+
+function isForcePushText(command: string): boolean {
+  const s = dequote(command);
+  if (/\bgit\b[\s\S]*?\bpush\b[\s\S]*?(?:--force(?:-with-lease)?(?:=[^\s]*)?|(?:^|[\s])-f(?:\s|$))/.test(s)) return true;
+  if (/\bgit\b[\s\S]*?\bpush\b[\s\S]*?\+[A-Za-z0-9_/~.^${}-]*:/.test(s)) return true;
+  return false;
+}
+
+function isAlternateGitDirText(command: string): boolean {
+  const s = dequote(command);
+  if (/\bGIT_DIR=/.test(s) || /\bGIT_WORK_TREE=/.test(s) || /\bGIT_COMMON_DIR=/.test(s) || /\bGIT_OBJECT_DIRECTORY=/.test(s)) {
+    return true;
+  }
+  return /(?:^|\s)--git-dir(?:\s|=|$)/.test(s) || /(?:^|\s)--work-tree(?:\s|=|$)/.test(s);
+}
+
+function gitForceFromArgv(cmd: string[]): boolean {
+  const words = cmd.map(unquote);
+  let i = 1;
+  while (i < words.length) {
+    const w = words[i] as string;
+    if (w === "-C" || w === "-c") { i += 2; continue; }
+    if (w.startsWith("--git-dir") || w.startsWith("--work-tree") || w.startsWith("--namespace")) {
+      i += w.includes("=") ? 1 : 2;
+      continue;
+    }
+    if (w.startsWith("-")) { i++; continue; }
+    break;
+  }
+  if (words[i] !== "push") return false;
+  for (const w of words.slice(i + 1)) {
+    if (w === "--force" || w === "-f" || w === "--force-with-lease" || w.startsWith("--force-with-lease=") || w.startsWith("--force=")) {
+      return true;
+    }
+    if (w.startsWith("+") && w.includes(":")) return true;
+  }
+  return false;
 }
 
 function pathWord(word: string, env: PathEnv): string | null {
@@ -31,45 +80,69 @@ function protectedWord(word: string, ctx: RunContext, env: PathEnv): string | nu
   return check.blocked ? (check.reason ?? candidate) : null;
 }
 
-export function commandBlock(command: string, ctx: RunContext, env: PathEnv = defaultPathEnv()): Block | null {
-  const dequoted = command.replace(/['"`]/g, "");
+function segmentBlock(segment: string, ctx: RunContext, env: PathEnv, depth: number): Block | null {
+  const { words, redirects } = tokenize(segment);
+  for (const word of words) {
+    const name = assignmentName(word);
+    if (name !== null && GIT_ENV.has(name)) return A("GIT_DIR / GIT_WORK_TREE is never allowed");
+    const flag = unquote(word);
+    if (flag === "--git-dir" || flag.startsWith("--git-dir=") || flag === "--work-tree" || flag.startsWith("--work-tree=")) {
+      return A("git --git-dir / --work-tree is never allowed");
+    }
+  }
+  const cmd = stripAssignments(words);
+  if (gitForceFromArgv(cmd)) return A("force-push is never allowed");
+  if (depth < MAX_NEST) {
+    for (const nested of nestedShellCommands(cmd)) {
+      const hit = commandBlock(nested, ctx, env, depth + 1);
+      if (hit !== null) return hit;
+    }
+  }
+  const verb = unquote(cmd[0] ?? "");
+  if (verb === "launchctl" && ["load", "unload", "enable", "start", "submit", "kickstart", "bootout"].includes(unquote(cmd[1] ?? ""))) {
+    return A("launchd modification is never allowed");
+  }
+  if (verb === "systemctl" && ["enable", "disable", "start", "stop", "restart", "daemon-reload", "mask", "unmask", "edit", "link"].includes(unquote(cmd[1] ?? ""))) {
+    return A("systemd modification is never allowed");
+  }
+  if (verb === "crontab" && !cmd.some((w) => unquote(w) === "-l")) return A("crontab modification is never allowed");
+  if (verb === "dd" && cmd.some((w) => /^of=\/dev\//.test(unquote(w)))) return A("writing to a device is never allowed");
+  if (
+    /^mkfs(\.|$)/.test(verb) || verb === "fdisk" || verb === "parted" || verb === "shred" || verb === "wipefs" ||
+    (verb === "diskutil" && cmd.some((w) => /^(erase|partition|reformat|secureErase|zeroDisk|randomDisk)/i.test(unquote(w))))
+  ) {
+    return A("disk formatting is never allowed");
+  }
+  for (const word of cmd.slice(1)) {
+    const hit = protectedWord(unquote(word), ctx, env);
+    if (hit !== null) return A(`protected path in command: ${hit}`);
+  }
+  for (const r of redirects) {
+    if (!isWriteRedirect(r.op)) continue;
+    const hit = protectedWord(r.target, ctx, env);
+    if (hit !== null) return A(`write redirect to protected path: ${hit}`);
+  }
+  return null;
+}
+
+export function commandBlock(command: string, ctx: RunContext, env: PathEnv = defaultPathEnv(), depth = 0): Block | null {
+  const dequoted = dequote(command);
   if (/(^|[\/\s])_controller([\/\s]|$)/.test(command) || /(^|[\/\s])_controller([\/\s]|$)/.test(dequoted)) {
     return A("the _controller approval context is never allowed");
   }
   if (/tasks\.json/i.test(command) || /tasks\.json/i.test(dequoted)) return A("tasks.json is host-owned");
   if (/\.pi\/(?:sdlc-factory|engineering-team)\/expertise/i.test(command)) return A("expertise files are host-owned");
-  if (isDangerousRm(command)) return A("destructive rm of a root or home path is never allowed");
-  if (isForcePush(command)) return A("force-push is never allowed");
-  if (/(?:^|[;&|]\s*)sudo\s/.test(command)) return A("sudo is never allowed");
-  if (/(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(command)) return A("publish is never allowed");
+  if (isDangerousRm(command) || isDangerousRm(dequoted)) return A("destructive rm of a root or home path is never allowed");
+  if (isForcePushText(command)) return A("force-push is never allowed");
+  if (isAlternateGitDirText(command)) return A("git --git-dir / GIT_DIR is never allowed");
+  if (/(?:^|[;&|\n]\s*)sudo\s/.test(command) || /(?:^|[;&|\n]\s*)sudo\s/.test(dequoted)) return A("sudo is never allowed");
+  if (/(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(command) || /(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(dequoted)) {
+    return A("publish is never allowed");
+  }
 
   for (const segment of splitSegments(command)) {
-    const { words, redirects } = tokenize(segment);
-    const cmd = stripAssignments(words);
-    const verb = cmd[0] ?? "";
-    if (verb === "launchctl" && ["load", "unload", "enable", "start", "submit", "kickstart", "bootout"].includes(cmd[1] ?? "")) {
-      return A("launchd modification is never allowed");
-    }
-    if (verb === "systemctl" && ["enable", "disable", "start", "stop", "restart", "daemon-reload", "mask", "unmask", "edit", "link"].includes(cmd[1] ?? "")) {
-      return A("systemd modification is never allowed");
-    }
-    if (verb === "crontab" && !cmd.includes("-l")) return A("crontab modification is never allowed");
-    if (verb === "dd" && cmd.some((w) => /^of=\/dev\//.test(w))) return A("writing to a device is never allowed");
-    if (
-      /^mkfs(\.|$)/.test(verb) || verb === "fdisk" || verb === "parted" || verb === "shred" || verb === "wipefs" ||
-      (verb === "diskutil" && cmd.some((w) => /^(erase|partition|reformat|secureErase|zeroDisk|randomDisk)/i.test(w)))
-    ) {
-      return A("disk formatting is never allowed");
-    }
-    for (const word of cmd.slice(1)) {
-      const hit = protectedWord(word, ctx, env);
-      if (hit !== null) return A(`protected path in command: ${hit}`);
-    }
-    for (const r of redirects) {
-      if (!isWriteRedirect(r.op)) continue;
-      const hit = protectedWord(r.target, ctx, env);
-      if (hit !== null) return A(`write redirect to protected path: ${hit}`);
-    }
+    const hit = segmentBlock(segment, ctx, env, depth);
+    if (hit !== null) return hit;
   }
   return null;
 }
