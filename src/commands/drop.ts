@@ -10,8 +10,8 @@ export async function runDrop(parsed: ParsedFactoryArgs, deps: FactoryDeps): Pro
   await runCancel(parsed, deps);
   const queue = await readQueue(deps.runsDir);
   const entry = findQueueEntry(queue, ref);
-  const ws = entry?.workspace;
-  if (ws === undefined) return { ref: ref, removed: false };
+  if (entry === undefined || entry.workspace === undefined) return { ref, removed: false };
+  const ws = entry.workspace;
   const workspace = {
     provider: "git" as const,
     path: ws.path,

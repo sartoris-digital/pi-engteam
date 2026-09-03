@@ -52,7 +52,7 @@ describe("lane-control verbs", () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  function deps(over: Partial<FactoryDeps> = {}): FactoryDeps {
+  function deps(over: object = {}): FactoryDeps {
     return {
       home,
       runsDir: runs,
@@ -89,7 +89,7 @@ describe("lane-control verbs", () => {
         },
         registerWorkflow: () => undefined,
       },
-    } as Partial<FactoryDeps>));
+    }));
     expect(state.status).toBe("running");
     expect(from).toEqual(["implement"]);
     const notes = await readFile(humanInputPath(join(runs, "r1"), 1), "utf8");
@@ -101,7 +101,7 @@ describe("lane-control verbs", () => {
     await writeQueue(runs, { schemaVersion: 1, entries: [entry()] });
     await runCancel(parseFactoryArgs("cancel local-1"), deps({
       provider: { remove: async () => { removed += 1; } },
-    } as Partial<FactoryDeps>));
+    }));
     expect((await readQueue(runs)).entries[0]?.state).toBe("closed");
     expect(removed).toBe(0);
   });
@@ -114,7 +114,7 @@ describe("lane-control verbs", () => {
     });
     const out = await runDrop(parseFactoryArgs("drop local-1"), deps({
       provider: { remove: async (ws: { path: string }) => { removed.push(ws.path); } },
-    } as Partial<FactoryDeps>));
+    }));
     expect(out.removed).toBe(true);
     expect(removed).toEqual(["/ws"]);
     expect((await readQueue(runs)).entries[0]?.state).toBe("closed");
@@ -129,7 +129,7 @@ describe("lane-control verbs", () => {
           labels.push(label);
         },
       },
-    } as Partial<FactoryDeps>));
+    }));
     expect(out.state).toBe("queued");
     expect(labels).toEqual(["factory:abandoned"]);
   });
@@ -166,7 +166,7 @@ describe("lane-control verbs", () => {
     });
     const out = await runGc(parseFactoryArgs("gc"), deps({
       provider: { remove: async (ws: { path: string }) => { removed.push(ws.path); } },
-    } as Partial<FactoryDeps>));
+    }));
     expect(out.removed).toBe(1);
     expect(removed).toEqual(["/old"]);
   });
@@ -190,7 +190,7 @@ describe("lane-control verbs", () => {
         },
         registerWorkflow: () => undefined,
       },
-    } as Partial<FactoryDeps>));
+    }));
     expect(actions).toEqual(["replan"]);
     const raw = await readFile(join(runs, "r1", "steer-decision.json"), "utf8");
     expect(raw).toMatch(/"action": "replan"/);

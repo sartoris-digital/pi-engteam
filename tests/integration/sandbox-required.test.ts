@@ -80,7 +80,7 @@ describe("sandbox: required", () => {
       const runDir = join(home, "runs", "run-sb");
       const cwd = join(home, "ws");
       await mkdir(cwd, { recursive: true });
-      const profile = profileForRequest(makeWorkerRequest({ runId: "run-sb", runDir, cwd }), home);
+      const profile = profileForRequest(makeWorkerRequest({ runId: "run-sb", runDir, cwd }), { home });
       wrapArgv(["pi", "-p"], profile);
       const expected = process.platform === "linux" ? join(runDir, "sandbox.bwrap") : join(runDir, "sandbox.sb");
       await access(expected);
