@@ -66,6 +66,20 @@ describe("buildWorkerEnv", () => {
     }
   });
 
+  it("does not pass a parent-env secret:FOO value into the worker env", () => {
+    const secretValue = "super-secret-foo-value";
+    const base: NodeJS.ProcessEnv = {
+      ...LEAKY_BASE,
+      FOO: secretValue,
+      SECRET_FOO: "secret:FOO",
+    };
+    const env = buildWorkerEnv(base, makeWorkerRequest(), { scrub: createScrubDirs(tmp) });
+    expect(env).not.toHaveProperty("FOO");
+    expect(env).not.toHaveProperty("SECRET_FOO");
+    expect(JSON.stringify(env)).not.toContain(secretValue);
+    expect(JSON.stringify(env)).not.toContain("secret:FOO");
+  });
+
   it("copies the passthrough basics and the allowlisted provider key", () => {
     const env = buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), { scrub: createScrubDirs(tmp) });
     expect(env.PATH).toBe("/usr/bin:/bin");
