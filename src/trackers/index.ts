@@ -28,3 +28,5 @@ export { AzureDevOpsAdapter, parseAzureDevOpsRef, ticketLinkLine, workItemId } f
 export type { AzureDevOpsAdapterOptions } from "./azure-devops.js";
 export { JiraAdapter, parseJiraRef, ticketLinkLine as jiraTicketLinkLine } from "./jira.js";
 export type { JiraAdapterOptions, JiraCommentMode } from "./jira.js";
+export { GitLabAdapter, parseGitLabRef } from "./gitlab.js";
+export type { GitLabAdapterOptions } from "./gitlab.js";
