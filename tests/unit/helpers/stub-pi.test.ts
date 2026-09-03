@@ -343,4 +343,38 @@ describe("stub-pi", () => {
       await h.cleanup();
     }
   });
+
+  it("ignores -e when PI_SDLC_STUB_LOAD_EXTENSION is unset", async () => {
+    const h = await harness({ implement: { verdict: "PASS", files: { "ok.txt": "ok\n" } } });
+    try {
+      const r = await runStub(
+        ["-p", "--no-session", "-e", join(h.root, "missing-extension.ts"), h.promptPath],
+        h.env,
+        h.workspace,
+      );
+      expect(r.code, r.stderr).toBe(0);
+      expect(await readFile(join(h.workspace, "ok.txt"), "utf8")).toBe("ok\n");
+      expect(r.stderr).not.toMatch(/cannot load extension|guard/);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("does not load the extension when PI_SDLC_STUB_LOAD_EXTENSION=1 but argv has no -e", async () => {
+    const h = await harness({ implement: { verdict: "PASS" } });
+    const log = join(h.runDir, "stub.jsonl");
+    try {
+      const r = await runStub(
+        ["-p", h.promptPath],
+        { ...h.env, PI_SDLC_STUB_LOAD_EXTENSION: "1", PI_SDLC_STUB_LOG: log },
+        h.workspace,
+      );
+      expect(r.code, r.stderr).toBe(0);
+      const lines = (await readFile(log, "utf8")).trim().split("\n");
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0] ?? "")).not.toHaveProperty("kind", "guard");
+    } finally {
+      await h.cleanup();
+    }
+  });
 });

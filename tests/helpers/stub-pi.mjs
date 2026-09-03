@@ -19,11 +19,15 @@
 //
 // The prompt path is taken from argv: a token ending in `.prompt.md`
 // (leading `@` stripped) or an absolute `*.prompt.md` path inside a longer token.
-// All pi flags are ignored. Never loads the extension, never touches the network.
+// All pi flags are ignored unless PI_SDLC_STUB_LOAD_EXTENSION=1 and argv contains
+// `-e <entry>`: then the entry is loaded (jiti, same as Pi) into a fake ExtensionAPI,
+// activate()/registerWorker installs Layers A–D, and a synthetic bash
+// `git push origin HEAD` tool_call must block with terminate:true. Default scenario
+// mode is unchanged when the env is unset. Never touches the network.
 //
 // Exit codes: 0 ok (also for noVerdict) · 2 no/unreadable prompt path · 3 no scenario
 // entry for PI_SDLC_STEP · 4 missing env / unreadable or malformed scenario /
-// invalid run id · 5 path containment violation.
+// invalid run id · 5 path containment violation · 6 extension load / guard probe.
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -280,6 +284,37 @@ for (const { abs, content } of fileWrites) {
 for (const { abs, content } of runDirWrites) {
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, content, "utf8");
+}
+
+if (env.PI_SDLC_STUB_LOAD_EXTENSION === "1") {
+  const { findExtensionEntry, loadAndActivate, fireToolCall, assertGitPushTerminated } = await import(
+    new URL("./load-extension.mjs", import.meta.url)
+  );
+  const entry = findExtensionEntry(argv);
+  if (entry) {
+    let pi;
+    try {
+      pi = await loadAndActivate(entry, env);
+    } catch (err) {
+      fail(6, `cannot load extension ${entry}: ${err.message}`);
+    }
+    let result;
+    try {
+      result = await fireToolCall(pi, "bash", { command: "git push origin HEAD" });
+      assertGitPushTerminated(result);
+    } catch (err) {
+      fail(6, err.message);
+    }
+    const record = {
+      kind: "guard",
+      at: new Date().toISOString(),
+      toolName: "bash",
+      command: "git push origin HEAD",
+      result,
+    };
+    if (logPath) appendFileSync(logPath, JSON.stringify(record) + "\n", "utf8");
+    process.stderr.write(`stub-pi: guard ${JSON.stringify(result)}\n`);
+  }
 }
 
 if (sleepMs > 0) await new Promise((resolveSleep) => setTimeout(resolveSleep, sleepMs));
