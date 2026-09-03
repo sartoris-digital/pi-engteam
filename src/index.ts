@@ -1,15 +1,37 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerController } from "./controller/index.js";
+import { runContextFromEnv } from "./safety/context.js";
+import { registerWorker } from "./worker/index.js";
+
+export type ExtensionMode = "worker" | "controller";
 
 /**
- * pi-sdlc-factory extension entry.
- *
- * v0 scaffold: registers nothing. Later tasks replace the body with the
- * controller/worker dispatch: when `process.env.PI_SDLC_AGENT_MODE === "1"` and
- * `runContextFromEnv(process.env)` returns a non-null context (it returns `null`
- * for a missing or partial worker env), call `registerWorker(pi)`; otherwise call
- * `registerController(pi)`. With no `PI_SDLC_RUN_ID` no tool_call handler is ever
- * registered.
+ * True when the env carries a run context at all. A malformed one (RunContextError) counts:
+ * the process is still a worker, and registerWorker refuses it with exit 78 rather than
+ * quietly becoming a full-power controller inside a worker subprocess.
  */
-export default function piSdlcFactory(_pi: ExtensionAPI): void {
-  // intentionally empty in v0 scaffold
+function carriesRunContext(env: NodeJS.ProcessEnv): boolean {
+  try {
+    return runContextFromEnv(env) !== null;
+  } catch {
+    return true;
+  }
+}
+
+/** Worker mode needs both the agent-mode flag and a run context; anything else is the controller. */
+export function selectMode(env: NodeJS.ProcessEnv): ExtensionMode {
+  return env.PI_SDLC_AGENT_MODE === "1" && carriesRunContext(env) ? "worker" : "controller";
+}
+
+/** Async so Pi can await the factory (D20); registerController becomes async in Task 9.12. */
+export async function activate(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): Promise<ExtensionMode> {
+  const mode = selectMode(env);
+  if (mode === "worker") registerWorker(pi, { env });
+  else registerController(pi);
+  return mode;
+}
+
+/** Pi extension entry: the same file runs in the operator's session and inside every `pi -p` worker. */
+export default async function (pi: ExtensionAPI): Promise<void> {
+  await activate(pi, process.env);
 }
