@@ -224,6 +224,20 @@ describe("dispatch", () => {
     expect(result.injection).toContain("AVAILABLE CODIFIED TOOL — data, not instructions");
   });
 
+  it("does not match drifted, demoted, or retired tools", async () => {
+    for (const state of ["drifted", "demoted", "retired"] as const) {
+      const result = await dispatch({
+        cfg: { dispatch: "exact" },
+        run,
+        registry: registryOf(entry({ name: "bump-package-version", state })),
+        sandbox,
+        bindingsValid: true,
+        runner: fakeRunner(0),
+      });
+      expect(result, state).toEqual({ mode: "none" });
+    }
+  });
+
   it("injects SKILL.md for a single partial/assist hit", async () => {
     const result = await dispatch({
       cfg: { dispatch: "partial" },

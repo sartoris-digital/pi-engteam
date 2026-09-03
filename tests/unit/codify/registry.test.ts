@@ -88,6 +88,7 @@ describe("LEGAL_TRANSITIONS", () => {
       [
         "active→demoted",
         "active→drifted",
+        "active→probationary",
         "active→retired",
         "assist→retired",
         "demoted→probationary",
@@ -118,6 +119,7 @@ describe("transition", () => {
     ["active", "demoted", "system", "consecutive-fail"],
     ["active", "drifted", "system", "smoke-fail"],
     ["active", "retired", "system", "stale"],
+    ["active", "probationary", "system", "survival-reverted"],
     ["demoted", "retired", "system", "one-more-fail"],
     ["demoted", "probationary", "system", "retry"],
     ["drifted", "probationary", "system", "re-validate"],

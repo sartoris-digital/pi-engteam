@@ -104,6 +104,7 @@ export const LEGAL_TRANSITIONS: ReadonlyArray<readonly [RegistryState, RegistryS
   ["active", "demoted"],
   ["active", "drifted"],
   ["active", "retired"],
+  ["active", "probationary"],
   ["demoted", "retired"],
   ["demoted", "probationary"],
   ["drifted", "probationary"],
