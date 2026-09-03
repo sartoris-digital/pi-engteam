@@ -55,6 +55,7 @@ export {
   checkOverrideInvariants,
   matchesOverlap,
 } from "./invariants.js";
+export { selectLane } from "./intake.js";
 export type { CompileOptions } from "./compile.js";
 export {
   CompileError,

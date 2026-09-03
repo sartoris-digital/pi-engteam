@@ -42,3 +42,5 @@ export { evaluateDoR, stripTemplateBoilerplate } from "./dor.js";
 export type { DorFail, DorFailure, DorOk, DorOpts, DorResult } from "./dor.js";
 export { runIntakeAnalysis } from "./analyze.js";
 export type { AnalystPort, AnalystSlot, IntakeAnalysis, RunIntakeOptions } from "./analyze.js";
+export { formatAbstentionComment, routeBrief } from "./route.js";
+export type { AbstentionInput, IntakeRoute } from "./route.js";
