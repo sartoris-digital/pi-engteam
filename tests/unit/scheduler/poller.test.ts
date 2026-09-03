@@ -20,7 +20,7 @@ function ticket(over: Partial<Ticket> = {}): Ticket {
   };
 }
 
-function fakeAdapter(list: () => Promise<Ticket[]>): TrackerAdapter {
+function fakeAdapter(list: TrackerAdapter["list"]): TrackerAdapter {
   return {
     id: "github",
     capabilities: new Set(),

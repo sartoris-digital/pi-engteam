@@ -83,6 +83,18 @@ export const HUMAN_ACTIONS: Record<EscalationCode, string> = {
   "worker-crash": "Check the worker transcript and stderr tail in events.jsonl, then /factory resume <ref>",
   "workspace-lost": "Recreate the worktree with /factory retry <ref>; the branch is kept when host commits exist",
   "steer-timeout": "Approve or drop the run: /factory approve <ref> or /factory drop <ref>",
+  "needs-triage": "Re-label factory:ready after adding factory:kind=<x> or factory:ac-confirmed",
+  "needs-info": "Add the missing details listed on the ticket, then re-add factory:ready",
+  "duplicate-suspected": "Confirm the ticket is not a duplicate, then re-add factory:ready",
+  "base-red": "Fix origin/<base> checks, then /factory resume <ref>",
+  "cannot-reproduce": "Add repro steps and re-add factory:ready",
+  "gate-defect": "Fix the gate tests, then /factory resume <ref> --from gate",
+  "dependency-denied": "Approve or refuse the requested dependency, then /factory resume <ref>",
+  "security-fail": "Address the security-auditor findings, then /factory resume <ref>",
+  "rebase-conflict": "Rebase the lane branch, then /factory resume <ref>",
+  "rule-violation": "Fix the violated operator rule, then /factory resume <ref>",
+  "needs-rebase": "Rebase onto origin/<base>, then /factory resume <ref>",
+  "human-owned": "The branch has foreign commits; take over or /factory drop <ref>",
 };
 
 export function agentLabel(step: Step): string {
