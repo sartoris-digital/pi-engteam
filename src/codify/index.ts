@@ -50,4 +50,7 @@ export {
   stampLanded,
 } from "./inbox.js";
 export type { CodifyInboxRecord } from "./inbox.js";
+export { admitCodify, forwardRoiHolds, rankScore } from "./roi.js";
+export type { AdmissionDecision, AdmissionInput } from "./roi.js";
+
 
