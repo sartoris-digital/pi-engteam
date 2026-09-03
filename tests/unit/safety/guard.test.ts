@@ -227,6 +227,36 @@ describe("codex G2 installed-guard regressions", () => {
     }
   });
 
+  it("allows implementer write under extraUpsert writeRoots and terminates git push even with a token", async () => {
+    const { pi, handlers } = fakePi();
+    const ctx = fakeRunContext({ extraUpsert: ["src/**"], denyUpsert: ["tests/**"] });
+    const always: typeof NO_TOKENS = {
+      take: () => ({
+        runId: "run-0001",
+        tokenId: "stub",
+        op: "bash",
+        argsHash: "0".repeat(64),
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        pauseEpoch: 0,
+        sig: "0".repeat(64),
+      }),
+    };
+    installSafetyGuard(pi, ctx, {
+      policy: { readRoots: [], upsertRoots: [], deleteRoots: [], denyUpsert: [], bashPolicy: "full" },
+      tokens: always,
+      env,
+    });
+    const handler = handlers[0] as Handler;
+    expect(await handler(toolCall("write", { path: "src/foo.ts", content: "" }), {})).toBeUndefined();
+    const denied = await handler(toolCall("write", { path: "tests/a.test.ts", content: "" }), {});
+    expect(denied?.block).toBe(true);
+    expect(denied?.reason).toMatch(/^\[Layer D\]/);
+    const push = await handler(toolCall("bash", { command: "git push origin HEAD" }), {});
+    expect(push?.block).toBe(true);
+    expect(push?.terminate).toBe(true);
+    expect(push?.reason).toMatch(/^\[Layer A\].*git push is never allowed/);
+  });
+
   it("does not let a matching token override Layer A force-push / git-dir", async () => {
     const { pi, handlers } = fakePi();
     const ctx = fakeRunContext();
@@ -244,6 +274,7 @@ describe("codex G2 installed-guard regressions", () => {
     installSafetyGuard(pi, ctx, { policy: IMPLEMENTER_POLICY, tokens: always, env });
     const handler = handlers[0] as Handler;
     for (const cmd of [
+      "git push origin HEAD",
       "git -c x=y push --force origin main",
       'git push "--force" origin main',
       "bash -c 'git push \"--force\" origin main'",

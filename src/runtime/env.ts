@@ -8,6 +8,14 @@ export const WORKER_ENV_PASSTHROUGH = ["PATH", "HOME", "USER", "LANG", "TERM", "
 /** Model-provider keys a worker may inherit. The operator's providerKeyEnv narrows this in v1. */
 export const DEFAULT_PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"] as const;
 export const WORKER_ENV_PREFIX = "PI_SDLC_";
+/** The only extraEnv keys a caller may set. Everything else, including locked PI_SDLC_*, is refused. */
+export const EXTRA_ENV_ALLOWLIST = new Set(["PI_SDLC_STUB_SCENARIO", "PI_SDLC_STUB_LOG"]);
+const EXTRA_ENV_LOCKED = new Set([
+  "PI_SDLC_AGENT_MODE",
+  "PI_SDLC_VERDICT_FILE",
+  "PI_SDLC_WORKSPACE_DIR",
+  "PI_SDLC_NONCE",
+]);
 
 export interface ScrubDirs {
   root: string;
@@ -75,6 +83,12 @@ export function buildWorkerEnv(
   for (const [key, value] of Object.entries(opts.extra ?? {})) {
     if (!key.startsWith(WORKER_ENV_PREFIX)) {
       throw new Error(`buildWorkerEnv: extra key ${key} must start with ${WORKER_ENV_PREFIX}`);
+    }
+    if (EXTRA_ENV_LOCKED.has(key) || key.startsWith("PI_SDLC_POLICY_")) {
+      throw new Error(`buildWorkerEnv: extra key ${key} cannot override a locked PI_SDLC_* variable`);
+    }
+    if (!EXTRA_ENV_ALLOWLIST.has(key)) {
+      throw new Error(`buildWorkerEnv: extra key ${key} is not allowlisted`);
     }
     env[key] = value;
   }

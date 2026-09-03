@@ -127,12 +127,35 @@ describe("buildWorkerEnv", () => {
   it("accepts extra PI_SDLC_* keys and rejects anything else", () => {
     const env = buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), {
       scrub: createScrubDirs(tmp),
-      extra: { PI_SDLC_STUB_SCENARIO: "/tmp/scenario.json" },
+      extra: { PI_SDLC_STUB_SCENARIO: "/tmp/scenario.json", PI_SDLC_STUB_LOG: "/tmp/stub.log" },
     });
     expect(env.PI_SDLC_STUB_SCENARIO).toBe("/tmp/scenario.json");
+    expect(env.PI_SDLC_STUB_LOG).toBe("/tmp/stub.log");
     expect(() =>
       buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), { scrub: createScrubDirs(tmp), extra: { GITHUB_TOKEN: "x" } }),
     ).toThrow(/must start with PI_SDLC_/);
+  });
+
+  it("refuses extraEnv overrides of agent-mode, verdict, workspace, nonce, policy, and other PI_SDLC_* keys", () => {
+    const locked = [
+      "PI_SDLC_AGENT_MODE",
+      "PI_SDLC_VERDICT_FILE",
+      "PI_SDLC_WORKSPACE_DIR",
+      "PI_SDLC_NONCE",
+      "PI_SDLC_POLICY_SHA",
+      "PI_SDLC_POLICY_FILE",
+    ];
+    for (const key of locked) {
+      expect(() =>
+        buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), { scrub: createScrubDirs(tmp), extra: { [key]: "hijack" } }),
+      ).toThrow(/cannot override a locked PI_SDLC_/);
+    }
+    expect(() =>
+      buildWorkerEnv(LEAKY_BASE, makeWorkerRequest(), {
+        scrub: createScrubDirs(tmp),
+        extra: { PI_SDLC_RUN_ID: "smuggled" },
+      }),
+    ).toThrow(/not allowlisted/);
   });
 });
 

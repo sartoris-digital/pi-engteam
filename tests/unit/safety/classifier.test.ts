@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARMLESS_REDIRECT_TARGETS, MAX_COMMAND_BYTES, classifyBash } from "../../../src/safety/classifier.js";
+import { HARMLESS_REDIRECT_TARGETS, MAX_COMMAND_BYTES, classifyBash, fsEffectsKnown } from "../../../src/safety/classifier.js";
 
 const cwd = "/repos/app";
 const C = (command: string) => classifyBash(command, { cwd });
@@ -29,6 +29,13 @@ describe("classifyBash", () => {
     expect(C("printenv").class).toBe("destructive");
     expect(HARMLESS_REDIRECT_TARGETS.has("/dev/null")).toBe(true);
     expect(C("x".repeat(MAX_COMMAND_BYTES + 1)).class).toBe("destructive");
+  });
+
+  it("does not treat git push as a known-confined fs effect", () => {
+    expect(fsEffectsKnown("git", ["git", "status"])).toBe(true);
+    expect(fsEffectsKnown("git", ["git", "commit", "-m", "x"])).toBe(true);
+    expect(fsEffectsKnown("git", ["git", "push", "origin", "HEAD"])).toBe(false);
+    expect(fsEffectsKnown("git", ["git", "-C", ".", "push", "origin", "HEAD"])).toBe(false);
   });
 
   it.each([

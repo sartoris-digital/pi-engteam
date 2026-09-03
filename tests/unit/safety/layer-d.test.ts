@@ -210,6 +210,7 @@ describe("domainBlock: bash", () => {
     expect(bash("echo x > $OUT", implementer)?.reason).toMatch(/unresolved/);
     expect(bash("git status; echo x > lib/a.ts", implementer)?.layer).toBe("D");
     expect(bash("git commit -m x", implementer)).toBeNull();
+    expect(bash("git push origin HEAD", implementer)?.reason).toMatch(/confin/);
     expect(bash("rm x", implementer, { ...EMPTY_POLICY, upsertRoots: ["."], bashPolicy: "full" })?.reason).toMatch(/delete roots/);
     expect(D("bash", {}, implementer)?.layer).toBe("D");
   });

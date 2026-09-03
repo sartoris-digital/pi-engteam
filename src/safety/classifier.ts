@@ -150,7 +150,11 @@ export function classifyBash(command: string, opts: { cwd?: string; depth?: numb
 export function fsEffectsKnown(verb: string, cmd: string[]): boolean {
   const v = unquote(verb).toLowerCase();
   if (SAFE_VERBS.has(v)) return true;
-  if (v === "git" || v === "rm" || v === "tee" || v === "gh") return true;
+  if (v === "git") {
+    const sub = cmd.find((w, i) => i > 0 && !unquote(w).startsWith("-") && unquote(cmd[i - 1] as string) !== "-C" && unquote(cmd[i - 1] as string) !== "-c") ?? "";
+    return unquote(sub) !== "push";
+  }
+  if (v === "rm" || v === "tee" || v === "gh") return true;
   if (v === "pnpm" || v === "npm" || v === "yarn") return unquote(cmd[1] ?? "").toLowerCase() !== "run";
   if (["printenv", "set", "env", "export", "declare"].includes(v)) return true;
   if (nestedShellCommands(cmd).length > 0) return true;

@@ -44,7 +44,21 @@ describe("command table", () => {
     expect(A("bash", { command: "rm -rf build" })).toBeNull();
     expect(A("bash", { command: "git commit -m x" })).toBeNull();
     expect(A("bash", { command: "ls -la" })).toBeNull();
+    expect(A("bash", { command: "git stash push" })).toBeNull();
     expect(A("bash", {})).toBeNull();
+  });
+
+  it.each([
+    "git push origin HEAD",
+    "git push",
+    "git -C . push origin main",
+    "git -c x=y push origin HEAD",
+    "git push --atomic origin HEAD",
+  ])("terminates every git push form: %s", (cmd) => {
+    const block = A("bash", { command: cmd });
+    expect(block?.layer, cmd).toBe("A");
+    expect(block?.terminate, cmd).toBe(true);
+    expect(block?.reason, cmd).toMatch(/git push is never allowed/);
   });
 
   it.each([

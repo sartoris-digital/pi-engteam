@@ -43,7 +43,7 @@ function isAlternateGitDirText(command: string): boolean {
   return /(?:^|\s)--git-dir(?:\s|=|$)/.test(s) || /(?:^|\s)--work-tree(?:\s|=|$)/.test(s);
 }
 
-function gitForceFromArgv(cmd: string[]): boolean {
+function gitSubcommand(cmd: string[]): string | undefined {
   const words = cmd.map(unquote);
   let i = 1;
   while (i < words.length) {
@@ -56,14 +56,30 @@ function gitForceFromArgv(cmd: string[]): boolean {
     if (w.startsWith("-")) { i++; continue; }
     break;
   }
-  if (words[i] !== "push") return false;
-  for (const w of words.slice(i + 1)) {
+  return words[i];
+}
+
+function gitPushFromArgv(cmd: string[]): boolean {
+  return gitSubcommand(cmd) === "push";
+}
+
+function gitForceFromArgv(cmd: string[]): boolean {
+  if (!gitPushFromArgv(cmd)) return false;
+  const words = cmd.map(unquote);
+  const sub = gitSubcommand(cmd);
+  const start = sub === undefined ? words.length : words.indexOf(sub);
+  for (const w of words.slice(start + 1)) {
     if (w === "--force" || w === "-f" || w === "--force-with-lease" || w.startsWith("--force-with-lease=") || w.startsWith("--force=")) {
       return true;
     }
     if (w.startsWith("+") && w.includes(":")) return true;
   }
   return false;
+}
+
+function isGitPushText(command: string): boolean {
+  const s = dequote(command);
+  return /(?:^|[\s;|&])git\s+push(?:\s|$)/.test(s);
 }
 
 function pathWord(word: string, env: PathEnv): string | null {
@@ -91,7 +107,7 @@ function segmentBlock(segment: string, ctx: RunContext, env: PathEnv, depth: num
     }
   }
   const cmd = stripAssignments(words);
-  if (gitForceFromArgv(cmd)) return A("force-push is never allowed");
+  if (gitPushFromArgv(cmd) || gitForceFromArgv(cmd)) return A("git push is never allowed");
   if (depth < MAX_NEST) {
     for (const nested of nestedShellCommands(cmd)) {
       const hit = commandBlock(nested, ctx, env, depth + 1);
@@ -133,7 +149,7 @@ export function commandBlock(command: string, ctx: RunContext, env: PathEnv = de
   if (/tasks\.json/i.test(command) || /tasks\.json/i.test(dequoted)) return A("tasks.json is host-owned");
   if (/\.pi\/(?:sdlc-factory|engineering-team)\/expertise/i.test(command)) return A("expertise files are host-owned");
   if (isDangerousRm(command) || isDangerousRm(dequoted)) return A("destructive rm of a root or home path is never allowed");
-  if (isForcePushText(command)) return A("force-push is never allowed");
+  if (isForcePushText(command) || isGitPushText(command)) return A("git push is never allowed");
   if (isAlternateGitDirText(command)) return A("git --git-dir / GIT_DIR is never allowed");
   if (/(?:^|[;&|\n]\s*)sudo\s/.test(command) || /(?:^|[;&|\n]\s*)sudo\s/.test(dequoted)) return A("sudo is never allowed");
   if (/(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(command) || /(?:npm|pnpm|yarn)\s+publish(?:\s|$)/.test(dequoted)) {
