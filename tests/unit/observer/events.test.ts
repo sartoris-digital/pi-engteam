@@ -67,6 +67,19 @@ describe("EventCategory", () => {
       "factory.ticket.landed",
       "factory.pr.opened",
       "factory.approval.granted",
+      "factory.codified.staged",
+      "factory.codified.probationary",
+      "factory.codified.active",
+      "factory.codified.assist",
+      "factory.codified.demoted",
+      "factory.codified.retired",
+      "factory.codified.rejected",
+      "factory.codified.drifted",
+      "factory.codified.mine",
+      "factory.codified.assess",
+      "factory.codified.generate",
+      "factory.codified.validate",
+      "factory.codified.blocked",
     ]);
     expect(FACTORY_EVENTS).toContain("run.start");
     expect(FACTORY_EVENTS).toContain("run.published");
