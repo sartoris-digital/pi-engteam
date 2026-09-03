@@ -94,7 +94,7 @@ describe("runTicket setupCommand", () => {
           home,
           runsDir: runs,
           projectRootDefault: root,
-          engine: makeEngine(runs, { coAuthoredBy: false }),
+          engine: makeEngine(runs),
           executor: new HeadlessExecutor({ sandbox: null }),
           provider: new GitWorktreeProvider({ home }),
           tracker: new LocalAdapter(runs),

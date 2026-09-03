@@ -10,7 +10,6 @@ export interface SetupUi {
 }
 
 export interface SetupAnswers {
-  coAuthoredBy?: boolean;
   maxLanes?: number;
   maxLanesPerRepo?: number;
   sandbox?: "required" | "best-effort" | "off";
@@ -60,7 +59,6 @@ export async function runGlobalInterview(
   opts: { probes: { sandbox: SandboxProbe }; answers?: SetupAnswers },
 ): Promise<InterviewResult> {
   const answers: SetupAnswers = { ...(opts.answers ?? {}) };
-  answers.coAuthoredBy = await pick(opts.answers, "coAuthoredBy", true, () => ui.confirm("coAuthoredBy", true));
   answers.maxLanes = Number(
     await pick(opts.answers, "maxLanes", 3, async () => {
       const v = await ui.input("maxLanes", "3");
@@ -86,7 +84,6 @@ export async function runGlobalInterview(
   if (typeof worktreeRoot === "string" && worktreeRoot.length > 0) answers.worktreeRoot = worktreeRoot;
 
   const operator: OperatorOverlay = {
-    coAuthoredBy: answers.coAuthoredBy,
     maxLanes: answers.maxLanes,
     maxLanesPerRepo: answers.maxLanesPerRepo,
   };

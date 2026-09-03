@@ -47,7 +47,6 @@ describe("runGlobalInterview", () => {
     const result = await runGlobalInterview(uiFrom({}), {
       probes: { sandbox: sandboxProbe },
       answers: {
-        coAuthoredBy: true,
         maxLanes: 1,
         maxLanesPerRepo: 1,
         sandbox: "off",
@@ -55,7 +54,8 @@ describe("runGlobalInterview", () => {
         planApproval: "never",
       },
     });
-    expect(result.diff.operator).toMatchObject({ coAuthoredBy: true, maxLanes: 1, maxLanesPerRepo: 1 });
+    expect(result.diff.operator).toMatchObject({ maxLanes: 1, maxLanesPerRepo: 1 });
+    expect(result.diff.operator).not.toHaveProperty("coAuthoredBy");
     expect(result.diff.operator).not.toHaveProperty("sandbox");
     expect(result.diff.defaults).toMatchObject({ sandbox: "off", steering: "never", planApproval: "never" });
     expect(result.diff.defaults).not.toHaveProperty("setupCommand");

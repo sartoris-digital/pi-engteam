@@ -145,7 +145,7 @@ describe("makeEngine verify wiring", () => {
     try {
       await writeFile(join(fx.repo, "src", "leftover.ts"), "export const leftover = 1;\n");
       const runsDir = await tmpRunsDir();
-      const engine = makeEngine(runsDir, { coAuthoredBy: false });
+      const engine = makeEngine(runsDir);
       const steps = [
         makeStep({ name: "implement", kind: "agent", agent: "implementer", verify: true, onFail: "escalate:needs-decision" }),
         makeStep({ name: "escalate", host: "escalate" }),

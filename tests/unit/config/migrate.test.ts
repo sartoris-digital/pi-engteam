@@ -74,6 +74,19 @@ describe("migrateConfig (schemaVersion 1)", () => {
     expect(fail(() => migrateConfig("x")).code).toBe("parse");
   });
 
+  it("drops retired keys an older build wrote instead of rejecting the whole file", () => {
+    const raw = { schemaVersion: 1, operator: { coAuthoredBy: true, maxLanes: 4 } };
+    const migrated = migrateConfig(raw);
+    expect(migrated.operator).not.toHaveProperty("coAuthoredBy");
+    expect(migrated.operator?.maxLanes).toBe(4);
+    // the caller's object is left untouched
+    expect(raw.operator).toHaveProperty("coAuthoredBy");
+    // still a real unknown key next to a retired one
+    expect(fail(() => migrateConfig({ schemaVersion: 1, operator: { coAuthoredBy: true, nope: 1 } })).keyPath).toBe(
+      "operator.nope",
+    );
+  });
+
   it("migrates a v1 file with no v3 block; missing v3 ≡ all flags off", () => {
     const raw = { schemaVersion: 1, operator: { maxLanes: 4 } };
     expect(migrateConfig(raw)).toEqual(raw);

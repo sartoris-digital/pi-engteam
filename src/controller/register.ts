@@ -35,9 +35,7 @@ import { workspaceFromState } from "./stage-hooks.js";
 
 const execFileAsync = promisify(execFile);
 
-const FACTORY_CO_AUTHOR = "Claude Fable 5.1 <noreply@anthropic.com>";
-
-export function makeEngine(runs: string, opts: { coAuthoredBy: boolean }): Engine {
+export function makeEngine(runs: string): Engine {
   return new Engine({
     runsDir: runs,
     evalWhen: (expr, scope) => evalLaneExpr(expr, scope as WhenContext),
@@ -48,10 +46,7 @@ export function makeEngine(runs: string, opts: { coAuthoredBy: boolean }): Engin
       await checkpointCommit(
         workspaceFromState(ctx.state),
         message,
-        {
-          runId: ctx.state.runId,
-          ...(opts.coAuthoredBy ? { coAuthoredBy: FACTORY_CO_AUTHOR } : {}),
-        },
+        { runId: ctx.state.runId },
         { excludePatterns: ctx.cfg.generatedDocPatterns },
       ),
     verify: defaultVerify,
@@ -62,7 +57,6 @@ interface GlobalOverlay {
   repos: string[];
   remotes: string[];
   trackers: TrackerEntry[];
-  coAuthoredBy: boolean;
   worktreeRoot?: string;
   workers: "auto" | "visible" | "headless";
 }
@@ -84,7 +78,6 @@ async function readGlobalOverlay(home: string): Promise<GlobalOverlay> {
   try {
     const cfg = await readJsonArtifact<{
       operator?: {
-        coAuthoredBy?: boolean;
         worktreeRoot?: string;
         trackers?: TrackerEntry[] | null;
         workers?: "auto" | "visible" | "headless";
@@ -106,12 +99,11 @@ async function readGlobalOverlay(home: string): Promise<GlobalOverlay> {
       repos: (cfg.repos ?? []).map((entry) => entry.path),
       remotes,
       trackers,
-      coAuthoredBy: cfg.operator?.coAuthoredBy ?? true,
       workers: cfg.operator?.workers === "visible" || cfg.operator?.workers === "headless" ? cfg.operator.workers : "auto",
       ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
     };
   } catch {
-    return { repos: [], remotes: [], trackers: [], coAuthoredBy: true, workers: "auto" };
+    return { repos: [], remotes: [], trackers: [], workers: "auto" };
   }
 }
 
@@ -210,7 +202,7 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     home,
     runsDir: runs,
     projectRootDefault: root,
-    engine: makeEngine(runs, { coAuthoredBy: overlay.coAuthoredBy }),
+    engine: makeEngine(runs),
     executor: runtime.executor,
     provider: runtime.provider,
     tracker,

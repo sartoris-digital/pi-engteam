@@ -28,7 +28,7 @@ describe("sandbox: required", () => {
           home,
           runsDir: runs,
           projectRootDefault: root,
-          engine: makeEngine(runs, { coAuthoredBy: false }),
+          engine: makeEngine(runs),
           executor: {
             run: async () => {
               execCalls += 1;

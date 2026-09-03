@@ -69,7 +69,7 @@ export async function writeFactoryTestConfig(
   opts: { steering: "always" | "elevated" | "never"; junitPath: string; sandbox?: "required" | "best-effort" | "off" },
 ): Promise<{ globalPath: string; committedPath: string }> {
   const globalPath = await writeGlobalConfig(home, {
-    operator: { coAuthoredBy: true, maxLanes: 1, maxLanesPerRepo: 1 },
+    operator: { maxLanes: 1, maxLanesPerRepo: 1 },
     defaults: {
       steering: opts.steering,
       planApproval: "never",
@@ -179,7 +179,7 @@ export async function buildTestDeps(opts: {
     home: opts.home,
     runsDir: runs,
     projectRootDefault: root,
-    engine: makeEngine(runs, { coAuthoredBy: true }),
+    engine: makeEngine(runs),
     executor: new HeadlessExecutor({
       sandbox: opts.sandbox === true ? (req) => sandboxProfileForRun(req, opts.home) : null,
       extraEnv: { PI_SDLC_STUB_SCENARIO: opts.scenarioPath },

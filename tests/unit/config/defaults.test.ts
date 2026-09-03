@@ -14,7 +14,6 @@ const table: Array<[path: string, expected: unknown]> = [
   // operator
   ["operator.trackers", []],
   ["operator.github", {}],
-  ["operator.coAuthoredBy", true],
   ["operator.maxLanes", 3],
   ["operator.maxLanesPerRepo", 2],
   ["operator.dailyBudgetUsd", 150],

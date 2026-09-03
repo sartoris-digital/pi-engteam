@@ -64,7 +64,6 @@ export const DEFAULTS: {
   operator: {
     trackers: [],
     github: {},
-    coAuthoredBy: true,
     maxLanes: 3,
     maxLanesPerRepo: 2,
     dailyBudgetUsd: 150,

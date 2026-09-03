@@ -49,7 +49,7 @@ describe("v3 setup defaults", () => {
           return initial;
         },
       },
-      { probes: { sandbox: sandboxProbe }, answers: { coAuthoredBy: true, maxLanes: 1 } },
+      { probes: { sandbox: sandboxProbe }, answers: { maxLanes: 1 } },
     );
     expect(result.diff.operator).not.toHaveProperty("v3");
     expect(defaults.learner.enabled).toBe(false);

@@ -1,7 +1,7 @@
 import type { Static, TSchema } from "typebox";
 import { Check, Errors } from "typebox/value";
 import { ConfigError } from "./errors.js";
-import { isPlainObject } from "./json.js";
+import { isPlainObject, type JsonObject } from "./json.js";
 import { FactoryConfigSchema, RepoFileSchema, SCHEMA_VERSION, type FactoryConfig, type RepoFile } from "./schema.js";
 
 /** Global file (`~/.pi/sdlc-factory/factory.json`). schemaVersion 1 is the only version: validate and pass through. */
@@ -33,7 +33,36 @@ function migrate<T extends TSchema>(schema: T, raw: unknown, source: string): St
     );
   }
   // A future schemaVersion 2 adds `if (version === 1) raw = upgrade1to2(raw)` steps here, then validates.
-  return validateConfigValue(schema, raw, source);
+  return validateConfigValue(schema, dropRetiredKeys(raw), source);
+}
+
+/**
+ * Keys earlier builds wrote that this build no longer understands. They are dropped on load
+ * instead of being reported as unknown keys, so a config file written before the key was
+ * retired keeps loading. Dotted paths, rooted at the file's top level.
+ */
+export const RETIRED_KEYS: readonly string[] = ["operator.coAuthoredBy"];
+
+function retiredSlot(root: JsonObject, path: string): { holder: JsonObject; key: string } | undefined {
+  const segments = path.split(".");
+  const key = segments.pop() as string;
+  let node: unknown = root;
+  for (const segment of segments) {
+    if (!isPlainObject(node)) return undefined;
+    node = node[segment];
+  }
+  return isPlainObject(node) && key in node ? { holder: node, key } : undefined;
+}
+
+/** Returns `raw` untouched when it carries no retired key; otherwise a copy with each one removed. */
+function dropRetiredKeys(raw: JsonObject): JsonObject {
+  if (!RETIRED_KEYS.some((path) => retiredSlot(raw, path) !== undefined)) return raw;
+  const copy = structuredClone(raw);
+  for (const path of RETIRED_KEYS) {
+    const slot = retiredSlot(copy, path);
+    if (slot !== undefined) delete slot.holder[slot.key];
+  }
+  return copy;
 }
 
 /** Validates `raw` against `schema`; unknown keys are reported before any other violation, with their dotted path. */

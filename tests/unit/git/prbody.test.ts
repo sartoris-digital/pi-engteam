@@ -68,7 +68,7 @@ describe("composePrBody", () => {
       gate: { redIds: ["t-missing"], greenIds: ["t-missing"] },
       run,
       ticketLine: "Fixes #7",
-      coAuthoredBy: "Claude Fable 5.1 <noreply@anthropic.com>",
+      coAuthoredBy: "Pat Doe <pat@example.com>",
       rulesApplied: ["r-builtin-no-generated-docs"],
     });
     expect(body).toMatch(/## Classification/);
@@ -77,7 +77,7 @@ describe("composePrBody", () => {
     expect(body).toContain("quoted");
     expect(body).toContain("inferred");
     expect(body).toContain("Fixes #7");
-    expect(body).toContain("Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>");
+    expect(body).toContain("Co-Authored-By: Pat Doe <pat@example.com>");
     expect(body).toContain("r-builtin-no-generated-docs");
     expect(body).toContain("t-missing");
   });

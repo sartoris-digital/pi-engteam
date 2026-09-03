@@ -19,7 +19,7 @@ afterEach(async () => {
 describe("writeGlobalConfig", () => {
   it("stamps schemaVersion and writes a FactoryConfig-shaped overlay", async () => {
     const path = await writeGlobalConfig(home, {
-      operator: { coAuthoredBy: true, maxLanes: 1, maxLanesPerRepo: 1 },
+      operator: { maxLanes: 1, maxLanesPerRepo: 1 },
       defaults: { sandbox: "off", steering: "never", planApproval: "never" },
       repos: [{ path: repo, remote: "origin", tracker: "local", project: "fixture", label: "factory:ready" }],
     });

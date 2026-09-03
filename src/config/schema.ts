@@ -169,7 +169,6 @@ export const OperatorOverlaySchema = Type.Object(
   {
     trackers: leaf(Type.Array(TrackerEntrySchema)),
     github: Type.Optional(Type.Object({ appToken: leaf(Type.String()) }, strict)),
-    coAuthoredBy: leaf(Type.Boolean()),
     maxLanes: leaf(PositiveInt),
     maxLanesPerRepo: leaf(PositiveInt),
     dailyBudgetUsd: leaf(NonNegativeNumber),
@@ -375,7 +374,6 @@ export interface CodifyConfig {
 export interface OperatorConfig {
   trackers: TrackerEntry[];
   github: { appToken?: string };
-  coAuthoredBy: boolean;
   maxLanes: number;
   maxLanesPerRepo: number;
   dailyBudgetUsd: number;

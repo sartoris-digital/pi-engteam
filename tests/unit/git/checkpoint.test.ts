@@ -22,7 +22,7 @@ async function workspace() {
   return { ...f, ws };
 }
 
-const trailers = { runId: "run-0001", coAuthoredBy: "Claude Fable 5.1 <noreply@anthropic.com>" };
+const trailers = { runId: "run-0001", coAuthoredBy: "Pat Doe <pat@example.com>" };
 
 describe("checkpoint helpers", () => {
   it("sanitizeCommitMessage strips CR/control chars, caps length and never yields an option-like message", () => {
@@ -38,7 +38,7 @@ describe("checkpoint helpers", () => {
     expect(CHECKPOINT_EXCLUDES).toEqual([".pi/*.local.*"]);
     expect(checkpointExcludes()).toEqual([".pi/*.local.*"]);
     expect(checkpointExcludes({ excludePatterns: ["extra/**"] })).toEqual([".pi/*.local.*", "extra/**"]);
-    expect(trailerArgs(trailers)).toEqual(["--trailer", "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>", "--trailer", "Factory-Run: run-0001"]);
+    expect(trailerArgs(trailers)).toEqual(["--trailer", "Co-Authored-By: Pat Doe <pat@example.com>", "--trailer", "Factory-Run: run-0001"]);
     expect(trailerArgs({ runId: "r" })).toEqual(["--trailer", "Factory-Run: r"]);
   });
 });
@@ -59,7 +59,7 @@ describe("checkpointCommit", () => {
     expect(await rawGit(ws.path, "rev-parse", "HEAD")).toBe(sha);
     const body = await rawGit(ws.path, "log", "-1", "--format=%B");
     expect(body.startsWith("feat: add src")).toBe(true);
-    expect(body).toContain("Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>");
+    expect(body).toContain("Co-Authored-By: Pat Doe <pat@example.com>");
     expect(body).toContain("Factory-Run: run-0001");
     expect(await rawGit(ws.path, "status", "--porcelain")).toBe("");
   });
