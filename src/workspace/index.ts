@@ -7,3 +7,7 @@ export { runSetupCommand, setupArgv, EnvSetupFailedError } from "./setup.js";
 export type { SetupResult, RunSetupOptions } from "./setup.js";
 export { GitWorktreeProvider, parseWorktreeList, repoSlug, sanitizeSlug, worktreePathFor, WorkspaceRemoveRefusedError, WORKTREE_META_FILE } from "./git-provider.js";
 export type { WorktreeEntry, GitWorktreeProviderOptions } from "./git-provider.js";
+export { herdrRunning, realHerdrCli } from "./herdr.js";
+export type { HerdrCli } from "./herdr.js";
+export { HerdrWorktreeProvider } from "./herdr-provider.js";
+export type { HerdrWorktreeProviderOptions } from "./herdr-provider.js";

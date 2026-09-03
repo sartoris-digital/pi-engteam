@@ -1,8 +1,9 @@
 // src/workspace/types.ts — contract types for factory workspaces (spec §5.4)
 
 export interface Workspace {
-  provider: "git";
+  provider: "git" | "herdr";
   path: string;
+  workspaceId?: string;
   branch: string;
   baseSha: string;
   repoRoot: string;

@@ -14,6 +14,8 @@ import { evalWhen as evalLaneExpr, type WhenContext } from "../lanes/expr.js";
 import { loadEffectiveLanes } from "../lanes/index.js";
 import type { FactoryEvent } from "../observer/events.js";
 import { HeadlessExecutor } from "../runtime/headless.js";
+import { VisibleExecutor } from "../runtime/visible.js";
+import type { WorkerExecutor } from "../runtime/types.js";
 import { buildTrackerRegistry, detectTrackerFromRemote, githubConfigured } from "../trackers/discovery.js";
 import { realGhExec } from "../trackers/gh.js";
 import type { GitHubAdapterOptions } from "../trackers/github.js";
@@ -21,6 +23,9 @@ import { LocalAdapter } from "../trackers/local.js";
 import { installInputGuard } from "../vault/input-guard.js";
 import { Vault } from "../vault/vault.js";
 import { GitWorktreeProvider } from "../workspace/git-provider.js";
+import { herdrRunning, realHerdrCli, type HerdrCli } from "../workspace/herdr.js";
+import { HerdrWorktreeProvider } from "../workspace/herdr-provider.js";
+import type { WorkspaceProvider } from "../workspace/types.js";
 import { loadAgentDefs, packageRoot, V1_AGENTS } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
 import { rehydrateOpenWorkflows, runObservers, sandboxProfileForRun, type FactoryDeps } from "./lane-runner.js";
@@ -57,6 +62,7 @@ interface GlobalOverlay {
   trackers: TrackerEntry[];
   coAuthoredBy: boolean;
   worktreeRoot?: string;
+  workers: "auto" | "visible" | "headless";
 }
 
 async function gitRemoteUrl(cwd: string, remote: string): Promise<string | null> {
@@ -75,7 +81,12 @@ async function gitRemoteUrl(cwd: string, remote: string): Promise<string | null>
 async function readGlobalOverlay(home: string): Promise<GlobalOverlay> {
   try {
     const cfg = await readJsonArtifact<{
-      operator?: { coAuthoredBy?: boolean; worktreeRoot?: string; trackers?: TrackerEntry[] | null };
+      operator?: {
+        coAuthoredBy?: boolean;
+        worktreeRoot?: string;
+        trackers?: TrackerEntry[] | null;
+        workers?: "auto" | "visible" | "headless";
+      };
       repos?: { path: string; remote?: string }[];
     }>(join(home, "factory.json"));
     const worktreeRoot = cfg.operator?.worktreeRoot;
@@ -94,11 +105,50 @@ async function readGlobalOverlay(home: string): Promise<GlobalOverlay> {
       remotes,
       trackers,
       coAuthoredBy: cfg.operator?.coAuthoredBy ?? true,
+      workers: cfg.operator?.workers === "visible" || cfg.operator?.workers === "headless" ? cfg.operator.workers : "auto",
       ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
     };
   } catch {
-    return { repos: [], remotes: [], trackers: [], coAuthoredBy: true };
+    return { repos: [], remotes: [], trackers: [], coAuthoredBy: true, workers: "auto" };
   }
+}
+
+export function selectWorkerRuntime(
+  workers: "auto" | "visible" | "headless",
+  herdrOk: boolean,
+): "headless" | "visible" {
+  if (workers === "headless") return "headless";
+  if (workers === "visible") return herdrOk ? "visible" : "headless";
+  return herdrOk ? "visible" : "headless";
+}
+
+export function createWorkerRuntime(opts: {
+  workers: "auto" | "visible" | "headless";
+  herdrOk: boolean;
+  home: string;
+  herdrCli?: HerdrCli;
+  worktreeRoot?: string;
+}): { executor: WorkerExecutor; provider: WorkspaceProvider } {
+  const mode = selectWorkerRuntime(opts.workers, opts.herdrOk);
+  if (mode === "visible" && opts.herdrCli !== undefined) {
+    return {
+      executor: new VisibleExecutor({ cli: opts.herdrCli, home: opts.home }),
+      provider: new HerdrWorktreeProvider({
+        cli: opts.herdrCli,
+        home: opts.home,
+        ...(opts.worktreeRoot === undefined ? {} : { worktreeRoot: opts.worktreeRoot }),
+      }),
+    };
+  }
+  return {
+    executor: new HeadlessExecutor({
+      sandbox: (req) => sandboxProfileForRun(req, opts.home),
+    }),
+    provider: new GitWorktreeProvider({
+      home: opts.home,
+      ...(opts.worktreeRoot === undefined ? {} : { worktreeRoot: opts.worktreeRoot }),
+    }),
+  };
 }
 
 function hostGhExec() {
@@ -135,18 +185,22 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     ...(github === undefined ? {} : { github }),
     trackers: overlay.trackers,
   });
+  const herdrCli = realHerdrCli();
+  const herdrOk = overlay.workers === "headless" ? false : await herdrRunning(herdrCli);
+  const runtime = createWorkerRuntime({
+    workers: overlay.workers,
+    herdrOk,
+    home,
+    herdrCli,
+    ...(overlay.worktreeRoot === undefined ? {} : { worktreeRoot: overlay.worktreeRoot }),
+  });
   return {
     home,
     runsDir: runs,
     projectRootDefault: root,
     engine: makeEngine(runs, { coAuthoredBy: overlay.coAuthoredBy }),
-    executor: new HeadlessExecutor({
-      sandbox: (req) => sandboxProfileForRun(req, home),
-    }),
-    provider: new GitWorktreeProvider({
-      home,
-      ...(overlay.worktreeRoot === undefined ? {} : { worktreeRoot: overlay.worktreeRoot }),
-    }),
+    executor: runtime.executor,
+    provider: runtime.provider,
     tracker,
     adapters,
     agents,
@@ -187,10 +241,15 @@ export async function registerController(pi: ExtensionAPI): Promise<void> {
   } catch {
     vault = null;
   }
+  if (vault !== null) deps.vault = vault;
   installInputGuard(pi, vault);
   pi.on("session_start", async () => {
     await recoverRunningRuns(deps.runsDir);
     await rehydrateOpenWorkflows(deps);
+    await deps.scheduler?.start();
     await commands.refresh();
+  });
+  pi.on("session_shutdown", async () => {
+    await deps.scheduler?.stop();
   });
 }

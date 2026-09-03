@@ -44,3 +44,4 @@ export {
   HeadlessExecutor,
   type HeadlessExecutorOptions,
 } from "./headless.js";
+export { VisibleExecutor, type VisibleExecutorOptions } from "./visible.js";

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { FakePi } from "../../helpers/fake-pi.js";
 import { writeQueue } from "../../../src/commands/enqueue.js";
 import { completionSnapshot, registerCommands } from "../../../src/commands/index.js";
-import { recoverRunningRuns } from "../../../src/controller/register.js";
+import { createWorkerRuntime, recoverRunningRuns } from "../../../src/controller/register.js";
+import { HeadlessExecutor } from "../../../src/runtime/headless.js";
+import { VisibleExecutor } from "../../../src/runtime/visible.js";
+import type { HerdrCli } from "../../../src/workspace/herdr.js";
 import type { FactoryDeps } from "../../../src/controller/lane-runner.js";
 import { saveRunState } from "../../../src/engine/state.js";
 import { fakeRunState } from "../../helpers/fake-run-state.js";
@@ -85,6 +88,31 @@ describe("registerCommands", () => {
     const items = cmd.getArgumentCompletions("");
     expect(items).not.toBeInstanceOf(Promise);
     expect(Array.isArray(items)).toBe(true);
+  });
+});
+
+describe("createWorkerRuntime", () => {
+  it("never instantiates VisibleExecutor when workers is headless", () => {
+    const cli = {
+      status: async () => ({ running: true, raw: "ok" }),
+      worktreeCreate: async () => ({ workspaceId: "x", path: "/x" }),
+      worktreeRemove: async () => undefined,
+      worktreeList: async () => [],
+      paneSplit: async () => ({ paneId: "p" }),
+      agentStart: async () => undefined,
+      agentPrompt: async () => undefined,
+      agentSendKeys: async () => undefined,
+      paneClose: async () => undefined,
+      paneProcessInfo: async () => ({ pid: null }),
+    } satisfies HerdrCli;
+    const runtime = createWorkerRuntime({
+      workers: "headless",
+      herdrOk: true,
+      home: "/tmp/home",
+      herdrCli: cli,
+    });
+    expect(runtime.executor).toBeInstanceOf(HeadlessExecutor);
+    expect(runtime.executor).not.toBeInstanceOf(VisibleExecutor);
   });
 });
 
