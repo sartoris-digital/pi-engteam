@@ -182,6 +182,13 @@ export function completeFactoryArgs(argumentPrefix: string, deps: CompletionDeps
       trimmed,
     );
   }
+  if (trimmed.startsWith("rebase")) {
+    return runItems(
+      "rebase",
+      deps.runs.filter((r) => r.status === "needs-rebase"),
+      trimmed,
+    );
+  }
   if (
     trimmed.startsWith("status") ||
     trimmed.startsWith("landed") ||

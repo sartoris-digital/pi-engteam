@@ -1,5 +1,5 @@
 import type { FactoryDeps } from "../controller/lane-runner.js";
-import { readQueue } from "./enqueue.js";
+import { QUEUE_STATES, readQueue } from "./enqueue.js";
 import type { ParsedFactoryArgs } from "./router.js";
 
 export async function runStatus(parsed: ParsedFactoryArgs, deps: FactoryDeps): Promise<string> {
@@ -16,6 +16,7 @@ export async function runStatus(parsed: ParsedFactoryArgs, deps: FactoryDeps): P
       `runId: ${entry.runId ?? "-"}`,
       `lane: ${entry.lane ?? entry.kind}`,
     ];
+    if (entry.waitingOn !== undefined) lines.push(`waitingOn: ${entry.waitingOn}`);
     if (entry.runId !== undefined) {
       try {
         const state = await deps.engine.getRun(entry.runId);
@@ -28,7 +29,20 @@ export async function runStatus(parsed: ParsedFactoryArgs, deps: FactoryDeps): P
   }
 
   if (queue.entries.length === 0) return "queue is empty";
-  return queue.entries
-    .map((e) => `${e.ref}\t${e.state}\t${e.lane ?? e.kind}\t${e.runId ?? "-"}`)
-    .join("\n");
+  const grouped = new Map<string, typeof queue.entries>();
+  for (const e of queue.entries) {
+    const list = grouped.get(e.state) ?? [];
+    list.push(e);
+    grouped.set(e.state, list);
+  }
+  const lines: string[] = [];
+  for (const state of QUEUE_STATES) {
+    const list = grouped.get(state);
+    if (list === undefined || list.length === 0) continue;
+    lines.push(`${state}:`);
+    for (const e of list) {
+      lines.push(`  ${e.ref}\t${e.state}\t${e.lane ?? e.kind}\t${e.runId ?? "-"}`);
+    }
+  }
+  return lines.join("\n");
 }

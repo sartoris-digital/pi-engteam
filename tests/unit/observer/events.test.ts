@@ -65,6 +65,9 @@ describe("EventCategory", () => {
       "factory.lane.started",
       "factory.ticket.blocked",
       "factory.ticket.landed",
+      "factory.needs-rebase",
+      "factory.revise",
+      "factory.landed",
       "factory.pr.opened",
       "factory.approval.granted",
       "factory.codified.staged",
@@ -84,6 +87,9 @@ describe("EventCategory", () => {
     expect(FACTORY_EVENTS).toContain("run.start");
     expect(FACTORY_EVENTS).toContain("run.published");
     expect(FACTORY_EVENTS).toContain("factory.ticket.claimed");
+    expect(FACTORY_EVENTS).toContain("factory.needs-rebase");
+    expect(FACTORY_EVENTS).toContain("factory.revise");
+    expect(FACTORY_EVENTS).toContain("factory.landed");
   });
 });
 

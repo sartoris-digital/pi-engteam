@@ -13,6 +13,8 @@ export interface RebaseCommandOpts {
   rebaseDeps?: RebaseDeps;
   cfg?: EffectiveRepoConfig;
   ws?: Workspace;
+  /** Ignored: the manual command always runs the cycle. */
+  autoRebase?: boolean;
 }
 
 async function workspaceFromEntry(entry: QueueEntry): Promise<Workspace> {
