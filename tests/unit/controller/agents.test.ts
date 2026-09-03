@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAgentDefs, packageRoot } from "../../../src/controller/agents.js";
+import { AGENTS } from "../../../src/lanes/catalog.js";
 
 describe("packageRoot", () => {
   it("resolves the directory that contains src/ and agents/", () => {
@@ -37,5 +38,32 @@ describe("loadAgentDefs", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("loads the 13 roster prompts by catalog id", async () => {
+    const loaded = await loadAgentDefs({
+      root: packageRoot(),
+      models: {},
+      defaultModel: "slot-a",
+      required: AGENTS,
+    });
+    expect(loaded.map((a) => a.name)).toEqual([...AGENTS]);
+    expect(loaded).toHaveLength(13);
+  });
+
+  it("every roster prompt names VerdictEmit and never tracker credentials", async () => {
+    const root = packageRoot();
+    for (const name of AGENTS) {
+      const body = await readFile(join(root, "agents", `${name}.md`), "utf8");
+      expect(body, name).toContain("VerdictEmit");
+      expect(body, name).not.toContain("gh ");
+      expect(body, name).not.toContain("GITHUB_TOKEN");
+    }
+  });
+
+  it("issue-analyst prompt is blind, fenced, and emits brief fields", async () => {
+    const body = await readFile(join(packageRoot(), "agents", "issue-analyst.md"), "utf8");
+    expect(body).toContain("brief");
+    expect(body).toContain("fenced");
   });
 });
