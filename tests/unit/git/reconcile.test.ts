@@ -23,10 +23,11 @@ async function judged() {
 }
 
 function published(over: Partial<QueueEntry> & Pick<QueueEntry, "repo" | "judgedSha" | "hostCommits" | "baseSha">): QueueEntry {
+  const { repo, judgedSha, hostCommits, baseSha, ...rest } = over;
   return {
     key: "github:acme/widgets:42",
     tracker: "github",
-    repo: over.repo,
+    repo,
     ref: "acme/widgets#42",
     priority: "p2",
     state: "published",
@@ -37,7 +38,10 @@ function published(over: Partial<QueueEntry> & Pick<QueueEntry, "repo" | "judged
     updatedAt: "2026-09-02T00:00:00.000Z",
     prNumber: 9,
     changedFiles: ["feature.txt"],
-    ...over,
+    judgedSha,
+    hostCommits,
+    baseSha,
+    ...rest,
   };
 }
 
