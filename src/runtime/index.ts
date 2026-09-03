@@ -33,3 +33,4 @@ export {
   type SandboxProvider,
   type WrapArgvOptions,
 } from "./sandbox.js";
+export { LAUNCHER_SCRIPT, installLauncher, renderLauncherScript, type InstallLauncherOptions } from "./launcher.js";
