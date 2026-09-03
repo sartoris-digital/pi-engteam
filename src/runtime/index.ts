@@ -35,6 +35,7 @@ export {
 } from "./sandbox.js";
 export { LAUNCHER_SCRIPT, installLauncher, renderLauncherScript, type InstallLauncherOptions } from "./launcher.js";
 export { promptPointer, requiredFinalAction, stepPromptPath, writeStepPrompt } from "./prompt.js";
+export { ENV_SCRUB_KEYS, ENV_SCRUB_PREFIXES, runEnvScrubProbe, type EnvScrubProbeOptions } from "./env-scrub-probe.js";
 export {
   DEFAULT_EXTENSION_ENTRY,
   DEFAULT_KILL_GRACE_MS,
