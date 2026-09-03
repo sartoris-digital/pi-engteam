@@ -19,7 +19,7 @@ export async function runApprove(parsed: ParsedFactoryArgs, deps: FactoryDeps): 
   const queue = await readQueue(deps.runsDir);
   const entry = queue.entries.find((e) => e.ref === ref || e.runId === ref);
   if (entry === undefined) throw new Error(`approve: ${ref} not in queue`);
-  if (entry.state !== "waiting_user") throw new Error(`approve: ${ref} is ${entry.state}, not waiting_user`);
+  if (entry.state !== "awaiting-steer") throw new Error(`approve: ${ref} is ${entry.state}, not awaiting-steer`);
   if (entry.runId === undefined) throw new Error(`approve: ${ref} has no runId`);
 
   const runDir = join(deps.runsDir, entry.runId);
@@ -44,7 +44,7 @@ export async function runApprove(parsed: ParsedFactoryArgs, deps: FactoryDeps): 
   const latest = await readQueue(deps.runsDir);
   const live = latest.entries.find((e) => e.key === entry.key);
   if (live !== undefined) {
-    live.state = queueStateFor(state.status);
+    live.state = queueStateFor(state.status, state.pauseForUser, state.escalation?.code);
     live.runId = state.runId;
     live.updatedAt = new Date().toISOString();
     await writeQueue(deps.runsDir, latest);

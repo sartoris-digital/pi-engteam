@@ -1,26 +1,11 @@
 import type { FactoryDeps } from "../controller/lane-runner.js";
 import { runTicket } from "../controller/lane-runner.js";
-import type { RunState, RunStatus } from "../engine/types.js";
+import type { RunState } from "../engine/types.js";
+import { queueStateFor, readQueue, writeQueue } from "../scheduler/queue.js";
 import type { TicketRef } from "../trackers/adapter.js";
-import { readQueue, writeQueue, type QueueState } from "./enqueue.js";
 import type { ParsedFactoryArgs } from "./router.js";
 
-export function queueStateFor(status: RunStatus): QueueState {
-  switch (status) {
-    case "pending":
-    case "running":
-      return "running";
-    case "waiting_user":
-    case "paused":
-      return "waiting_user";
-    case "succeeded":
-      return "published";
-    case "failed":
-      return "failed";
-    case "cancelled":
-      return "cancelled";
-  }
-}
+export { queueStateFor } from "../scheduler/queue.js";
 
 export async function runStart(parsed: ParsedFactoryArgs, deps: FactoryDeps): Promise<RunState[]> {
   const repoFilter = typeof parsed.flags.repo === "string" ? parsed.flags.repo : undefined;
@@ -28,7 +13,8 @@ export async function runStart(parsed: ParsedFactoryArgs, deps: FactoryDeps): Pr
   for (;;) {
     const queue = await readQueue(deps.runsDir);
     const entry = queue.entries.find(
-      (e) => e.state === "queued" && (repoFilter === undefined || e.repo === repoFilter),
+      (e) =>
+        (e.state === "queued" || e.state === "ready") && (repoFilter === undefined || e.repo === repoFilter),
     );
     if (entry === undefined) break;
 
@@ -41,17 +27,22 @@ export async function runStart(parsed: ParsedFactoryArgs, deps: FactoryDeps): Pr
       await deps.tracker.setStatus(ref, "running").catch(() => undefined);
       const ticket = await deps.tracker.fetch(ref);
       const state = await runTicket(ticket, entry.repo, deps, entry.lane === undefined ? undefined : { lane: entry.lane });
-      entry.state = queueStateFor(state.status);
+      entry.state = queueStateFor(state.status, state.pauseForUser, state.escalation?.code);
       entry.runId = state.runId;
       entry.updatedAt = new Date().toISOString();
+      if (entry.state === "awaiting-steer") entry.waitingOn = "steer";
+      if (entry.state === "blocked" && (state.pauseForUser?.reason === "approval-needed" || state.escalation?.code === "approval-needed")) {
+        entry.waitingOn = "approval";
+      }
       if (state.status === "succeeded") await deps.tracker.setStatus(ref, "done").catch(() => undefined);
       if (state.status === "failed" || state.status === "cancelled") {
         await deps.tracker.setStatus(ref, "failed").catch(() => undefined);
       }
       started.push(state);
-      if (entry.state === "waiting_user") break;
+      if (entry.state === "awaiting-steer") break;
     } catch (err) {
-      entry.state = "failed";
+      entry.state = "blocked";
+      entry.lastError = err instanceof Error ? err.message : String(err);
       entry.updatedAt = new Date().toISOString();
       throw err;
     } finally {

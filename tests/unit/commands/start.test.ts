@@ -13,11 +13,11 @@ import { withTmpHome } from "../../helpers/tmp-home.js";
 describe("queueStateFor", () => {
   it("maps engine statuses onto queue states without re-queuing a pause", () => {
     expect(queueStateFor("running")).toBe("running");
-    expect(queueStateFor("waiting_user")).toBe("waiting_user");
-    expect(queueStateFor("paused")).toBe("waiting_user");
+    expect(queueStateFor("waiting_user")).toBe("awaiting-steer");
+    expect(queueStateFor("paused")).toBe("running");
     expect(queueStateFor("succeeded")).toBe("published");
-    expect(queueStateFor("failed")).toBe("failed");
-    expect(queueStateFor("cancelled")).toBe("cancelled");
+    expect(queueStateFor("failed")).toBe("blocked");
+    expect(queueStateFor("cancelled")).toBe("closed");
     expect(queueStateFor("pending")).toBe("running");
   });
 });
@@ -56,7 +56,7 @@ describe("runStart", () => {
         await runEnqueue(parseFactoryArgs(`enqueue --task "x" --repo ${fixture.repo} --kind chore`), deps);
         await expect(runStart(parseFactoryArgs("start"), deps)).rejects.toThrow(/create failed/);
         const queue = await readQueue(runs);
-        expect(queue.entries[0]?.state).toBe("failed");
+        expect(queue.entries[0]?.state).toBe("blocked");
       });
     } finally {
       await fixture.cleanup();

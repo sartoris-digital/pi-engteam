@@ -11,13 +11,16 @@ import {
 
 describe("engine types", () => {
   it("exports the 20 escalation codes of the contract, unique", () => {
-    expect(ESCALATION_CODES).toHaveLength(20);
-    expect(new Set(ESCALATION_CODES).size).toBe(20);
+    expect(ESCALATION_CODES).toHaveLength(32);
+    expect(new Set(ESCALATION_CODES).size).toBe(32);
     for (const code of [
       "needs-decision", "env-setup-failed", "checks-timeout", "gate-invalid", "gate-baseline-green",
       "test-tampering", "scope-violation", "too-large", "loop-exhausted", "stall", "budget-exhausted",
       "safety-block", "config-tampered", "judge-fail-final", "publish-refused", "push-rejected",
       "approval-needed", "worker-crash", "workspace-lost", "steer-timeout",
+      "needs-triage", "needs-info", "duplicate-suspected", "base-red", "cannot-reproduce",
+      "gate-defect", "dependency-denied", "security-fail", "rebase-conflict", "rule-violation",
+      "needs-rebase", "human-owned",
     ]) {
       expect(ESCALATION_CODES).toContain(code);
     }

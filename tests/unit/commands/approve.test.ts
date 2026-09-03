@@ -70,7 +70,7 @@ describe("runApprove", () => {
           repo: "/repo",
           ref: "local-1",
           priority: "p2",
-          state: "waiting_user",
+          state: "awaiting-steer",
           kind: "chore",
           lane: "chore",
           runId: "r1",
@@ -102,7 +102,7 @@ describe("runApprove", () => {
       ],
     });
     await expect(runApprove(parseFactoryArgs("approve local-1"), deps)).rejects.toThrow(
-      "approve: local-1 is published, not waiting_user",
+      "approve: local-1 is published, not awaiting-steer",
     );
   });
 });

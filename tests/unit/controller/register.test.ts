@@ -39,7 +39,7 @@ describe("completionSnapshot", () => {
             repo: "/repo",
             ref: "local-r1",
             priority: "p2",
-            state: "waiting_user",
+            state: "awaiting-steer",
             kind: "chore",
             lane: "chore",
             runId: "r1",
@@ -53,7 +53,7 @@ describe("completionSnapshot", () => {
       expect(snapshot.lanes.sort()).toEqual(["bug", "chore"]);
       expect(snapshot.repos).toEqual(["/repo"]);
       expect(snapshot.runs).toEqual([
-        { ref: "local-r1", runId: "r1", lane: "chore", status: "waiting_user" },
+        { ref: "local-r1", runId: "r1", lane: "chore", status: "awaiting-steer" },
       ]);
     } finally {
       await rm(runs, { recursive: true, force: true });

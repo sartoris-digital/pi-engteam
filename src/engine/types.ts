@@ -50,7 +50,19 @@ export type EscalationCode =
   | "approval-needed"
   | "worker-crash"
   | "workspace-lost"
-  | "steer-timeout";
+  | "steer-timeout"
+  | "needs-triage"
+  | "needs-info"
+  | "duplicate-suspected"
+  | "base-red"
+  | "cannot-reproduce"
+  | "gate-defect"
+  | "dependency-denied"
+  | "security-fail"
+  | "rebase-conflict"
+  | "rule-violation"
+  | "needs-rebase"
+  | "human-owned";
 
 export const ESCALATION_CODES: readonly EscalationCode[] = [
   "needs-decision",
@@ -73,6 +85,18 @@ export const ESCALATION_CODES: readonly EscalationCode[] = [
   "worker-crash",
   "workspace-lost",
   "steer-timeout",
+  "needs-triage",
+  "needs-info",
+  "duplicate-suspected",
+  "base-red",
+  "cannot-reproduce",
+  "gate-defect",
+  "dependency-denied",
+  "security-fail",
+  "rebase-conflict",
+  "rule-violation",
+  "needs-rebase",
+  "human-owned",
 ];
 
 export function isEscalationCode(value: unknown): value is EscalationCode {

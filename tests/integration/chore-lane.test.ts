@@ -206,7 +206,7 @@ describe("chore lane end to end (steer gate)", () => {
         const queueWhilePaused = JSON.parse(
           await readFile(join(deps.runsDir, "_factory", "queue.json"), "utf8"),
         ) as { entries: { ref: string; state: string }[] };
-        expect(queueWhilePaused.entries.find((e) => e.ref === ticket.ref.id)?.state).toBe("waiting_user");
+        expect(queueWhilePaused.entries.find((e) => e.ref === ticket.ref.id)?.state).toBe("awaiting-steer");
 
         const resumed = await runApprove(
           parseFactoryArgs(`approve ${ticket.ref.id} looks right to me`),
@@ -240,7 +240,7 @@ describe("chore lane end to end (steer gate)", () => {
     }
   }, 180_000);
 
-  it("refuses approve for a run that is not waiting_user", async () => {
+  it("refuses approve for a run that is not awaiting-steer", async () => {
     const fixture = await makeFixtureRepo();
     try {
       await withTmpHome(async (home) => {
@@ -254,7 +254,7 @@ describe("chore lane end to end (steer gate)", () => {
         await runStart(parseFactoryArgs("start"), deps);
         const ref = ticket.ref.id;
         await expect(runApprove(parseFactoryArgs(`approve ${ref}`), deps)).rejects.toThrow(
-          `approve: ${ref} is published, not waiting_user`,
+          `approve: ${ref} is published, not awaiting-steer`,
         );
       });
     } finally {
