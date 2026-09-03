@@ -58,6 +58,7 @@ export interface VerdictPayload {
   questions?: string[];
   flags?: string[];
   learnings?: string[];
+  scripts?: { path: string; purpose: string; inputsObserved: string[] }[];
 }
 
 export interface WorkerExecutor {
@@ -80,6 +81,18 @@ export const VerdictPayloadSchema = Type.Object({
   questions: stringList("Questions for the operator"),
   flags: stringList("Signals such as approval-needed or tests-wrong"),
   learnings: stringList("Short notes worth keeping for later stages"),
+  scripts: Type.Optional(
+    Type.Array(
+      Type.Object(
+        {
+          path: Type.String(),
+          purpose: Type.String(),
+          inputsObserved: Type.Array(Type.String()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  ),
 });
 
 export type VerdictPayloadStatic = Static<typeof VerdictPayloadSchema>;

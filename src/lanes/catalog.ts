@@ -7,7 +7,10 @@ export const AGENTS = [
 ] as const;
 export type AgentName = (typeof AGENTS)[number];
 
-export const HOST_ACTIONS = ["scope-check", "checks", "publish", "escalate"] as const;
+export const HOST_ACTIONS = [
+  "scope-check", "checks", "publish", "escalate",
+  "codify-mine", "codify-validate", "codify-publish", "codified-implement",
+] as const;
 export type HostAction = (typeof HOST_ACTIONS)[number];
 
 export const IMPLEMENT_CLASS_STAGES = ["implement", "fix"] as const;
@@ -18,6 +21,12 @@ export const PREDICATES = [
   "verdict-consistent", "scope-report", "evidence-signed", "no-synthesized", "checklist",
   "ac-spotcheck", "head-is-judged-sha", "preflight", "deps-approval", "stuck-detector",
   "no-generated-docs",
+  "evidence-signatures-verified", "candidates-schema", "candidates-nonempty", "assessment-schema",
+  "rubric-hard", "oracles-select-observed-branches", "provenance-reproduces-members", "staged-layout",
+  "header-template", "no-fixture-edits", "lint-clean", "skill-rendered", "dev-fixtures", "sealed-fixtures",
+  "idempotent", "deterministic", "smoke-current-base", "matcher-overlap", "bindings-match-assessment",
+  "deps-allowlist", "deps-locked", "no-hidden-unicode", "no-network-ast", "skill-injection-screen",
+  "all-fixtures-pass", "manifest-sha-matches", "fusion-matches-lane", "artifact-sha-matches-judged",
 ] as const;
 
 export const PARAMETERISED_PREDICATES = ["sections:", "snapshot:"] as const;
@@ -31,6 +40,11 @@ export const MODES = [
   "refute",
   "fuse-synthesize",
   "grill",
+  "assess",
+  "generate",
+  "repair",
+  "codified",
+  "approve-codify",
 ] as const;
 
 export interface Catalog {

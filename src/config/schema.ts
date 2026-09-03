@@ -73,7 +73,7 @@ export const CodifyOverlaySchema = Type.Object(
   {
     enabled: leaf(Type.Boolean()),
     repos: leaf(StringList),
-    eligibility: leaf(Type.Literal("landed")),
+    eligibility: leaf(Type.Union([Type.Literal("landed"), Type.Literal("published")])),
     minRecurrence: leaf(PositiveInt),
     schedule: leaf(Type.String()),
     window: leaf(Type.String()),
@@ -285,7 +285,7 @@ export interface LaneEnv {
 export interface CodifyConfig {
   enabled: boolean;
   repos: string[];
-  eligibility: "landed";
+  eligibility: "landed" | "published";
   minRecurrence: number;
   schedule: string;
   window: string;

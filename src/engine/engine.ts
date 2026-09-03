@@ -95,6 +95,9 @@ export const HUMAN_ACTIONS: Record<EscalationCode, string> = {
   "rule-violation": "Fix the violated operator rule, then /factory resume <ref>",
   "needs-rebase": "Rebase onto origin/<base>, then /factory resume <ref>",
   "human-owned": "The branch has foreign commits; take over or /factory drop <ref>",
+  "not-codifiable": "The assessment rubric failed; pick another candidate or /factory drop <ref>",
+  "validation-failed": "Validation exhausted; wait for cooldown or /factory drop <ref>",
+  "codified-safety": "A safety-class event retired the tool; inspect the registry then /factory drop <ref>",
 };
 
 export function agentLabel(step: Step): string {

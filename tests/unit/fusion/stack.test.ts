@@ -57,7 +57,8 @@ describe("catalog prompt modes", () => {
     expect(isMode("fuse-synthesize")).toBe(true);
     expect(isMode("codified-diff")).toBe(true);
     expect([...MODES]).toContain("codified-diff");
-    expect(isMode("assess")).toBe(false);
-    expect(isMode("generate")).toBe(false);
+    expect(isMode("assess")).toBe(true);
+    expect(isMode("generate")).toBe(true);
+    expect(isMode("not-a-mode")).toBe(false);
   });
 });

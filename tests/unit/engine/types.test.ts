@@ -3,6 +3,7 @@ import {
   ESCALATION_CODES,
   RUN_STATUSES,
   isEscalationCode,
+  type EvidenceRecord,
   type FactoryEvent,
   type RunState,
   type Step,
@@ -10,9 +11,9 @@ import {
 } from "../../../src/engine/types.js";
 
 describe("engine types", () => {
-  it("exports the 20 escalation codes of the contract, unique", () => {
-    expect(ESCALATION_CODES).toHaveLength(32);
-    expect(new Set(ESCALATION_CODES).size).toBe(32);
+  it("exports the v1 codes plus the three v1.5 codify codes, unique", () => {
+    expect(ESCALATION_CODES).toHaveLength(35);
+    expect(new Set(ESCALATION_CODES).size).toBe(35);
     for (const code of [
       "needs-decision", "env-setup-failed", "checks-timeout", "gate-invalid", "gate-baseline-green",
       "test-tampering", "scope-violation", "too-large", "loop-exhausted", "stall", "budget-exhausted",
@@ -21,6 +22,7 @@ describe("engine types", () => {
       "needs-triage", "needs-info", "duplicate-suspected", "base-red", "cannot-reproduce",
       "gate-defect", "dependency-denied", "security-fail", "rebase-conflict", "rule-violation",
       "needs-rebase", "human-owned",
+      "not-codifiable", "validation-failed", "codified-safety",
     ]) {
       expect(ESCALATION_CODES).toContain(code);
     }
@@ -83,5 +85,33 @@ describe("engine types", () => {
     expect(step.onFail.startsWith("escalate:")).toBe(true);
     expect(result.costUsd).toBe(0.5);
     expect(event.category).toBe("lifecycle");
+  });
+
+  it("EvidenceRecord accepts optional codified and rulesApplied fields", () => {
+    const evidence: EvidenceRecord = {
+      stage: "implement",
+      round: 0,
+      agent: "host:codified-implement",
+      verdict: "AUTO",
+      predicates: [],
+      artifacts: [],
+      commands: [],
+      synthesized: [],
+      timedOut: false,
+      headSha: "abc",
+      at: "2026-09-03T00:00:00.000Z",
+      rulesApplied: ["r-builtin-no-generated-docs"],
+      codified: {
+        mode: "exact",
+        name: "bump-version",
+        version: 1,
+        inputs: { pkg: "pi-sdlc-factory", version: "1.5.0" },
+        exitCode: 0,
+        toolSha256: "aa".repeat(32),
+        durationMs: 12,
+      },
+    };
+    expect(evidence.codified?.mode).toBe("exact");
+    expect(evidence.rulesApplied).toEqual(["r-builtin-no-generated-docs"]);
   });
 });

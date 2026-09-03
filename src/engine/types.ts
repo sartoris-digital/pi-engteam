@@ -62,7 +62,10 @@ export type EscalationCode =
   | "rebase-conflict"
   | "rule-violation"
   | "needs-rebase"
-  | "human-owned";
+  | "human-owned"
+  | "not-codifiable"
+  | "validation-failed"
+  | "codified-safety";
 
 export const ESCALATION_CODES: readonly EscalationCode[] = [
   "needs-decision",
@@ -97,6 +100,9 @@ export const ESCALATION_CODES: readonly EscalationCode[] = [
   "rule-violation",
   "needs-rebase",
   "human-owned",
+  "not-codifiable",
+  "validation-failed",
+  "codified-safety",
 ];
 
 export function isEscalationCode(value: unknown): value is EscalationCode {
@@ -139,6 +145,17 @@ export interface EvidenceRecord {
       artifact?: string;
     }>;
   };
+  codified?: {
+    mode: "exact" | "partial" | "shadow";
+    name: string;
+    version: number;
+    inputs: unknown;
+    exitCode: number;
+    patchSha256?: string;
+    toolSha256: string;
+    durationMs: number;
+  };
+  rulesApplied?: string[];
 }
 
 export interface StepContext {

@@ -23,6 +23,7 @@ export const RUN_SUBDIRS = [
   "human-input",
   "checks",
   "scripts",
+  "codify",
 ] as const;
 
 export interface FactoryDirs {
@@ -44,6 +45,7 @@ export interface RunDirs {
   humanInput: string;
   checks: string;
   scripts: string;
+  codify: string;
 }
 
 /** `~/.pi/sdlc-factory`, or `PI_SDLC_HOME` (made absolute) when set and non-blank. */
@@ -92,6 +94,8 @@ export async function ensureDirs(home: string = factoryHome()): Promise<FactoryD
   for (const d of [dirs.home, dirs.runs, dirs.factoryRuns, dirs.worktrees, dirs.policy, dirs.bin]) {
     await mkdir(d, { recursive: true, mode: 0o700 });
   }
+  await mkdir(join(home, "codified"), { recursive: true, mode: 0o700 });
+  await mkdir(join(home, "codified", "_sealed"), { recursive: true, mode: 0o700 });
   return dirs;
 }
 
@@ -110,5 +114,6 @@ export async function ensureRunDir(runId: string, home: string = factoryHome()):
     humanInput: join(base, "human-input"),
     checks: join(base, "checks"),
     scripts: join(base, "scripts"),
+    codify: join(base, "codify"),
   };
 }

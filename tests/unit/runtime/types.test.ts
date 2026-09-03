@@ -23,6 +23,7 @@ describe("VerdictPayloadSchema", () => {
       questions: ["why?"],
       flags: ["approval-needed"],
       learnings: ["l1"],
+      scripts: [{ path: "scripts/seed.py", purpose: "seed", inputsObserved: ["SECRET_NAME"] }],
     };
     expect(Value.Check(VerdictPayloadSchema, full)).toBe(true);
   });

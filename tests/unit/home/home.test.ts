@@ -62,6 +62,12 @@ describe("ensureDirs / ensureRunDir", () => {
         expect((await stat(d)).isDirectory(), d).toBe(true);
       }
       expect((await stat(dirs.runs)).mode & 0o077).toBe(0);
+      const codified = join(home, "codified");
+      const sealed = join(home, "codified", "_sealed");
+      expect((await stat(codified)).isDirectory()).toBe(true);
+      expect((await stat(sealed)).isDirectory()).toBe(true);
+      expect((await stat(codified)).mode & 0o077).toBe(0);
+      expect((await stat(sealed)).mode & 0o077).toBe(0);
       // idempotent
       await expect(ensureDirs(home)).resolves.toEqual(dirs);
     });
@@ -78,6 +84,7 @@ describe("ensureDirs / ensureRunDir", () => {
         "human-input",
         "checks",
         "scripts",
+        "codify",
       ]);
       const r = await ensureRunDir("run1", home);
       const base = join(home, "runs", "run1");
@@ -91,6 +98,7 @@ describe("ensureDirs / ensureRunDir", () => {
         humanInput: join(base, "human-input"),
         checks: join(base, "checks"),
         scripts: join(base, "scripts"),
+        codify: join(base, "codify"),
       });
       for (const d of Object.values(r)) {
         expect((await stat(d)).isDirectory(), d).toBe(true);

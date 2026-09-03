@@ -61,4 +61,10 @@ describe("config schemas", () => {
     expect(LAYER_ORDER).toEqual(["builtin", "global", "committed", "overrides", "local"]);
     expect(KINDS).toEqual(["feature", "enhancement", "bug", "chore"]);
   });
+
+  it("accepts operator.codify.eligibility landed and published", () => {
+    expect(Check(FactoryConfigSchema, { schemaVersion: 1, operator: { codify: { eligibility: "landed" } } })).toBe(true);
+    expect(Check(FactoryConfigSchema, { schemaVersion: 1, operator: { codify: { eligibility: "published" } } })).toBe(true);
+    expect(Check(FactoryConfigSchema, { schemaVersion: 1, operator: { codify: { eligibility: "draft" } } })).toBe(false);
+  });
 });
