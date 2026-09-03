@@ -4,6 +4,7 @@ import { matchesAny } from "../gate/glob.js";
 import { appendLedger } from "../scheduler/ledger.js";
 import type { SecretName } from "../vault/types.js";
 import type { Vault } from "../vault/vault.js";
+import { codifyInboxPath } from "./inbox.js";
 
 /** Interpreters whose invocation of a created file makes that file a script seed. */
 export const SEED_INTERPRETERS: ReadonlySet<string> = new Set([
@@ -43,10 +44,6 @@ export interface DetectSeedsInput {
 
 export function seedPath(runsDir: string, runId: string, stage: string, n: number): string {
   return join(runsDir, "_factory", "codify", "seeds", `${runId}-${stage}-${n}.json`);
-}
-
-export function codifyInboxPath(runsDir: string): string {
-  return join(runsDir, "_factory", "codify", "inbox.jsonl");
 }
 
 function binName(argv0: string | undefined): string {
@@ -213,7 +210,7 @@ export async function snapshotSeed(input: SnapshotSeedInput): Promise<SeedRecord
   return rec;
 }
 
-export async function appendCodifyInbox(runsDir: string, rec: Record<string, unknown>): Promise<void> {
+export async function appendSeedInbox(runsDir: string, rec: Record<string, unknown>): Promise<void> {
   const path = codifyInboxPath(runsDir);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await appendFile(path, `${JSON.stringify(rec)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -279,7 +276,7 @@ export async function maybeSeed(input: MaybeSeedInput): Promise<SeedRecord[]> {
       writeRoots: input.writeRoots,
       ...(input.vault === undefined ? {} : { vault: input.vault }),
     });
-    await appendCodifyInbox(input.runsDir, {
+    await appendSeedInbox(input.runsDir, {
       trigger: "script-seed",
       priority: -5,
       runId: input.runId,

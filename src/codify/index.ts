@@ -52,5 +52,22 @@ export {
 export type { CodifyInboxRecord } from "./inbox.js";
 export { admitCodify, forwardRoiHolds, rankScore } from "./roi.js";
 export type { AdmissionDecision, AdmissionInput } from "./roi.js";
+export {
+  SEED_INTERPRETERS,
+  detectSeeds,
+  maybeSeed,
+  seedAfterWriterStage,
+  seedPath,
+} from "./seeds.js";
+export type { SeedRecord } from "./seeds.js";
+export {
+  EFFECT_PLAN_SCHEMA,
+  lintTaskToolNetwork,
+  nextSupervised,
+  parseEffectPlan,
+  taskToolProfile,
+  unattendedAllowed,
+} from "./task-tool.js";
+export type { EffectPlan, SupervisedState, TaskToolProfile } from "./task-tool.js";
 
 

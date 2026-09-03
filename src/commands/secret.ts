@@ -10,7 +10,7 @@ const V1_VERBS = new Set(["set", "list", "rm", "rotate"]);
 const V15_VERBS = new Set(["bind", "export", "import", "scrub"]);
 
 export interface SecretCommandUi {
-  input: (title: string, placeholder?: string) => Promise<string>;
+  input: (title: string, placeholder?: string) => Promise<string | undefined>;
 }
 
 function flagString(flags: Record<string, string | boolean>, name: string): string | undefined {
@@ -40,7 +40,11 @@ async function readValue(parsed: ParsedFactoryArgs): Promise<{ value: string; wa
 async function readPassphrase(parsed: ParsedFactoryArgs, ui: SecretCommandUi | undefined): Promise<string> {
   const fromFile = flagString(parsed.flags, "passphrase-from-file");
   if (fromFile !== undefined) return (await readFile(fromFile, "utf8")).replace(/\n+$/, "");
-  if (ui !== undefined) return ui.input("Vault passphrase", "");
+  if (ui !== undefined) {
+    const typed = await ui.input("Vault passphrase", "");
+    if (typed === undefined || typed.length === 0) throw new Error("secret: passphrase required");
+    return typed;
+  }
   throw new Error("secret: provide --passphrase-from-file or an interactive session");
 }
 
