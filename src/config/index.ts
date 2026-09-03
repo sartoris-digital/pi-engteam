@@ -8,3 +8,4 @@ export {
   type RepoDefaultValues,
   type TrackerEntryDefaults,
 } from "./defaults.js";
+export { mergeLayers, type ConfigLayer, type MergeOptions, type MergeResult } from "./merge.js";
