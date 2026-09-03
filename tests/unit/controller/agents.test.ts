@@ -67,6 +67,28 @@ describe("loadAgentDefs", () => {
     expect(body).toContain("fenced");
   });
 
+  it("loads learner without bash only when the caller requires it", async () => {
+    const loaded = await loadAgentDefs({
+      root: packageRoot(),
+      models: {},
+      defaultModel: "slot-a",
+      required: ["learner"],
+    });
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.name).toBe("learner");
+    expect(loaded[0]?.tools).toEqual(["read", "grep", "find", "write", "edit"]);
+    expect(loaded[0]?.tools).not.toContain("bash");
+    expect(loaded[0]?.stageClass).toBe("writer");
+    const roster = await loadAgentDefs({
+      root: packageRoot(),
+      models: {},
+      defaultModel: "slot-a",
+      required: AGENTS,
+    });
+    expect(roster.map((a) => a.name)).not.toContain("learner");
+    expect(roster).toHaveLength(13);
+  });
+
   it("V1_AGENTS is the catalog minus codifier", () => {
     expect([...V1_AGENTS]).toEqual(AGENTS.filter((name) => name !== "codifier"));
     expect(V1_AGENTS).toHaveLength(12);

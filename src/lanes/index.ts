@@ -26,6 +26,7 @@ export {
   MODES,
   PARAMETERISED_PREDICATES,
   PREDICATES,
+  agentsFor,
   isAgent,
   isHostAction,
   isImplementClassStage,

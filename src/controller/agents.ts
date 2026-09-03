@@ -5,6 +5,7 @@ import { AGENTS } from "../lanes/catalog.js";
 import type { AgentDef } from "../runtime/types.js";
 
 const WRITERS = new Set(["implementer", "tester", "codifier"]);
+const LEARNER_TOOLS = ["read", "grep", "find", "write", "edit"] as const;
 
 /** Catalog minus `codifier`, which stays loadable on demand. */
 export const V1_AGENTS = AGENTS.filter((name) => name !== "codifier");
@@ -29,14 +30,17 @@ export async function loadAgentDefs(opts: LoadAgentDefsOptions): Promise<AgentDe
     } catch {
       throw new Error(`no agent definition for "${name}"`);
     }
-    const writer = WRITERS.has(name);
+    const learner = name === "learner";
+    const writer = WRITERS.has(name) || learner;
     out.push({
       name,
       model: opts.models[name] ?? opts.defaultModel,
       promptPath,
-      tools: writer
-        ? ["read", "grep", "find", "write", "edit", "bash"]
-        : ["read", "grep", "find"],
+      tools: learner
+        ? [...LEARNER_TOOLS]
+        : writer
+          ? ["read", "grep", "find", "write", "edit", "bash"]
+          : ["read", "grep", "find"],
       stageClass: writer ? "writer" : "read-only",
     });
   }

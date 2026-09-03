@@ -1,3 +1,5 @@
+import type { V3HostConfig } from "../v3/dispatch.js";
+import { maybeLearnerAgent, type LedgerEvent, type LearnerGateOpts } from "../v3/learner.js";
 import type { StageDef } from "./schema.js";
 
 export const AGENTS = [
@@ -64,6 +66,16 @@ export const CATALOG: Catalog = {
   modes: MODES,
   implementClassStages: IMPLEMENT_CLASS_STAGES,
 };
+
+/** Built-in 13-prompt roster, plus `learner` only when both v3 gates pass. Never mutates `AGENTS`. */
+export function agentsFor(
+  cfg: V3HostConfig,
+  ledger: readonly LedgerEvent[],
+  opts?: LearnerGateOpts,
+): readonly string[] {
+  const extra = maybeLearnerAgent(cfg, ledger, opts);
+  return extra === null ? AGENTS : [...AGENTS, extra];
+}
 
 export function isAgent(value: string): value is AgentName {
   return (AGENTS as readonly string[]).includes(value);

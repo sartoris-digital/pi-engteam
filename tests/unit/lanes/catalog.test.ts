@@ -7,6 +7,7 @@ import {
   MODES,
   PARAMETERISED_PREDICATES,
   PREDICATES,
+  agentsFor,
   isAgent,
   isHostAction,
   isImplementClassStage,
@@ -15,6 +16,7 @@ import {
   mostRecentImplementStage,
   parsePredicate,
 } from "../../../src/lanes/catalog.js";
+import { DEFAULT_V3_POLICY } from "../../../src/v3/dispatch.js";
 
 describe("catalog", () => {
   it("lists the 13 roster agents in spec §4.5 order", () => {
@@ -99,5 +101,12 @@ describe("catalog", () => {
     expect(mostRecentImplementStage(stages, "steer")).toBeUndefined();
     expect(CATALOG.agents).toBe(AGENTS);
     expect(CATALOG.hostActions).toBe(HOST_ACTIONS);
+  });
+
+  it("does not register learner on the default catalog even if the prompt exists", () => {
+    expect(AGENTS).toHaveLength(13);
+    expect(CATALOG.agents).not.toContain("learner");
+    expect(isAgent("learner")).toBe(false);
+    expect(agentsFor({ v3: DEFAULT_V3_POLICY }, [])).toEqual([...AGENTS]);
   });
 });
