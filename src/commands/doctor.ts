@@ -21,6 +21,8 @@ import {
   type DoctorProbe,
 } from "../setup/doctor-probes.js";
 import { globalConfigPath } from "../config/layers.js";
+import { AGENTS } from "../lanes/catalog.js";
+import { collectV3DoctorLines } from "../v3/doctor.js";
 import type { ParsedFactoryArgs } from "./router.js";
 
 export type { DoctorMetrics, DoctorProbe };
@@ -104,6 +106,13 @@ export async function collectDoctorReport(deps: FactoryDeps, opts: DoctorOptions
     probeLease(opts.lease ?? { holder: true, ageSeconds: 0, pid: process.pid }),
   ];
   const events = await readDoctorLedger(deps.runsDir, opts.since);
+  probes.push(
+    ...collectV3DoctorLines({
+      cfg: {},
+      events: events.map((e) => ({ ts: typeof e.ts === "string" ? e.ts : "", type: typeof e.type === "string" ? e.type : "" })),
+      agents: AGENTS,
+    }),
+  );
   return {
     probes,
     metrics: metricsFromLedger(events),

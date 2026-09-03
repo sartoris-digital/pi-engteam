@@ -1,3 +1,4 @@
+import { v3StatusCompletions } from "../v3/doctor.js";
 import { SUBCOMMANDS } from "./router.js";
 
 export interface AutocompleteItem {
@@ -86,6 +87,9 @@ function runItems(verb: string, runs: CompletionRun[], prefix: string): Autocomp
 
 export function completeFactoryArgs(argumentPrefix: string, deps: CompletionDeps): AutocompleteItem[] | null {
   const trimmed = argumentPrefix;
+  if (trimmed.startsWith("setfit") || trimmed.startsWith("learner")) {
+    return items(v3StatusCompletions(), trimmed);
+  }
   if (trimmed === "" || /^[a-z]*$/.test(trimmed)) {
     return items(
       SUBCOMMANDS.map((v) => ({ value: v, label: v, description: VERB_HELP[v] })),
