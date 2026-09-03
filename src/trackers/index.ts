@@ -20,3 +20,5 @@ export { GhError, ensureRepoFlag, realGhExec } from "./gh.js";
 export type { GhExec, GhResult } from "./gh.js";
 export { GitHubAdapter, parseGitHubRef, splitGitHubId } from "./github.js";
 export type { GitHubAdapterOptions } from "./github.js";
+export { buildTrackerRegistry, detectTrackerFromRemote, githubConfigured } from "./discovery.js";
+export type { TrackerRegistry } from "./discovery.js";

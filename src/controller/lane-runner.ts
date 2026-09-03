@@ -13,6 +13,7 @@ import { probeSandbox, profileForRequest, type SandboxProbe, type SandboxProfile
 import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
+import type { TrackerRegistry } from "../trackers/discovery.js";
 import { LocalAdapter } from "../trackers/local.js";
 import { hostGitOk } from "../git/host-git.js";
 import { EnvSetupFailedError, runSetupCommand } from "../workspace/setup.js";
@@ -29,6 +30,7 @@ export interface FactoryDeps {
   executor: WorkerExecutor;
   provider: WorkspaceProvider;
   tracker: LocalAdapter;
+  adapters?: TrackerRegistry;
   agents: AgentDef[];
   lanes: Record<string, LaneDef>;
   piBinary: string;

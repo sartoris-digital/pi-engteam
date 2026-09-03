@@ -1,7 +1,10 @@
+import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "../commands/index.js";
+import type { TrackerEntry } from "../config/schema.js";
 import { Engine } from "../engine/engine.js";
 import { defaultVerify } from "../engine/verify.js";
 import { loadRunState, saveRunState } from "../engine/state.js";
@@ -11,6 +14,9 @@ import { evalWhen as evalLaneExpr, type WhenContext } from "../lanes/expr.js";
 import { loadEffectiveLanes } from "../lanes/index.js";
 import type { FactoryEvent } from "../observer/events.js";
 import { HeadlessExecutor } from "../runtime/headless.js";
+import { buildTrackerRegistry, detectTrackerFromRemote, githubConfigured } from "../trackers/discovery.js";
+import { realGhExec } from "../trackers/gh.js";
+import type { GitHubAdapterOptions } from "../trackers/github.js";
 import { LocalAdapter } from "../trackers/local.js";
 import { installInputGuard } from "../vault/input-guard.js";
 import { Vault } from "../vault/vault.js";
@@ -19,6 +25,8 @@ import { loadAgentDefs, packageRoot, V1_AGENTS } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
 import { rehydrateOpenWorkflows, runObservers, sandboxProfileForRun, type FactoryDeps } from "./lane-runner.js";
 import { workspaceFromState } from "./stage-hooks.js";
+
+const execFileAsync = promisify(execFile);
 
 const FACTORY_CO_AUTHOR = "Claude Fable 5.1 <noreply@anthropic.com>";
 
@@ -45,25 +53,57 @@ export function makeEngine(runs: string, opts: { coAuthoredBy: boolean }): Engin
 
 interface GlobalOverlay {
   repos: string[];
+  remotes: string[];
+  trackers: TrackerEntry[];
   coAuthoredBy: boolean;
   worktreeRoot?: string;
+}
+
+async function gitRemoteUrl(cwd: string, remote: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", cwd, "remote", "get-url", remote], {
+      timeout: 5000,
+      encoding: "utf8",
+    });
+    const url = stdout.trim();
+    return url.length > 0 ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 async function readGlobalOverlay(home: string): Promise<GlobalOverlay> {
   try {
     const cfg = await readJsonArtifact<{
-      operator?: { coAuthoredBy?: boolean; worktreeRoot?: string };
-      repos?: { path: string }[];
+      operator?: { coAuthoredBy?: boolean; worktreeRoot?: string; trackers?: TrackerEntry[] | null };
+      repos?: { path: string; remote?: string }[];
     }>(join(home, "factory.json"));
     const worktreeRoot = cfg.operator?.worktreeRoot;
+    const trackers = Array.isArray(cfg.operator?.trackers) ? cfg.operator.trackers : [];
+    const remotes: string[] = [];
+    for (const entry of cfg.repos ?? []) {
+      if (typeof entry.remote === "string" && detectTrackerFromRemote(entry.remote) !== null) {
+        remotes.push(entry.remote);
+        continue;
+      }
+      const url = await gitRemoteUrl(entry.path, typeof entry.remote === "string" ? entry.remote : "origin");
+      if (url !== null) remotes.push(url);
+    }
     return {
       repos: (cfg.repos ?? []).map((entry) => entry.path),
+      remotes,
+      trackers,
       coAuthoredBy: cfg.operator?.coAuthoredBy ?? true,
       ...(worktreeRoot === undefined ? {} : { worktreeRoot }),
     };
   } catch {
-    return { repos: [], coAuthoredBy: true };
+    return { repos: [], remotes: [], trackers: [], coAuthoredBy: true };
   }
+}
+
+function hostGhExec() {
+  const bin = process.env.PI_SDLC_GH_EXEC;
+  return realGhExec(typeof bin === "string" && bin.length > 0 ? bin : "gh");
 }
 
 export async function buildFactoryDeps(): Promise<FactoryDeps> {
@@ -79,6 +119,22 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     defaultModel: process.env["PI_SDLC_DEFAULT_MODEL"] ?? "slot-a",
     required: [...V1_AGENTS],
   });
+  const tracker = new LocalAdapter(runs);
+  const detected = overlay.remotes.map(detectTrackerFromRemote).find((hit) => hit !== null);
+  const github: GitHubAdapterOptions | undefined = githubConfigured({
+    trackers: overlay.trackers,
+    remotes: overlay.remotes,
+  })
+    ? {
+        exec: hostGhExec(),
+        ...(detected === undefined ? {} : { repo: `${detected.owner}/${detected.repo}` }),
+      }
+    : undefined;
+  const adapters = buildTrackerRegistry({
+    local: tracker,
+    ...(github === undefined ? {} : { github }),
+    trackers: overlay.trackers,
+  });
   return {
     home,
     runsDir: runs,
@@ -91,7 +147,8 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
       home,
       ...(overlay.worktreeRoot === undefined ? {} : { worktreeRoot: overlay.worktreeRoot }),
     }),
-    tracker: new LocalAdapter(runs),
+    tracker,
+    adapters,
     agents,
     lanes,
     piBinary: process.env["PI_SDLC_PI_BINARY"] ?? "pi",
@@ -122,6 +179,8 @@ export async function recoverRunningRuns(runsDirPath: string): Promise<string[]>
 export async function registerController(pi: ExtensionAPI): Promise<void> {
   const deps = await buildFactoryDeps();
   const commands = registerCommands(pi, deps);
+  // resources_discover → skillPaths is a later controller task. Pi 0.84 has the
+  // event; Group 1 ships skills/factory-*/SKILL.md and does not fake registration.
   let vault: Vault | null = null;
   try {
     vault = await Vault.open({ home: deps.home });
