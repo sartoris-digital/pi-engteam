@@ -16,3 +16,20 @@ export {
   type ParseVerdictResult,
   type WaitForVerdictOptions,
 } from "./verdict.js";
+export {
+  HERDR_SOCKET,
+  PROTECTED_READ_DENY,
+  SandboxUnavailableError,
+  probeSandbox,
+  profileForRequest,
+  renderBwrapArgs,
+  renderSeatbeltProfile,
+  worktreeGitDir,
+  wrapArgv,
+  type ProbeSandboxOptions,
+  type ProfileForRequestOptions,
+  type SandboxProbe,
+  type SandboxProfile,
+  type SandboxProvider,
+  type WrapArgvOptions,
+} from "./sandbox.js";
