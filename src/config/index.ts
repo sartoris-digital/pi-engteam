@@ -30,3 +30,4 @@ export {
   SAFETY_KEYS,
   type SafetyKey,
 } from "./narrowing.js";
+export { loadEffectiveConfig, resolveDefaultBase, sha256Hex, type LoadOptions } from "./effective.js";
