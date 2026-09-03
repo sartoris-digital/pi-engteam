@@ -5,3 +5,12 @@ export {
   type VerdictEmitDetails,
   type VerdictEmitOptions,
 } from "./verdict-emit.js";
+export {
+  REQUEST_APPROVAL_TOOL_NAME,
+  RequestApprovalParams,
+  createRequestApprovalTool,
+  pendingApprovalPath,
+  type PendingApproval,
+  type RequestApprovalInput,
+  type RequestApprovalOptions,
+} from "./request-approval.js";
