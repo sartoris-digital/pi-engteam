@@ -1,9 +1,11 @@
 import { DEFAULTS } from "../config/defaults.js";
+import type { AnalystPort } from "../intake/analyze.js";
 import type { Ticket, TrackerAdapter } from "../trackers/adapter.js";
 import type { TrackerRegistry } from "../trackers/discovery.js";
 import { GhError } from "../trackers/gh.js";
 import { admit, type AdmissionWorld } from "./admission.js";
 import { claimTicket } from "./claim.js";
+import { applyIntake } from "./intake-claim.js";
 import { drainInbox } from "./inbox.js";
 import { acquireDaemonLease, type DaemonLease } from "./lease.js";
 import { readQueue, writeQueue } from "./queue.js";
@@ -132,6 +134,7 @@ export function makeOnTicket(opts: {
   authorized?: (ticket: Ticket, trackerId: string) => Promise<boolean> | boolean;
   world?: () => AdmissionWorld;
   now?: () => Date;
+  analyst?: AnalystPort;
 }): SchedulerDeps["onTicket"] {
   const world = opts.world ?? (() => ({
     running: [],
@@ -168,6 +171,12 @@ export function makeOnTicket(opts: {
       await writeQueue(opts.runsDir, queue);
       return { skipped: true };
     }
+    await applyIntake({
+      ticket,
+      entry: claimed.entry,
+      adapter,
+      analyst: opts.analyst,
+    });
     await writeQueue(opts.runsDir, queue);
     return {};
   };

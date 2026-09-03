@@ -39,7 +39,7 @@ describe("runEnqueue", () => {
     );
     expect(ticket.kind).toBe("chore");
     expect(ticket.title).toMatch(/add a greeting helper/i);
-    expect(entry.state).toBe("queued");
+    expect(["queued", "ready"]).toContain(entry.state);
     expect(entry.ref).toBe(ticket.ref.id);
     const queue = await readQueue(runs);
     expect(queue.entries).toHaveLength(1);

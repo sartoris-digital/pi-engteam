@@ -1,4 +1,5 @@
 import type { FactoryDeps } from "../controller/lane-runner.js";
+import { applyIntake } from "../scheduler/intake-claim.js";
 import { TERMINAL_QUEUE_STATES, queueKey, readQueue, writeQueue, type QueueEntry } from "../scheduler/queue.js";
 import type { Ticket, TicketKind } from "../trackers/adapter.js";
 import { isTicketKind, refToString } from "../trackers/adapter.js";
@@ -43,7 +44,8 @@ export async function runEnqueue(
     repo = deps.repos[0] ?? deps.projectRootDefault;
   }
   const kindFlag = flagString(parsed.flags, "kind");
-  const kind: TicketKind = isTicketKind(kindFlag) ? kindFlag : "chore";
+  const kindOverride = isTicketKind(kindFlag) ? kindFlag : undefined;
+  const kind: TicketKind = kindOverride ?? "chore";
   const lane = flagString(parsed.flags, "lane");
   const now = new Date().toISOString();
 
@@ -83,6 +85,17 @@ export async function runEnqueue(
     updatedAt: now,
   };
   queue.entries.push(entry);
+  if (kindOverride !== undefined) {
+    await applyIntake({
+      ticket,
+      entry,
+      adapter: deps.tracker,
+      analyst: deps.analyst,
+      kindOverride,
+      lanes: deps.lanes,
+      repoResolvable: true,
+    });
+  }
   await writeQueue(deps.runsDir, queue);
   return { ticket, entry };
 }

@@ -10,6 +10,7 @@ import { Observer } from "../observer/events.js";
 import { CATALOG, compileLane, BUILTIN_POLICY_PATH } from "../lanes/index.js";
 import type { LaneDef, NamedLane } from "../lanes/schema.js";
 import { probeSandbox, profileForRequest, type SandboxProbe, type SandboxProfile } from "../runtime/sandbox.js";
+import type { AnalystPort } from "../intake/analyze.js";
 import type { AgentDef, WorkerExecutor, WorkerRequest } from "../runtime/types.js";
 import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
@@ -45,6 +46,7 @@ export interface FactoryDeps {
   vault?: Vault;
   scheduler?: FactoryScheduler;
   probeSandbox?: () => Promise<SandboxProbe>;
+  analyst?: AnalystPort;
 }
 
 export const runObservers = new Map<string, Observer>();
@@ -248,7 +250,11 @@ export async function runTicket(
     }
   }
 
-  const sandbox = await prepareRunSandbox(state.runId, cfg.repo);
+  const sandbox = await prepareRunSandbox(
+    state.runId,
+    cfg.repo,
+    deps.probeSandbox === undefined ? undefined : { probe: deps.probeSandbox },
+  );
   if (!sandbox.ok) return failEnvSetup(state, deps.runsDir, sandbox.detail);
 
   runObservers.set(state.runId, new Observer(dir, state.runId));

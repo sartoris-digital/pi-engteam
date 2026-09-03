@@ -23,3 +23,5 @@ export type { AdmissionRefusal, AdmissionWorld, RunningEntry } from "./admission
 export { claimTicket } from "./claim.js";
 export type { ClaimTicketOptions } from "./claim.js";
 export { makeOnTicket } from "./poller.js";
+export { applyIntake } from "./intake-claim.js";
+export type { ApplyIntakeOptions } from "./intake-claim.js";
