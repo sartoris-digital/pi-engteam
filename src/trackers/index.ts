@@ -16,3 +16,7 @@ export { sanitizeTicketText, stripTrackerPrior } from "./sanitize.js";
 export type { TrackerPrior } from "./sanitize.js";
 export { screenText } from "./screen.js";
 export type { ScreenFlags } from "./screen.js";
+export { GhError, ensureRepoFlag, realGhExec } from "./gh.js";
+export type { GhExec, GhResult } from "./gh.js";
+export { GitHubAdapter, parseGitHubRef, splitGitHubId } from "./github.js";
+export type { GitHubAdapterOptions } from "./github.js";
