@@ -40,19 +40,6 @@ export const FACTORY_EVENTS = [
   "factory.ticket.landed",
   "factory.pr.opened",
   "factory.approval.granted",
-  "factory.codified.staged",
-  "factory.codified.probationary",
-  "factory.codified.active",
-  "factory.codified.assist",
-  "factory.codified.demoted",
-  "factory.codified.retired",
-  "factory.codified.rejected",
-  "factory.codified.drifted",
-  "factory.codified.mine",
-  "factory.codified.assess",
-  "factory.codified.generate",
-  "factory.codified.validate",
-  "factory.codified.blocked",
 ] as const;
 
 export type FactoryEventName = (typeof FACTORY_EVENTS)[number];
