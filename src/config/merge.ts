@@ -26,7 +26,7 @@ type Touch = (path: string, action: "set" | "delete") => void;
  * `null` deletes. Returns a new object; neither input is mutated or aliased.
  */
 export function deepMerge(base: JsonObject, overlay: JsonObject, touch?: Touch, prefix = ""): JsonObject {
-  const out: JsonObject = { ...base };
+  const out: JsonObject = structuredClone(base);
   for (const [key, value] of Object.entries(overlay)) {
     const path = prefix === "" ? key : `${prefix}.${key}`;
     if (value === undefined) continue;

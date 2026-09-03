@@ -35,6 +35,14 @@ describe("deepMerge", () => {
     expect(base.obj).toEqual({ k: "v" });
     expect(overlay.obj).toEqual({ k2: "v2" });
   });
+
+  it("does not alias nested base objects the overlay never visits", () => {
+    const base = { nested: { value: 1 } };
+    const result = deepMerge(base, {});
+    (result.nested as { value: number }).value = 2;
+    expect(base.nested.value).toBe(1);
+    expect(result.nested).not.toBe(base.nested);
+  });
 });
 
 describe("mergeLayers", () => {
