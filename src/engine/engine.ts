@@ -404,7 +404,6 @@ export class Engine {
     return true;
   }
 
-  /** Task 3.6 replaces this with the fix-round / maxRounds counting version. */
   private async applyTransition(reg: Registered, state: RunState, step: Step, result: StepResult): Promise<TransitionOutcome> {
     const transition = reg.workflow.transitions.find((t) => t.from === step.name && t.when(result));
     if (!transition) {
@@ -422,6 +421,29 @@ export class Engine {
       await this.escalate(reg, state, "needs-decision", `transition from '${step.name}' targets unknown step '${target}'`);
       return "escalated";
     }
+
+    if (result.verdict !== "PASS" && step.onFail === "fix-round") {
+      // The implement-class target's fix-round counter: consumed by every back-edge into it.
+      const used = (state.rounds[target] ?? 0) + 1;
+      state.rounds[target] = used;
+      if (used > state.budget.fixRounds) {
+        const detail =
+          `fix rounds for '${target}' exhausted: ${used} > fixRounds ${state.budget.fixRounds} ` +
+          `(after '${step.name}' ${result.verdict}: ${(result.issues ?? []).join("; ") || "no issues reported"})`;
+        await this.escalate(reg, state, "loop-exhausted", detail);
+        return "escalated";
+      }
+      // A stage's own bound on how many fix rounds it may request (e.g. review 1, security 1).
+      if (step.maxRounds !== undefined) {
+        const own = (state.rounds[step.name] ?? 0) + 1;
+        state.rounds[step.name] = own;
+        if (own > step.maxRounds) {
+          await this.escalate(reg, state, "loop-exhausted", `'${step.name}' exceeded maxRounds ${step.maxRounds} (${own} fix rounds requested)`);
+          return "escalated";
+        }
+      }
+    }
+
     state.iteration += 1;
     state.currentStep = target;
     return "next";
