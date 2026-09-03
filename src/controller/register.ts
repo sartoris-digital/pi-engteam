@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCommands } from "../commands/index.js";
+import { DEFAULTS } from "../config/defaults.js";
 import type { TrackerEntry } from "../config/schema.js";
 import { Engine } from "../engine/engine.js";
 import { defaultVerify } from "../engine/verify.js";
@@ -26,6 +27,7 @@ import { HerdrWorktreeProvider } from "../workspace/herdr-provider.js";
 import type { WorkspaceProvider } from "../workspace/types.js";
 import { loadAgentDefs, packageRoot, V1_AGENTS } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
+import { Scheduler, makeOnTicket } from "../scheduler/poller.js";
 import { recoverFactory, pauseRunningEngineRuns } from "../scheduler/recover.js";
 import { rehydrateOpenWorkflows, runObservers, sandboxProfileForRun, type FactoryDeps } from "./lane-runner.js";
 import { workspaceFromState } from "./stage-hooks.js";
@@ -193,6 +195,15 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     herdrCli,
     ...(overlay.worktreeRoot === undefined ? {} : { worktreeRoot: overlay.worktreeRoot }),
   });
+  const scheduler = new Scheduler({
+    runsDir: runs,
+    adapters,
+    pollIntervalSeconds: DEFAULTS.operator.pollIntervalSeconds,
+    onTicket: makeOnTicket({
+      runsDir: runs,
+      adapterFor: (id) => adapters.get(id),
+    }),
+  });
   return {
     home,
     runsDir: runs,
@@ -206,6 +217,7 @@ export async function buildFactoryDeps(): Promise<FactoryDeps> {
     lanes,
     piBinary: process.env["PI_SDLC_PI_BINARY"] ?? "pi",
     repos: overlay.repos,
+    scheduler,
   };
 }
 
