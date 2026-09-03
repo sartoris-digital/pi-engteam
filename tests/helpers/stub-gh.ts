@@ -17,7 +17,7 @@ export interface StubGhScript {
   authStatus?: { code: number; stdout: string; stderr?: string };
   issues?: Record<string, StubGhIssue>;
   events?: Record<string, Array<{ event: string; actor: { login: string }; label?: { name: string } }>>;
-  collab?: Record<string, { role_name: string }>;
+  collab?: Record<string, { role_name: string; permission?: string }>;
   comments?: Record<string, Comment[]>;
   search?: TicketSummary[];
   prs?: Array<{ head: string; number: number; url: string; state: string; mergeCommit?: string }>;
@@ -231,7 +231,11 @@ function dispatchApi(script: StubGhScript, args: string[], repo: string): GhResu
     const login = collabMatch[3] ?? "";
     const row = script.collab?.[login];
     if (!row) return textResult("", 1, "Not Found");
-    return jsonResult({ role_name: row.role_name, permission: row.role_name, user: { login } });
+    return jsonResult({
+      role_name: row.role_name,
+      permission: row.permission ?? row.role_name,
+      user: { login },
+    });
   }
 
   const commentsMatch = /^repos\/([^/]+)\/([^/]+)\/issues\/(\d+)\/comments$/.exec(path);
