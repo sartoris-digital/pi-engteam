@@ -240,7 +240,8 @@ export class Engine {
 
         const outcome = await this.applyTransition(reg, state, step, result);
         if (outcome === "halt") return await this.finish(state, "succeeded");
-        if (outcome === "escalated" && state.status === "failed") return state;
+        // finish()/escalate() mutate status via methods; CFA still sees "running".
+        if (outcome === "escalated" && (state.status as RunState["status"]) === "failed") return state;
         await this.save(state);
       }
     } finally {

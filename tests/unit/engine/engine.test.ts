@@ -108,9 +108,11 @@ describe("Engine.executeRun", () => {
     const engine = new Engine({ runsDir, evalWhen: evalWhenStub });
     const run = await engine.startRun(startParams(makeWorkflow("lin", steps)));
     await engine.executeRun(run.runId);
-    expect(seen?.status).toBe("running");
-    expect(seen?.currentStep).toBe("b");
-    expect(seen?.steps.map((s) => s.name)).toEqual(["a"]);
+    // Assignment is inside the step callback; CFA still sees `seen` as null.
+    const captured = seen as RunState | null;
+    expect(captured?.status).toBe("running");
+    expect(captured?.currentStep).toBe("b");
+    expect(captured?.steps.map((s) => s.name)).toEqual(["a"]);
   });
 
   it("skips a step whose `when` is false: evidence skipped, verdict PASS, run never called", async () => {
