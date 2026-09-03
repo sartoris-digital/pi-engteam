@@ -12,6 +12,8 @@ import { loadEffectiveLanes } from "../lanes/index.js";
 import type { FactoryEvent } from "../observer/events.js";
 import { HeadlessExecutor } from "../runtime/headless.js";
 import { LocalAdapter } from "../trackers/local.js";
+import { installInputGuard } from "../vault/input-guard.js";
+import { Vault } from "../vault/vault.js";
 import { GitWorktreeProvider } from "../workspace/git-provider.js";
 import { loadAgentDefs, packageRoot, V1_AGENTS } from "./agents.js";
 import { readJsonArtifact } from "./artifacts.js";
@@ -120,6 +122,13 @@ export async function recoverRunningRuns(runsDirPath: string): Promise<string[]>
 export async function registerController(pi: ExtensionAPI): Promise<void> {
   const deps = await buildFactoryDeps();
   const commands = registerCommands(pi, deps);
+  let vault: Vault | null = null;
+  try {
+    vault = await Vault.open({ home: deps.home });
+  } catch {
+    vault = null;
+  }
+  installInputGuard(pi, vault);
   pi.on("session_start", async () => {
     await recoverRunningRuns(deps.runsDir);
     await rehydrateOpenWorkflows(deps);

@@ -121,3 +121,15 @@ export class Vault {
     }
   }
 }
+
+export async function probeVault(
+  opts: { home?: string; store?: VaultStore; keyring?: KeyringPort } = {},
+): Promise<{ ok: boolean; path: string; reason?: string }> {
+  const path = vaultPath(opts.home ?? factoryHome());
+  try {
+    await Vault.open(opts);
+    return { ok: true, path };
+  } catch (err) {
+    return { ok: false, path, reason: err instanceof Error ? err.message : String(err) };
+  }
+}

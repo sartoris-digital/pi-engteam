@@ -17,6 +17,9 @@ export interface KeyringModule {
 const require = createRequire(import.meta.url);
 
 function defaultLoad(): KeyringModule {
+  if (process.env.VITEST) {
+    throw new Error("native keyring is disabled in tests");
+  }
   return require("@napi-rs/keyring") as KeyringModule;
 }
 
