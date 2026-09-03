@@ -18,3 +18,8 @@ export type { LedgerEvent } from "./ledger.js";
 export { Scheduler } from "./poller.js";
 export type { SchedulerDeps } from "./poller.js";
 export { readWatermark, writeWatermark, watermarkPath } from "./watermark.js";
+export { admit, factoryBranchPrefix } from "./admission.js";
+export type { AdmissionRefusal, AdmissionWorld, RunningEntry } from "./admission.js";
+export { claimTicket } from "./claim.js";
+export type { ClaimTicketOptions } from "./claim.js";
+export { makeOnTicket } from "./poller.js";

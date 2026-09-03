@@ -2,8 +2,11 @@ import { DEFAULTS } from "../config/defaults.js";
 import type { Ticket, TrackerAdapter } from "../trackers/adapter.js";
 import type { TrackerRegistry } from "../trackers/discovery.js";
 import { GhError } from "../trackers/gh.js";
+import { admit, type AdmissionWorld } from "./admission.js";
+import { claimTicket } from "./claim.js";
 import { drainInbox } from "./inbox.js";
 import { acquireDaemonLease, type DaemonLease } from "./lease.js";
+import { readQueue, writeQueue } from "./queue.js";
 import { readWatermark, writeWatermark } from "./watermark.js";
 
 export interface SchedulerDeps {
@@ -121,4 +124,51 @@ function isRetryable(err: unknown): boolean {
   if (!(err instanceof GhError)) return false;
   const text = `${err.stderr}\n${err.message}\n${String(err.code)}`;
   return /429|Retry-After/i.test(text);
+}
+
+export function makeOnTicket(opts: {
+  runsDir: string;
+  adapterFor: (trackerId: string) => TrackerAdapter | undefined;
+  authorized?: (ticket: Ticket, trackerId: string) => Promise<boolean> | boolean;
+  world?: () => AdmissionWorld;
+  now?: () => Date;
+}): SchedulerDeps["onTicket"] {
+  const world = opts.world ?? (() => ({
+    running: [],
+    maxLanes: 3,
+    maxLanesPerRepo: 2,
+    ticketsToday: 0,
+    maxTicketsPerDay: 20,
+    spendToday: 0,
+    dailyBudgetUsd: 150,
+    exclusiveRunning: false,
+    predictedPaths: [],
+  }));
+  return async (ticket, trackerId) => {
+    const adapter = opts.adapterFor(trackerId);
+    if (adapter === undefined) return { skipped: true };
+    const queue = await readQueue(opts.runsDir);
+    const authorized = opts.authorized === undefined ? true : await opts.authorized(ticket, trackerId);
+    const claimed = await claimTicket({
+      adapter,
+      ticket,
+      queue,
+      authorized,
+      runsDir: opts.runsDir,
+      now: opts.now,
+    });
+    if (claimed.skipped !== undefined) {
+      await writeQueue(opts.runsDir, queue);
+      return { skipped: true };
+    }
+    const decision = admit(claimed.entry, world());
+    if (!decision.ok) {
+      claimed.entry.state = decision.reason === "overlap" ? "waiting_lane" : "blocked";
+      claimed.entry.lastError = decision.reason;
+      await writeQueue(opts.runsDir, queue);
+      return { skipped: true };
+    }
+    await writeQueue(opts.runsDir, queue);
+    return {};
+  };
 }
