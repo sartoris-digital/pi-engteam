@@ -15,12 +15,19 @@ import type { Ticket } from "../trackers/adapter.js";
 import { refToString } from "../trackers/adapter.js";
 import type { TrackerRegistry } from "../trackers/discovery.js";
 import { LocalAdapter } from "../trackers/local.js";
+import type { Vault } from "../vault/vault.js";
 import { hostGitOk } from "../git/host-git.js";
 import { EnvSetupFailedError, runSetupCommand } from "../workspace/setup.js";
 import { sanitizeSlug } from "../workspace/git-provider.js";
 import type { Workspace, WorkspaceProvider } from "../workspace/types.js";
 import { writeTicketMarkdown } from "./artifacts.js";
 import { makeStageHooks, pinWorkspaceArtifacts, policyShaOf, type StageHookDeps } from "./stage-hooks.js";
+
+export interface FactoryScheduler {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  drainOnce(): Promise<{ claimed: number; skipped: number }>;
+}
 
 export interface FactoryDeps {
   home: string;
@@ -35,6 +42,9 @@ export interface FactoryDeps {
   lanes: Record<string, LaneDef>;
   piBinary: string;
   repos: string[];
+  vault?: Vault;
+  scheduler?: FactoryScheduler;
+  probeSandbox?: () => Promise<SandboxProbe>;
 }
 
 export const runObservers = new Map<string, Observer>();

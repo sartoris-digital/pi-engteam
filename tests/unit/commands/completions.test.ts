@@ -1,26 +1,23 @@
 import { describe, it, expect } from "vitest";
 import { completeFactoryArgs, type CompletionDeps } from "../../../src/commands/completions.js";
+import { SUBCOMMANDS } from "../../../src/commands/router.js";
 
 const deps: CompletionDeps = {
   lanes: ["chore", "bug"],
   repos: ["/repo-a", "/repo-b"],
-  runs: [{ ref: "local-01ARZ", runId: "r1", lane: "chore", status: "waiting_user" }],
+  runs: [
+    { ref: "local-01ARZ", runId: "r1", lane: "chore", status: "awaiting-steer" },
+    { ref: "local-pub", runId: "r2", lane: "chore", status: "published" },
+    { ref: "local-grant", runId: "r3", lane: "bug", status: "approval-needed" },
+  ],
+  secretNames: ["ACME_TOKEN", "repo/acme/GH_TOKEN"],
 };
 
 describe("completeFactoryArgs", () => {
-  it("is synchronous and lists v0 verbs on an empty prefix", () => {
+  it("is synchronous and lists v1 verbs on an empty prefix", () => {
     const items = completeFactoryArgs("", deps);
     expect(items).not.toBeInstanceOf(Promise);
-    expect(items?.map((i) => i.value)).toEqual([
-      "setup",
-      "enqueue",
-      "start",
-      "approve",
-      "status",
-      "landed",
-      "closed",
-      "reconcile",
-    ]);
+    expect(items?.map((i) => i.value)).toEqual([...SUBCOMMANDS]);
     expect(items?.every((i) => !i.value.endsWith(" "))).toBe(true);
     expect(items?.every((i) => typeof i.description === "string")).toBe(true);
   });
@@ -35,14 +32,34 @@ describe("completeFactoryArgs", () => {
     ]);
     const lanes = completeFactoryArgs("enqueue --lane c", deps);
     expect(lanes?.map((i) => i.value)).toEqual(["enqueue --lane chore"]);
+    expect(completeFactoryArgs("enqueue --priority ", deps)?.map((i) => i.value)).toEqual([
+      "enqueue --priority p0",
+      "enqueue --priority p1",
+      "enqueue --priority p2",
+      "enqueue --priority p3",
+    ]);
   });
 
-  it("completes approve/status refs from the snapshot, not from disk", () => {
+  it("completes approve only for awaiting-steer and grant only for approval-needed", () => {
     expect(completeFactoryArgs("approve ", deps)?.map((i) => i.value)).toEqual(["approve local-01ARZ"]);
-    expect(completeFactoryArgs("status loc", deps)?.map((i) => i.value)).toEqual(["status local-01ARZ"]);
+    expect(completeFactoryArgs("grant ", deps)?.map((i) => i.value)).toEqual(["grant local-grant"]);
+    expect(completeFactoryArgs("status loc", deps)?.map((i) => i.value)).toEqual([
+      "status local-01ARZ",
+      "status local-pub",
+      "status local-grant",
+    ]);
   });
 
-  it("does not offer watch", () => {
-    expect(completeFactoryArgs("w", deps)?.map((i) => i.value) ?? []).not.toContain("watch");
+  it("offers watch and secret verbs then vault names, never values", () => {
+    expect(completeFactoryArgs("w", deps)?.map((i) => i.value)).toContain("watch");
+    expect(completeFactoryArgs("secret ", deps)?.map((i) => i.value)).toEqual([
+      "secret set",
+      "secret list",
+      "secret rm",
+      "secret rotate",
+    ]);
+    const names = completeFactoryArgs("secret rm ", deps)?.map((i) => i.value) ?? [];
+    expect(names).toEqual(["secret rm ACME_TOKEN", "secret rm repo/acme/GH_TOKEN"]);
+    expect(JSON.stringify(names)).not.toMatch(/ghp_|sk-|value/i);
   });
 });

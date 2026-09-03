@@ -1,18 +1,43 @@
 import { describe, it, expect } from "vitest";
 import { parseFactoryArgs, SUBCOMMANDS } from "../../../src/commands/router.js";
 
+export const V1_SUBCOMMANDS = [
+  "setup",
+  "config",
+  "lanes",
+  "rules",
+  "remember",
+  "forget",
+  "secret",
+  "grill",
+  "watch",
+  "interrupt",
+  "start",
+  "stop",
+  "status",
+  "doctor",
+  "enqueue",
+  "classify",
+  "resume",
+  "approve",
+  "grant",
+  "replan",
+  "cancel",
+  "drop",
+  "retry",
+  "rescan",
+  "reconcile",
+  "landed",
+  "closed",
+  "gc",
+  "rebase",
+] as const;
+
 describe("parseFactoryArgs", () => {
-  it("lists the v0 watch-less subcommands", () => {
-    expect([...SUBCOMMANDS]).toEqual([
-      "setup",
-      "enqueue",
-      "start",
-      "approve",
-      "status",
-      "landed",
-      "closed",
-      "reconcile",
-    ]);
+  it("lists the v1 subcommand tree without codify", () => {
+    expect([...SUBCOMMANDS]).toEqual([...V1_SUBCOMMANDS]);
+    expect(SUBCOMMANDS).not.toContain("codify");
+    expect(SUBCOMMANDS).not.toContain("codified");
   });
 
   it("parses enqueue with quoted --task and string flags", () => {
@@ -40,10 +65,15 @@ describe("parseFactoryArgs", () => {
     expect(parseFactoryArgs("setup /repo").args).toEqual(["/repo"]);
   });
 
-  it("rejects unknown verbs including watch", () => {
-    const parsed = parseFactoryArgs("watch local-1");
+  it("accepts v1 verbs including watch and rejects unknown verbs with the v1 set", () => {
+    expect(parseFactoryArgs("watch local-1").verb).toBe("watch");
+    expect(parseFactoryArgs("grant r1").verb).toBe("grant");
+    expect(parseFactoryArgs("remember --global always add a changelog").verb).toBe("remember");
+    const parsed = parseFactoryArgs("codify");
     expect(parsed.verb).toBeNull();
-    expect(parsed.error).toMatch(/unknown subcommand watch/);
+    expect(parsed.error).toMatch(/unknown subcommand codify/);
+    expect(parsed.error).toContain(V1_SUBCOMMANDS.join("|"));
+    expect(parsed.error).not.toMatch(/setup\|enqueue\|start\|approve\|status\|landed\|closed\|reconcile$/);
     expect(parseFactoryArgs("").verb).toBeNull();
   });
 });

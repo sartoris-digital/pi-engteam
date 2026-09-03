@@ -1,4 +1,34 @@
-export const SUBCOMMANDS = ["setup", "enqueue", "start", "approve", "status", "landed", "closed", "reconcile"] as const;
+export const SUBCOMMANDS = [
+  "setup",
+  "config",
+  "lanes",
+  "rules",
+  "remember",
+  "forget",
+  "secret",
+  "grill",
+  "watch",
+  "interrupt",
+  "start",
+  "stop",
+  "status",
+  "doctor",
+  "enqueue",
+  "classify",
+  "resume",
+  "approve",
+  "grant",
+  "replan",
+  "cancel",
+  "drop",
+  "retry",
+  "rescan",
+  "reconcile",
+  "landed",
+  "closed",
+  "gc",
+  "rebase",
+] as const;
 export type FactoryVerb = (typeof SUBCOMMANDS)[number];
 
 export interface ParsedFactoryArgs {
@@ -42,7 +72,7 @@ export function parseFactoryArgs(raw: string): ParsedFactoryArgs {
       verb: null,
       args: rest,
       flags: {},
-      error: `unknown subcommand ${head} (setup|enqueue|start|approve|status|landed|closed|reconcile)`,
+      error: `unknown subcommand ${head} (${SUBCOMMANDS.join("|")})`,
     };
   }
   const flags: Record<string, string | boolean> = {};
