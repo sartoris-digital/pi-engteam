@@ -57,9 +57,16 @@ describe("completeFactoryArgs", () => {
       "secret list",
       "secret rm",
       "secret rotate",
+      "secret bind",
+      "secret export",
+      "secret import",
+      "secret scrub",
     ]);
     const names = completeFactoryArgs("secret rm ", deps)?.map((i) => i.value) ?? [];
     expect(names).toEqual(["secret rm ACME_TOKEN", "secret rm repo/acme/GH_TOKEN"]);
     expect(JSON.stringify(names)).not.toMatch(/ghp_|sk-|value/i);
+    const bind = completeFactoryArgs("secret bind ", { ...deps, unboundNames: ["secret:UNBOUND_1"] })?.map((i) => i.value) ?? [];
+    expect(bind).toEqual(["secret bind secret:UNBOUND_1"]);
+    expect(JSON.stringify(bind)).not.toMatch(/ghp_|sk-|tok-|value/i);
   });
 });

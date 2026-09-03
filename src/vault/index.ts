@@ -8,3 +8,8 @@ export { installInputGuard, looksLikeSecret } from "./input-guard.js";
 export { SECRET_REF, resolveSecretRef } from "./resolve.js";
 export { injectHostEnv } from "./host-env.js";
 export { PROVIDER_TOKEN_PATTERNS, makeScrubber } from "./scrubber.js";
+export { TOKEN_SHAPES, scrubFile, scrubSeed, knownVaultValues } from "./scrub.js";
+export { asSecretName, bindSecret, secretsBound, vaultNameOf } from "./bind.js";
+export { exportVault, importVault } from "./export.js";
+export type { ExportEnvelope } from "./export.js";
+export { runWithSecret, wouldDumpEnv } from "./inject.js";

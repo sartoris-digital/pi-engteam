@@ -18,6 +18,7 @@ export interface CompletionDeps {
   repos: string[];
   runs: CompletionRun[];
   secretNames?: string[];
+  unboundNames?: string[];
   ruleIds?: string[];
 }
 
@@ -28,7 +29,7 @@ const VERB_HELP: Record<(typeof SUBCOMMANDS)[number], string> = {
   rules: "list operator rules",
   remember: "store a durable operator rule",
   forget: "retire a remembered rule",
-  secret: "set, list, rm, or rotate vault secrets",
+  secret: "set, list, rm, rotate, bind, export, import, or scrub vault secrets",
   grill: "enqueue a grill (pre-build) idea",
   watch: "path of a lane stream file",
   interrupt: "nudge a visible worker",
@@ -55,7 +56,7 @@ const VERB_HELP: Record<(typeof SUBCOMMANDS)[number], string> = {
 
 const KINDS = ["feature", "enhancement", "bug", "chore"] as const;
 const PRIORITIES = ["p0", "p1", "p2", "p3"] as const;
-const SECRET_VERBS = ["set", "list", "rm", "rotate"] as const;
+const SECRET_VERBS = ["set", "list", "rm", "rotate", "bind", "export", "import", "scrub"] as const;
 
 function items(values: AutocompleteItem[], prefix: string): AutocompleteItem[] | null {
   const hit = values.filter((v) => v.value.startsWith(prefix) || v.value.split(/\s+/).pop()?.startsWith(prefix));
@@ -151,6 +152,14 @@ export function completeFactoryArgs(argumentPrefix: string, deps: CompletionDeps
       const verb = match[1]!;
       return items(
         names.map((n) => ({ value: `secret ${verb} ${n}`, label: n, description: n })),
+        trimmed,
+      );
+    }
+    const bind = /^ bind( |$)/.exec(after);
+    if (bind) {
+      const unbound = deps.unboundNames ?? [];
+      return items(
+        unbound.map((n) => ({ value: `secret bind ${n}`, label: n, description: n })),
         trimmed,
       );
     }

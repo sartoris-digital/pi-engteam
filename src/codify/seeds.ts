@@ -31,6 +31,8 @@ export interface SeedRecord {
   wraps?: string;
   bindings?: Record<string, SecretName>;
   secretsBound?: boolean;
+  /** Scrubbed script text the codifier may read; never vault plaintext. */
+  scriptBody?: string;
 }
 
 export interface DetectSeedsInput {
@@ -199,6 +201,7 @@ export async function snapshotSeed(input: SnapshotSeedInput): Promise<SeedRecord
     effect: input.effect,
     taskContextFenced: input.taskContextFenced,
     placeholders,
+    scriptBody: body,
   };
   if (inWorkspace && matchesAny(input.scriptPath, input.writeRoots)) {
     rec.wraps = rec.scriptPath;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseFactoryArgs } from "../../../src/commands/router.js";
@@ -58,11 +58,67 @@ describe("runSecret", () => {
     }
   });
 
-  it("refuses export/import/scrub/bind", async () => {
-    const vault = new Vault({ store: new MemoryVaultStore(), keyring: new FakeKeyring() });
-    const deps = depsWith(vault);
-    for (const verb of ["export", "import", "scrub", "bind"]) {
-      await expect(runSecret(parseFactoryArgs(`secret ${verb}`), deps)).rejects.toThrow(/not in v1|unknown/i);
+  it("binds an unbound placeholder, exports/imports without plaintext, and scrubs a file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-sdlc-secret-v15-"));
+    try {
+      const vault = new Vault({ store: new MemoryVaultStore(), keyring: new FakeKeyring() });
+      const deps = depsWith(vault);
+      await vault.set("AEM_STAGING_TOKEN", "tok-staging");
+      const seedPath = join(dir, "run-1-implement-0.json");
+      await writeFile(
+        seedPath,
+        `${JSON.stringify({
+          runId: "run-1",
+          stage: "implement",
+          n: 0,
+          trigger: "script-seed",
+          scriptPath: "scripts/sync_aem.py",
+          commandLines: [],
+          filesRead: [],
+          envNames: [],
+          effect: {},
+          taskContextFenced: "```\n```",
+          placeholders: ["secret:UNBOUND_1"],
+        })}\n`,
+        "utf8",
+      );
+
+      const bound = await runSecret(
+        parseFactoryArgs(`secret bind secret:UNBOUND_1 --to secret:AEM_STAGING_TOKEN --seed ${seedPath}`),
+        deps,
+      );
+      expect(bound).toMatch(/AEM_STAGING_TOKEN/);
+      expect(bound).not.toContain("tok-staging");
+
+      const exportPath = join(dir, "vault.json");
+      const passphraseFile = join(dir, "pass");
+      await writeFile(passphraseFile, "export-passphrase", { mode: 0o600 });
+      const exported = await runSecret(
+        parseFactoryArgs(`secret export ${exportPath} --passphrase-from-file ${passphraseFile}`),
+        deps,
+      );
+      expect(exported).toMatch(/export/);
+      const envelope = JSON.parse(await readFile(exportPath, "utf8")) as Record<string, unknown>;
+      expect(JSON.stringify(envelope)).not.toContain("tok-staging");
+      expect(envelope.schemaVersion).toBe(1);
+
+      const dest = new Vault({ store: new MemoryVaultStore(), keyring: new FakeKeyring() });
+      const imported = await runSecret(
+        parseFactoryArgs(`secret import ${exportPath} --passphrase-from-file ${passphraseFile}`),
+        depsWith(dest),
+      );
+      expect(imported).toMatch(/AEM_STAGING_TOKEN/);
+      expect(await dest.getPlaintext("AEM_STAGING_TOKEN")).toBe("tok-staging");
+
+      const leak = join(dir, "tool.py");
+      await writeFile(leak, "tok-staging and ghp_abcdefghijklmnopqrstuvwxyz0123456789\n", "utf8");
+      const scrubbed = await runSecret(parseFactoryArgs(`secret scrub ${leak}`), deps);
+      expect(scrubbed).toMatch(/hit/i);
+      const text = await readFile(leak, "utf8");
+      expect(text).not.toContain("tok-staging");
+      expect(text).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

@@ -1,3 +1,5 @@
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { FactoryDeps } from "../controller/lane-runner.js";
 import { refToString } from "../trackers/adapter.js";
@@ -58,6 +60,33 @@ function snapshotStatus(entry: { state: string }): string {
   return entry.state;
 }
 
+async function unboundSeedNames(runsDir: string): Promise<string[]> {
+  const dir = join(runsDir, "_factory", "codify", "seeds");
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const unbound = new Set<string>();
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.endsWith(".manifest.json")) continue;
+    try {
+      const rec = JSON.parse(await readFile(join(dir, name), "utf8")) as {
+        placeholders?: string[];
+        bindings?: Record<string, string>;
+      };
+      const bindings = rec.bindings ?? {};
+      for (const ph of rec.placeholders ?? []) {
+        if (bindings[ph] === undefined) unbound.add(ph);
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return [...unbound];
+}
+
 export async function completionSnapshot(deps: FactoryDeps): Promise<CompletionDeps> {
   const queue = await readQueue(deps.runsDir);
   let secretNames: string[] = [];
@@ -66,10 +95,12 @@ export async function completionSnapshot(deps: FactoryDeps): Promise<CompletionD
   } catch {
     secretNames = [];
   }
+  const unboundNames = await unboundSeedNames(deps.runsDir);
   return {
     lanes: Object.keys(deps.lanes),
     repos: deps.repos,
     secretNames,
+    unboundNames,
     runs: queue.entries
       .filter((entry) => entry.runId !== undefined)
       .map((entry) => {
@@ -228,7 +259,7 @@ async function dispatchFactoryVerb(
       return info(`${state.runId} granted → ${state.status}`);
     }
     case "secret":
-      return info(await runSecret(parsed, deps));
+      return info(await runSecret(parsed, deps, ctx.ui));
     case "doctor": {
       const text = await runDoctor(deps, parsed);
       return info(typeof text === "string" ? text : JSON.stringify(text));
