@@ -9,3 +9,4 @@ export {
   type TrackerEntryDefaults,
 } from "./defaults.js";
 export { mergeLayers, type ConfigLayer, type MergeOptions, type MergeResult } from "./merge.js";
+export { migrateConfig, migrateRepoFile, validateConfigValue } from "./migrate.js";
