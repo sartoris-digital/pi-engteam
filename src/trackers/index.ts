@@ -26,3 +26,5 @@ export { HostCliError, createFakeCli, createPathCli } from "./host-cli.js";
 export type { HostCli, HostCliExecOptions, HostCliResult } from "./host-cli.js";
 export { AzureDevOpsAdapter, parseAzureDevOpsRef, ticketLinkLine, workItemId } from "./azure-devops.js";
 export type { AzureDevOpsAdapterOptions } from "./azure-devops.js";
+export { JiraAdapter, parseJiraRef, ticketLinkLine as jiraTicketLinkLine } from "./jira.js";
+export type { JiraAdapterOptions, JiraCommentMode } from "./jira.js";
